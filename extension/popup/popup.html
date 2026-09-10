@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spark OTP Settings</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <div class="header">
+      <div class="title-wrap">
+        <svg class="header-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m21 2-2 2m-1.5 1.5L14 9l-2-2-4 4a5.5 5.5 0 0 0 7.78 7.78l4-4-2-2 1.5-1.5M7 17l.01.01"/>
+        </svg>
+        <h1>Spark OTP</h1>
+      </div>
+      <div id="status-badge" class="badge checking">Connecting...</div>
+    </div>
+
+    <div class="card latest-otp-card" id="latest-card">
+      <div class="card-label">Latest Detected Code</div>
+      <div class="otp-display">
+        <span id="latest-code">------</span>
+        <button id="btn-copy-latest" class="btn-sm" disabled>Copy</button>
+      </div>
+      <div id="latest-domain" class="card-meta">No recent code</div>
+    </div>
+
+    <div class="card metrics-card" id="metrics-card">
+      <div class="card-label">System Performance & Latency</div>
+      <div class="metrics-grid">
+        <div class="metric-item">
+          <div class="metric-val" id="metric-latency">-- ms</div>
+          <div class="metric-lbl">Avg Latency</div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-val" id="metric-hitrate">-- %</div>
+          <div class="metric-lbl">Hit Rate</div>
+        </div>
+        <div class="metric-item">
+          <div class="metric-val" id="metric-requests">0</div>
+          <div class="metric-lbl">Queries</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">Automation Settings</div>
+    <div class="form-group">
+      <label class="toggle-wrap">
+        <input type="checkbox" id="toggle-auto-submit" checked>
+        <span class="toggle-label">Auto-submit verification code</span>
+      </label>
+    </div>
+
+    <div class="form-group">
+      <label class="toggle-wrap">
+        <input type="checkbox" id="toggle-auto-email" checked>
+        <span class="toggle-label">Auto-fill email & send code</span>
+      </label>
+    </div>
+
+    <div class="form-group">
+      <label class="toggle-wrap">
+        <input type="checkbox" id="toggle-auto-jump">
+        <span class="toggle-label">Auto-jump via Cloudflare magic link</span>
+      </label>
+    </div>
+
+    <div class="form-group">
+      <label for="select-account">Spark Mailbox Account</label>
+      <select id="select-account">
+        <option value="">Unified Inbox (All Accounts)</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="select-lang">Language / 语言</label>
+      <select id="select-lang">
+        <option value="auto">Auto (Browser)</option>
+        <option value="en">English</option>
+        <option value="zh">简体中文</option>
+      </select>
+    </div>
+
+    <div class="form-group">
+      <label for="input-email">Preferred Email</label>
+      <input type="email" id="input-email" value="alex.turner@gmail.com">
+    </div>
+
+    <div class="form-group">
+      <label for="input-port">Daemon Port</label>
+      <input type="number" id="input-port" value="9428" min="1024" max="65535">
+    </div>
+
+    <div class="actions">
+      <button id="btn-refresh" class="btn btn-secondary">Check Daemon</button>
+      <button id="btn-save" class="btn btn-primary">Save Settings</button>
+    </div>
+    <div id="save-msg" class="save-msg"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
