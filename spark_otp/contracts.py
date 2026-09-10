@@ -228,7 +228,7 @@ OPENAPI_SPEC: Dict[str, Any] = {
                     "callback_url": {"type": ["string", "null"], "example": None},
                     "message_id": {"type": "string", "example": "721250"},
                     "subject": {"type": "string", "example": "Device verification"},
-                    "sender": {"type": "string", "example": "Bandwagon Host <noreply@64clouds.com>"},
+                    "sender": {"type": "string", "example": "Bandwagon Host <noreply@auth.example.com>"},  # nosec: mock
                     "received_at": {"type": "string", "format": "date-time", "example": "2026-09-08T20:34:00"},
                     "expires_at": {"type": "string", "format": "date-time", "example": "2026-09-08T21:34:00"},
                     "is_expired": {"type": "boolean", "example": False},
