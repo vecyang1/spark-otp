@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Testing & Virtual environments
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+venv/
+.venv/
+ENV/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.log
+
+# Telemetry & Runtime caches
+*.jsonl
+/tmp/spark-otp*
+
+# Private Context & Internal Governance (Sanitization Gate 2)
+VAULT.md
+progress.md
+task_plan.md
+handoff.md
+decisions.md
+FILE_MAP_INDEX.md
+operations/
+vault/

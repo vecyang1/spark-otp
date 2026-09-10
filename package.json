@@ -1,0 +1,30 @@
+{
+  "name": "spark-otp",
+  "version": "1.3.3",
+  "description": "Universal zero-LLM email OTP & 2FA extraction and autofill engine powered by local Spark Desktop",
+  "main": "extension/content.js",
+  "scripts": {
+    "test": "python3 -m pytest -v",
+    "lint": "python3 -m ruff check . || true"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vecyang1/spark-otp.git"
+  },
+  "keywords": [
+    "spark-mail",
+    "otp",
+    "2fa",
+    "autofill",
+    "chrome-extension",
+    "userscript",
+    "fastapi",
+    "zero-llm"
+  ],
+  "author": "V",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/vecyang1/spark-otp/issues"
+  },
+  "homepage": "https://github.com/vecyang1/spark-otp#readme"
+}

@@ -1,0 +1,168 @@
+/* Spark OTP Autofill Floating Pill & Overlay */
+#spark-otp-pill-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 999999;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  color: #f1f5f9;
+  user-select: none;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.spark-otp-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(15, 23, 42, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.spark-otp-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+}
+
+.spark-otp-icon-wrap.success {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+}
+
+.spark-otp-icon-wrap.warning {
+  background: rgba(239, 68, 68, 0.18);
+  color: #f87171;
+}
+
+.spark-otp-icon-wrap.pulse {
+  animation: spark-pulse 2s infinite ease-in-out;
+}
+
+@keyframes spark-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.08); opacity: 0.6; }
+}
+
+.spark-otp-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.spark-otp-title {
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: #f8fafc;
+}
+
+.spark-otp-subtitle {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.spark-otp-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+}
+
+.spark-otp-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+  border: none;
+  outline: none;
+}
+
+.spark-otp-btn-primary {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.spark-otp-btn-primary:hover {
+  background: #1d4ed8;
+}
+
+.spark-otp-btn-secondary {
+  background: rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+}
+
+.spark-otp-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+}
+
+.spark-otp-code-highlight {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #38bdf8;
+  padding: 1px 4px;
+  background: rgba(56, 189, 248, 0.12);
+  border-radius: 4px;
+}
+
+.spark-otp-meta-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  font-size: 10px;
+  color: #94a3b8;
+  font-family: ui-monospace, monospace;
+}
+
+.spark-otp-timer-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  background: rgba(59, 130, 246, 0.15);
+  border-radius: 4px;
+  font-size: 10px;
+  color: #60a5fa;
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+}
+
+.spark-otp-error-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  background: rgba(239, 68, 68, 0.18);
+  border-radius: 4px;
+  font-size: 10px;
+  color: #fca5a5;
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+}
+
+.spark-otp-btn-ghost {
+  background: transparent;
+  color: #94a3b8;
+  font-size: 14px;
+  padding: 2px 6px;
+}
+
+.spark-otp-btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #f1f5f9;
+}
+
