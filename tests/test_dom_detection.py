@@ -887,5 +887,172 @@ class TestDomDetection(unittest.TestCase):
             self.assertTrue(res["queryExcludesSniffed"], f"{name}: buildApiQuery must exclude sniffed code")
             self.assertTrue(res["timestampDidNotCreep"], f"{name}: repeated failure checks must not creep timestamp forward")
 
+    def test_popup_and_plugin_bilingual_i18n(self):
+        """
+        Verify that popup and plugin floating UI support full bilingual i18n:
+        1. popup.html has data-i18n attributes on all user-facing labels and buttons.
+        2. popup.js dynamically switches between English and Chinese on language selection.
+        3. content.js and spark-otp.user.js provide English and Chinese translations for the floating pill.
+        """
+        js_code = """
+        const fs = require('fs');
+        const popupHtml = fs.readFileSync('extension/popup/popup.html', 'utf8');
+        const popupJs = fs.readFileSync('extension/popup/popup.js', 'utf8');
+        const contentJs = fs.readFileSync('extension/content.js', 'utf8');
+        const userJs = fs.readFileSync('userscript/spark-otp.user.js', 'utf8');
+
+        // 1. Verify popup.html contains critical data-i18n attributes
+        const requiredKeys = [
+            'connecting', 'latest_detected_code', 'copy', 'no_recent_code',
+            'system_performance', 'automation_settings', 'auto_submit',
+            'auto_email', 'auto_jump', 'spark_mailbox_account', 'unified_inbox',
+            'language_label', 'lang_auto', 'preferred_email', 'daemon_port',
+            'check_daemon', 'save_settings'
+        ];
+        const missingHtmlKeys = requiredKeys.filter(k => !popupHtml.includes('data-i18n="' + k + '"'));
+
+        // 2. Mock DOM environment for popup.js
+        const elements = {};
+        function makeElement(tag, id = '', attrs = {}) {
+            return {
+                tagName: tag.toUpperCase(),
+                id,
+                textContent: '',
+                className: '',
+                value: '',
+                checked: false,
+                disabled: false,
+                listeners: {},
+                attrs,
+                addEventListener: function(event, fn) {
+                    this.listeners[event] = this.listeners[event] || [];
+                    this.listeners[event].push(fn);
+                },
+                getAttribute: function(k) { return this.attrs[k] || null; },
+                setAttribute: function(k, v) { this.attrs[k] = v; },
+                querySelector: function(sel) {
+                    if (sel.includes("option[value='']")) {
+                        return makeElement('option', '', { 'data-i18n': 'unified_inbox' });
+                    }
+                    return null;
+                },
+                appendChild: function() {}
+            };
+        }
+
+        const ids = [
+            'status-badge', 'latest-code', 'latest-domain', 'btn-copy-latest',
+            'toggle-auto-submit', 'toggle-auto-email', 'toggle-auto-jump',
+            'select-account', 'select-lang', 'input-email', 'input-port',
+            'btn-save', 'btn-refresh', 'save-msg', 'metric-latency',
+            'metric-hitrate', 'metric-requests'
+        ];
+        ids.forEach(id => { elements[id] = makeElement('div', id); });
+
+        // Populate translatable DOM nodes from requiredKeys
+        const domNodesWithI18n = requiredKeys.map(k => makeElement('span', '', { 'data-i18n': k }));
+
+        const listeners = {};
+        const documentMock = {
+            addEventListener: function(ev, fn) {
+                listeners[ev] = listeners[ev] || [];
+                listeners[ev].push(fn);
+            },
+            getElementById: function(id) { return elements[id] || null; },
+            querySelectorAll: function(sel) {
+                if (sel === '[data-i18n]') return domNodesWithI18n;
+                return [];
+            }
+        };
+
+        const navigatorMock = { language: 'en-US', userLanguage: 'en-US' };
+        const chromeMock = {
+            storage: {
+                sync: {
+                    get: function(keys, cb) { cb({ language: 'en' }); },
+                    set: function(obj, cb) { if (cb) cb(); }
+                }
+            }
+        };
+
+        // Evaluate popup.js inside mock
+        const sandbox = {
+            document: documentMock,
+            navigator: navigatorMock,
+            chrome: chromeMock,
+            fetch: async () => ({ ok: false }),
+            setTimeout: (fn) => fn(),
+            parseInt: parseInt,
+            Array: Array
+        };
+
+        const vm = require('vm');
+        const ctx = vm.createContext(sandbox);
+        vm.runInContext(popupJs, ctx);
+
+        // Fire DOMContentLoaded
+        if (listeners['DOMContentLoaded']) {
+            listeners['DOMContentLoaded'].forEach(fn => fn());
+        }
+
+        // Test English translations via select-lang change
+        elements['select-lang'].value = 'en';
+        if (elements['select-lang'].listeners['change']) {
+            elements['select-lang'].listeners['change'].forEach(fn => fn());
+        }
+        const enCopy = domNodesWithI18n.find(n => n.getAttribute('data-i18n') === 'copy').textContent;
+        const enSubmit = domNodesWithI18n.find(n => n.getAttribute('data-i18n') === 'auto_submit').textContent;
+        const enTitle = domNodesWithI18n.find(n => n.getAttribute('data-i18n') === 'latest_detected_code').textContent;
+
+        // Test Chinese translations via select-lang change
+        elements['select-lang'].value = 'zh';
+        if (elements['select-lang'].listeners['change']) {
+            elements['select-lang'].listeners['change'].forEach(fn => fn());
+        }
+        const zhCopy = domNodesWithI18n.find(n => n.getAttribute('data-i18n') === 'copy').textContent;
+        const zhSubmit = domNodesWithI18n.find(n => n.getAttribute('data-i18n') === 'auto_submit').textContent;
+        const zhTitle = domNodesWithI18n.find(n => n.getAttribute('data-i18n') === 'latest_detected_code').textContent;
+
+        // 3. Verify content.js and userscript I18N pill translations
+        const hasContentEnPill = contentJs.includes('watchingTitle: "Verification field detected"') &&
+                                 contentJs.includes('watchingSubtitle: "Searching for verification code in background..."');
+        const hasContentZhPill = contentJs.includes('watchingTitle: "已检测到验证码输入框"') &&
+                                 contentJs.includes('watchingSubtitle: "后台正在静默查询/等待验证码..."');
+
+        const hasUserEnPill = userJs.includes('watchingTitle: "Verification field detected"') &&
+                              userJs.includes('watchingSubtitle: "Searching for verification code in background..."');
+        const hasUserZhPill = userJs.includes('watchingTitle: "已检测到验证码输入框"') &&
+                              userJs.includes('watchingSubtitle: "后台正在静默查询/等待验证码..."');
+
+        console.log(JSON.stringify({
+            missingHtmlKeys,
+            enCopy,
+            enSubmit,
+            enTitle,
+            zhCopy,
+            zhSubmit,
+            zhTitle,
+            hasContentEnPill,
+            hasContentZhPill,
+            hasUserEnPill,
+            hasUserZhPill
+        }));
+        """
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        self.assertEqual(data["missingHtmlKeys"], [], f"Missing data-i18n keys in popup.html: {data['missingHtmlKeys']}")
+        self.assertEqual(data["enCopy"], "Copy")
+        self.assertEqual(data["enSubmit"], "Auto-submit verification code")
+        self.assertEqual(data["enTitle"], "Latest Detected Code")
+        self.assertEqual(data["zhCopy"], "复制")
+        self.assertEqual(data["zhSubmit"], "自动填充并提交验证码")
+        self.assertEqual(data["zhTitle"], "最新捕获验证码")
+        self.assertTrue(data["hasContentEnPill"], "content.js missing English floating pill translations")
+        self.assertTrue(data["hasContentZhPill"], "content.js missing Chinese floating pill translations")
+        self.assertTrue(data["hasUserEnPill"], "userscript missing English floating pill translations")
+        self.assertTrue(data["hasUserZhPill"], "userscript missing Chinese floating pill translations")
+
 if __name__ == "__main__":
     unittest.main()

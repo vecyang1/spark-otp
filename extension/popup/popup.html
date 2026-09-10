@@ -15,87 +15,87 @@
         </svg>
         <h1>Spark OTP</h1>
       </div>
-      <div id="status-badge" class="badge checking">Connecting...</div>
+      <div id="status-badge" class="badge checking" data-i18n="connecting">Connecting...</div>
     </div>
 
     <div class="card latest-otp-card" id="latest-card">
-      <div class="card-label">Latest Detected Code</div>
+      <div class="card-label" data-i18n="latest_detected_code">Latest Detected Code</div>
       <div class="otp-display">
         <span id="latest-code">------</span>
-        <button id="btn-copy-latest" class="btn-sm" disabled>Copy</button>
+        <button id="btn-copy-latest" class="btn-sm" data-i18n="copy" disabled>Copy</button>
       </div>
-      <div id="latest-domain" class="card-meta">No recent code</div>
+      <div id="latest-domain" class="card-meta" data-i18n="no_recent_code">No recent code</div>
     </div>
 
     <div class="card metrics-card" id="metrics-card">
-      <div class="card-label">System Performance & Latency</div>
+      <div class="card-label" data-i18n="system_performance">System Performance & Latency</div>
       <div class="metrics-grid">
         <div class="metric-item">
           <div class="metric-val" id="metric-latency">-- ms</div>
-          <div class="metric-lbl">Avg Latency</div>
+          <div class="metric-lbl" data-i18n="avg_latency">Avg Latency</div>
         </div>
         <div class="metric-item">
           <div class="metric-val" id="metric-hitrate">-- %</div>
-          <div class="metric-lbl">Hit Rate</div>
+          <div class="metric-lbl" data-i18n="hit_rate">Hit Rate</div>
         </div>
         <div class="metric-item">
           <div class="metric-val" id="metric-requests">0</div>
-          <div class="metric-lbl">Queries</div>
+          <div class="metric-lbl" data-i18n="queries">Queries</div>
         </div>
       </div>
     </div>
 
-    <div class="section-title">Automation Settings</div>
+    <div class="section-title" data-i18n="automation_settings">Automation Settings</div>
     <div class="form-group">
       <label class="toggle-wrap">
         <input type="checkbox" id="toggle-auto-submit" checked>
-        <span class="toggle-label">Auto-submit verification code</span>
+        <span class="toggle-label" data-i18n="auto_submit">Auto-submit verification code</span>
       </label>
     </div>
 
     <div class="form-group">
       <label class="toggle-wrap">
         <input type="checkbox" id="toggle-auto-email" checked>
-        <span class="toggle-label">Auto-fill email & send code</span>
+        <span class="toggle-label" data-i18n="auto_email">Auto-fill email & send code</span>
       </label>
     </div>
 
     <div class="form-group">
       <label class="toggle-wrap">
         <input type="checkbox" id="toggle-auto-jump">
-        <span class="toggle-label">Auto-jump via Cloudflare magic link</span>
+        <span class="toggle-label" data-i18n="auto_jump">Auto-jump via Cloudflare magic link</span>
       </label>
     </div>
 
     <div class="form-group">
-      <label for="select-account">Spark Mailbox Account</label>
+      <label for="select-account" data-i18n="spark_mailbox_account">Spark Mailbox Account</label>
       <select id="select-account">
-        <option value="">Unified Inbox (All Accounts)</option>
+        <option value="" data-i18n="unified_inbox">Unified Inbox (All Accounts)</option>
       </select>
     </div>
 
     <div class="form-group">
-      <label for="select-lang">Language / 语言</label>
+      <label for="select-lang" data-i18n="language_label">Language / 语言</label>
       <select id="select-lang">
-        <option value="auto">Auto (Browser)</option>
+        <option value="auto" data-i18n="lang_auto">Auto (Browser)</option>
         <option value="en">English</option>
         <option value="zh">简体中文</option>
       </select>
     </div>
 
     <div class="form-group">
-      <label for="input-email">Preferred Email</label>
+      <label for="input-email" data-i18n="preferred_email">Preferred Email</label>
       <input type="email" id="input-email" value="alex.turner@gmail.com">
     </div>
 
     <div class="form-group">
-      <label for="input-port">Daemon Port</label>
+      <label for="input-port" data-i18n="daemon_port">Daemon Port</label>
       <input type="number" id="input-port" value="9428" min="1024" max="65535">
     </div>
 
     <div class="actions">
-      <button id="btn-refresh" class="btn btn-secondary">Check Daemon</button>
-      <button id="btn-save" class="btn btn-primary">Save Settings</button>
+      <button id="btn-refresh" class="btn btn-secondary" data-i18n="check_daemon">Check Daemon</button>
+      <button id="btn-save" class="btn btn-primary" data-i18n="save_settings">Save Settings</button>
     </div>
     <div id="save-msg" class="save-msg"></div>
   </div>

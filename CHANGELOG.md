@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-09-10
+
+### Added
+- **Full Reactive Bilingual i18n for Chrome Extension**:
+  - Implemented dynamic language switcher in `extension/popup/popup.js` supporting English (`en`), 简体中文 (`zh`), and browser auto-detection (`auto`).
+  - Added `data-i18n` attributes across all labels, buttons, cards, and status indicators in `extension/popup/popup.html`.
+  - Added instant real-time translation dispatch upon selecting language in the dropdown, plus persistence in `chrome.storage.sync`.
+  - Added `test_popup_and_plugin_bilingual_i18n` in `tests/test_dom_detection.py` verifying popup translation mechanics, DOM listeners, and bilingual parity across `content.js` and `spark-otp.user.js`.
+- **Showcase Visuals & Hero Banner**:
+  - Designed and generated high-resolution dark-mode widescreen hero banner graphic (`docs/assets/hero-banner.png`) illustrating the zero-cloud macOS Spark mail integration, floating detection pill, and 6-digit autofill interface.
+  - Updated `README.md` with the centered hero banner, GitHub repository badge, FastAPI badge, and architecture badge.
+  - Synchronized the `README.md` directory tree to physically match the repository tree (including `scripts/` and `docs/assets/hero-banner.png`).
+
 ## [1.3.3] - 2026-09-08
 
 ### Added
