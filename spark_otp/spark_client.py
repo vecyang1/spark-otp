@@ -76,13 +76,148 @@ def parse_accounts_output(raw_output: str) -> List[str]:
     return accounts
 
 class SparkClient:
-    def __init__(self, spark_bin: Optional[str] = None, sqlite_path: Optional[str] = None):
+    def __init__(
+        self,
+        spark_bin: Optional[str] = None,
+        sqlite_path: Optional[str] = None,
+        apple_mail_path: Optional[str] = None,
+    ):
         self.spark_bin = spark_bin if spark_bin is not None else config.spark_bin
         self.sqlite_path = sqlite_path
+        self.apple_mail_path = apple_mail_path
         if spark_bin is None and not shutil.which(self.spark_bin):
             found = shutil.which("spark")
             if found:
                 self.spark_bin = found
+
+    def _find_apple_mail_sqlite_db(self) -> Optional[Path]:
+        """Locate macOS Mail.app Envelope Index SQLite database."""
+        target = self.apple_mail_path if self.apple_mail_path is not None else getattr(config, "apple_mail_sqlite_path", "auto")
+        if target in ("disabled", "off", "0", ""):
+            return None
+        if target and target != "auto":
+            p = Path(os.path.expanduser(target))
+            if p.is_file() and os.access(p, os.R_OK):
+                return p
+            return None
+
+        base_dir = Path(os.path.expanduser("~/Library/Mail"))
+        for v in ["V12", "V11", "V10", "V9"]:
+            candidate = base_dir / v / "MailData" / "Envelope Index"
+            if candidate.is_file() and os.access(candidate, os.R_OK):
+                return candidate
+
+        matches = sorted(base_dir.glob("V*/MailData/Envelope Index"), reverse=True)
+        for m in matches:
+            if m.is_file() and os.access(m, os.R_OK):
+                return m
+        return None
+
+    def _get_otp_from_apple_mail(
+        self,
+        domain: Optional[str],
+        max_age: int,
+        account: Optional[str],
+        current_time: datetime,
+        exclude_codes: Optional[List[str]] = None,
+        exclude_message_ids: Optional[List[str]] = None,
+        since_time: Optional[float] = None,
+    ) -> Optional[OTPResult]:
+        """
+        Direct Apple Mail Envelope Index fast-path (<5ms).
+        Queries local macOS Mail database for business domain mailboxes.
+        """
+        db_path = self._find_apple_mail_sqlite_db()
+        if not db_path:
+            return None
+
+        rule_max_ttl = max((r.default_ttl_seconds for r in config.rules), default=600)
+        effective_max_age = max(max_age, rule_max_ttl)
+        since_timestamp = current_time.timestamp() - effective_max_age
+        if since_time is not None and since_time > since_timestamp:
+            since_timestamp = since_time
+        until_timestamp = current_time.timestamp() + 30.0
+
+        try:
+            uri = f"file:{db_path}?mode=ro"
+            with sqlite3.connect(uri, uri=True, timeout=2.0) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT 
+                        m.ROWID as pk,
+                        a.address as sender_email,
+                        a.comment as sender_name,
+                        rec_a.address as recipient_email,
+                        s.subject as subject,
+                        sum_t.summary as body,
+                        m.date_received as received_ts
+                    FROM messages m
+                    LEFT JOIN addresses a ON m.sender = a.ROWID
+                    LEFT JOIN subjects s ON m.subject = s.ROWID
+                    LEFT JOIN summaries sum_t ON m.summary = sum_t.ROWID
+                    LEFT JOIN recipients r ON r.message = m.ROWID AND r.type = 0
+                    LEFT JOIN addresses rec_a ON r.address = rec_a.ROWID
+                    WHERE m.date_received >= ? AND m.date_received <= ?
+                    ORDER BY m.date_received DESC
+                    LIMIT 80
+                    """,
+                    (since_timestamp, until_timestamp),
+                )
+                rows = cursor.fetchall()
+        except Exception:
+            return None
+
+        if not rows:
+            return None
+
+        if account:
+            acc_clean = account.strip().lower()
+            matching_acc = [r for r in rows if r[3] and acc_clean in r[3].lower()]
+            other_acc = [r for r in rows if not (r[3] and acc_clean in r[3].lower())]
+            if matching_acc and other_acc:
+                newest_match_ts = matching_acc[0][6]
+                newest_other_ts = other_acc[0][6]
+                if newest_other_ts > newest_match_ts + 180:
+                    rows = other_acc + matching_acc
+                else:
+                    rows = matching_acc + other_acc
+            elif matching_acc:
+                rows = matching_acc
+            else:
+                rows = other_acc
+
+        exclude_codes_set = set(str(c).strip().upper() for c in exclude_codes) if exclude_codes else set()
+        exclude_msg_ids_set = set(str(m).strip() for m in exclude_message_ids) if exclude_message_ids else set()
+
+        for pk, sender, s_name, recipient, subject, body, received_ts in rows:
+            if exclude_msg_ids_set and str(pk) in exclude_msg_ids_set:
+                continue
+            if since_time is not None and received_ts <= since_time:
+                continue
+            sender = sender or ""
+            recipient = recipient or ""
+            subject = subject or ""
+            body = body or ""
+            dt_str = datetime.fromtimestamp(received_ts).strftime("%Y-%m-%d %H:%M:%S")
+
+            thread_text = f"ID: {pk}\nSubject: {subject}\nFrom: {sender}\nTo: {recipient}\nDate: {dt_str}\n\n{body}\n"
+
+            res = extract_otp_from_thread(
+                thread_text=thread_text,
+                domain_filter=domain,
+                rules=config.rules,
+                now=current_time,
+                max_age_seconds=max_age,
+            )
+            if res:
+                if exclude_codes_set and res.code.strip().upper() in exclude_codes_set:
+                    continue
+                if exclude_msg_ids_set and res.message_id in exclude_msg_ids_set:
+                    continue
+                return res
+
+        return None
 
     def _find_sqlite_db(self) -> Optional[Path]:
         """Locate Spark Desktop SQLite database on macOS."""
@@ -476,6 +611,20 @@ class SparkClient:
         )
         if sqlite_res:
             return sqlite_res
+
+        # Tier 0b: Apple Mail SQLite Fast-Path (<5ms, checks macOS Mail.app for business domain mailboxes)
+        if getattr(config, "apple_mail_enabled", True):
+            apple_mail_res = self._get_otp_from_apple_mail(
+                domain=domain,
+                max_age=max_age,
+                account=account,
+                current_time=current_time,
+                exclude_codes=exclude_codes,
+                exclude_message_ids=exclude_message_ids,
+                since_time=since_time
+            )
+            if apple_mail_res:
+                return apple_mail_res
 
         # Tier 1: Targeted rule filter query (runs in ~0.2s, immune to inbox noise/overflow)
         if matching_rule and matching_rule.filter_query:

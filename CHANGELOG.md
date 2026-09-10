@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.5] - 2026-09-10
+
+### Added
+- **Apple Mail (`Mail.app`) Envelope Index SQLite Fast-Path (Tier 0b Fallback)**:
+  - Added direct read-only SQLite fast-path (<5ms) querying `~/Library/Mail/V*/MailData/Envelope Index` via URI `mode=ro`.
+  - Automatically bridges verification code extraction for business domain mailboxes configured in macOS Mail (@example.com, @auth.example.com, and custom company domains).
+  - Added `apple_mail_sqlite_path` and `apple_mail_enabled` configuration settings in `spark_otp/config.py` and `spark_otp/spark_client.py`.
+  - Refined `google_auth` rule regex and subject pattern to match Google Accounts email verification templates (`Verify your email address` and `use this code to verify`).
+  - Added comprehensive automated test suite `tests/test_apple_mail_fastpath.py` (4 contract tests covering DB discovery, mock extraction, cascade fallback, and adversarial exclusion).
+
 ## [1.3.4] - 2026-09-10
 
 ### Added
