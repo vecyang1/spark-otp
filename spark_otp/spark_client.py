@@ -6,6 +6,8 @@ import sqlite3
 import subprocess
 import shutil
 import re
+import glob
+import email
 from pathlib import Path
 from datetime import datetime
 from typing import List, Optional
@@ -99,6 +101,9 @@ class SparkClient:
             p = Path(os.path.expanduser(target))
             if p.is_file() and os.access(p, os.R_OK):
                 return p
+            return None
+
+        if self.sqlite_path in ("disabled", "off", "0") and self.apple_mail_path is None:
             return None
 
         base_dir = Path(os.path.expanduser("~/Library/Mail"))
@@ -210,6 +215,26 @@ class SparkClient:
                 now=current_time,
                 max_age_seconds=max_age,
             )
+            if not res:
+                # Only check full .emlx body if the subject or sender relates to the domain or OTP intent
+                intent_match = bool(OTP_INTENT_PATTERN.search(subject))
+                if not intent_match and domain:
+                    d_clean = domain.lower().replace("https://", "").replace("http://", "").split("/")[0]
+                    d_brand = d_clean.split(".")[0]
+                    if d_brand in sender.lower() or d_brand in subject.lower():
+                        intent_match = True
+                if intent_match:
+                    full_body = self._find_emlx_for_message(db_path, pk)
+                    if full_body and full_body != body:
+                        full_thread_text = f"ID: {pk}\nSubject: {subject}\nFrom: {sender}\nTo: {recipient}\nDate: {dt_str}\n\n{full_body}\n"
+                        res = extract_otp_from_thread(
+                            thread_text=full_thread_text,
+                            domain_filter=domain,
+                            rules=config.rules,
+                            now=current_time,
+                            max_age_seconds=max_age,
+                        )
+
             if res:
                 if exclude_codes_set and res.code.strip().upper() in exclude_codes_set:
                     continue
@@ -217,6 +242,55 @@ class SparkClient:
                     continue
                 return res
 
+        return None
+
+    def _find_emlx_for_message(self, db_path: Path, message_id: int) -> Optional[str]:
+        """Locate .emlx file corresponding to Apple Mail message ROWID and return body text."""
+        try:
+            if db_path.parent.name == "MailData":
+                mail_v_dir = db_path.parent.parent
+            else:
+                mail_v_dir = db_path.parent
+            pattern = str(mail_v_dir / "**" / f"{message_id}*.emlx")
+            matches = glob.glob(pattern, recursive=True)
+            if not matches:
+                return None
+            emlx_file = matches[0]
+            with open(emlx_file, "rb") as f:
+                f.readline()  # Skip first line byte count
+                raw_bytes = f.read()
+            msg = email.message_from_bytes(raw_bytes)
+            plain_parts = []
+            html_parts = []
+            if msg.is_multipart():
+                for part in msg.walk():
+                    ctype = part.get_content_type()
+                    if ctype == "text/plain":
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            plain_parts.append(payload.decode("utf-8", errors="ignore"))
+                    elif ctype == "text/html":
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            html_parts.append(payload.decode("utf-8", errors="ignore"))
+            else:
+                ctype = msg.get_content_type()
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    decoded = payload.decode("utf-8", errors="ignore")
+                    if ctype == "text/html":
+                        html_parts.append(decoded)
+                    else:
+                        plain_parts.append(decoded)
+
+            if plain_parts:
+                return "\n\n".join(plain_parts).strip()
+            elif html_parts:
+                raw_html = "\n\n".join(html_parts)
+                clean_text = re.sub(r"<[^>]+>", " ", raw_html)
+                return re.sub(r"\s+", " ", clean_text).strip()
+        except Exception:
+            pass
         return None
 
     def _find_sqlite_db(self) -> Optional[Path]:
@@ -358,8 +432,10 @@ class SparkClient:
         return None
 
     def is_available(self) -> bool:
-        """Check if spark CLI or Spark SQLite database is available and responsive."""
+        """Check if spark CLI or Spark SQLite database or Apple Mail SQLite database is available."""
         if self._find_sqlite_db() is not None:
+            return True
+        if getattr(config, "apple_mail_enabled", True) and self._find_apple_mail_sqlite_db() is not None:
             return True
         if not shutil.which(self.spark_bin):
             return False
@@ -374,20 +450,62 @@ class SparkClient:
         except Exception:
             return False
 
-    def get_accounts(self) -> List[str]:
-        """List all accounts configured in Spark Desktop."""
+    def get_accounts(self, include_apple_mail: bool = False) -> List[str]:
+        """List all accounts configured in Spark Desktop, optionally including Apple Mail."""
+        accounts = []
         try:
-            res = subprocess.run(
-                [self.spark_bin, "accounts"],
-                capture_output=True,
-                text=True,
-                timeout=15
-            )
-            if res.returncode != 0:
-                return []
-            return parse_accounts_output(res.stdout)
+            if shutil.which(self.spark_bin):
+                res = subprocess.run(
+                    [self.spark_bin, "accounts"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15
+                )
+                if res.returncode == 0:
+                    accounts = parse_accounts_output(res.stdout)
         except Exception:
-            return []
+            pass
+
+        if include_apple_mail and getattr(config, "apple_mail_enabled", True):
+            apple_db = self._find_apple_mail_sqlite_db()
+            if apple_db:
+                for a in self._get_apple_mail_accounts(apple_db):
+                    if a not in accounts:
+                        accounts.append(a)
+
+        return accounts
+
+    def _get_apple_mail_accounts(self, db_path: Path) -> List[str]:
+        """Load unique account email addresses from Apple Mail databases."""
+        acc_list: List[str] = []
+        accounts_sqlite = Path(os.path.expanduser("~/Library/Accounts/Accounts4.sqlite"))
+        if accounts_sqlite.is_file() and os.access(accounts_sqlite, os.R_OK):
+            try:
+                uri = f"file:{accounts_sqlite.resolve()}?mode=ro"
+                with sqlite3.connect(uri, uri=True, timeout=2.0) as aconn:
+                    acur = aconn.cursor()
+                    acur.execute("SELECT ZUSERNAME FROM ZACCOUNT WHERE ZUSERNAME IS NOT NULL")
+                    for (u,) in acur.fetchall():
+                        u_str = (u or "").strip()
+                        if "@" in u_str and u_str not in acc_list:
+                            acc_list.append(u_str)
+            except Exception:
+                pass
+
+        if not acc_list:
+            try:
+                uri = f"file:{db_path.resolve()}?mode=ro"
+                with sqlite3.connect(uri, uri=True, timeout=2.0) as conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT DISTINCT a.address FROM recipients r JOIN addresses a ON r.address = a.ROWID WHERE a.address LIKE '%@%' LIMIT 30"
+                    )
+                    for (addr,) in cur.fetchall():
+                        if addr and addr not in acc_list:
+                            acc_list.append(addr)
+            except Exception:
+                pass
+        return sorted(acc_list)
 
     def list_recent_emails(
         self,
