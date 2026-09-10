@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Spark OTP Autofill",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "description": "Automatically extracts and autofills verification codes from Spark Desktop via local CLI daemon across any website.",
   "permissions": [
     "storage"

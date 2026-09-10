@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spark-otp"
-version = "1.3.3"
+version = "1.3.4"
 description = "Universal zero-LLM email OTP & 2FA extraction and autofill engine powered by local Spark Desktop"
 readme = "README.md"
 authors = [{ name = "V" }]

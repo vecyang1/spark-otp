@@ -2,11 +2,18 @@
 
 <div align="center">
 
+<img src="docs/assets/hero-banner.png" alt="Spark OTP Autofill Banner" width="100%" />
+
+<br/><br/>
+
+[![GitHub Repository](https://img.shields.io/badge/GitHub-vecyang1%2Fspark--otp-181717?style=flat&logo=github)](https://github.com/vecyang1/spark-otp)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Chrome Extension](https://img.shields.io/badge/Chrome_Extension-MV3-brightgreen.svg)](extension/)
 [![Userscript](https://img.shields.io/badge/Userscript-Tampermonkey-orange.svg)](userscript/)
-[![Tests](https://img.shields.io/badge/Tests-132%20passed-success.svg)](tests/)
+[![Architecture](https://img.shields.io/badge/Architecture-Zero--LLM_Deterministic-success.svg)](docs/architecture.md)
+[![Tests](https://img.shields.io/badge/Tests-133%20passed-success.svg)](tests/)
 
 **Universal zero-LLM email verification code (OTP / 2FA) auto-detection, extraction, and autofill engine powered by local macOS Spark Desktop.**
 
@@ -77,7 +84,9 @@
 ├── cli.py
 ├── docs
 │   ├── README.md
-│   └── architecture.md
+│   ├── architecture.md
+│   └── assets
+│       └── hero-banner.png
 ├── extension
 │   ├── content.js
 │   ├── icons
@@ -98,6 +107,9 @@
 ├── pyproject.toml
 ├── resources
 │   └── README.md
+├── scripts
+│   ├── com.spark_otp.daemon.plist
+│   └── manage_daemon.sh
 ├── spark_otp
 │   ├── cli.py
 │   ├── config.py
