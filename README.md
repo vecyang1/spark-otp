@@ -7,6 +7,7 @@
 <br/><br/>
 
 [![GitHub Repository](https://img.shields.io/badge/GitHub-vecyang1%2Fspark--otp-181717?style=flat&logo=github)](https://github.com/vecyang1/spark-otp)
+[![Latest Release](https://img.shields.io/github/v/release/vecyang1/spark-otp?color=blue&logo=github)](https://github.com/vecyang1/spark-otp/releases/latest)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
