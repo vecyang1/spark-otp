@@ -25,9 +25,15 @@
 ---
 
 > [!IMPORTANT]
-> **Privacy & AI-Native Architecture / 隐私保护与本地架构说明**
-> - **English:** Spark OTP Autofill operates **100% locally** on your macOS machine. All OTP parsing is deterministic regex and proximity matching (zero LLM inference, zero cloud dependencies, zero external transmission of credentials). Verification codes are processed in memory and masked in telemetry logs (`52***6`).
-> - **中文：** Spark OTP Autofill **完全在本地 macOS 机器**上运行。所有验证码提取均为本地确定性正则与规则解析（零 LLM 调用、零外部云服务依赖、零凭证外发）。敏感验证码仅驻留于本地内存，并在所有审计日志中强制脱敏（如 `52***6`）。
+> **Privacy & Local Architecture Guarantee**
+>
+> Spark OTP Autofill operates **100% locally** on your macOS machine. All OTP parsing is deterministic regex and proximity matching (zero LLM inference, zero cloud dependencies, zero external transmission of credentials). Verification codes are processed in memory and masked in telemetry logs (`52***6`).
+>
+> <details>
+> <summary>中文说明 (Local Privacy Guarantee)</summary>
+>
+> Spark OTP Autofill 完全在本地 macOS 机器上运行。所有验证码提取均为本地确定性正则与规则解析（零 LLM 调用、零外部云服务依赖、零凭证外发）。敏感验证码仅驻留于本地内存，并在所有审计日志中强制脱敏（如 `52***6`）。
+> </details>
 
 ---
 
