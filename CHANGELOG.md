@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Designed and generated high-resolution dark-mode widescreen hero banner graphic (`docs/assets/hero-banner.png`) illustrating the zero-cloud macOS Spark mail integration, floating detection pill, and 6-digit autofill interface.
   - Updated `README.md` with the centered hero banner, GitHub repository badge, FastAPI badge, and architecture badge.
   - Synchronized the `README.md` directory tree to physically match the repository tree (including `scripts/` and `docs/assets/hero-banner.png`).
+- **Automated Release Pipeline & Distribution**:
+  - Added `./scripts/release.sh` for one-command release packaging, pre-flight privacy audit, asset bundling (standalone Chrome extension zip and userscript), and GitHub release publishing.
+  - Published official release `v1.3.4` on GitHub with downloadable assets.
+- **Documentation & Copywriting Polish**:
+  - Streamlined `README.md` callouts by removing awkward meta-labels (`• English:`) and converting secondary translations into clean collapsible disclosure blocks.
 
 ## [1.3.3] - 2026-09-08
 
