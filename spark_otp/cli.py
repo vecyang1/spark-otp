@@ -19,7 +19,7 @@ def main():
     # Command: get
     get_parser = subparsers.add_parser("get", help="Get the latest OTP code")
     get_parser.add_argument("--domain", "-d", help="Filter by target website domain (e.g. dashboard.stripe.com)")
-    get_parser.add_argument("--account", "-A", help="Filter by specific email account (e.g. alex.turner@gmail.com)")
+    get_parser.add_argument("--account", "-A", help="Filter by specific email account (e.g. alex.turner@example.com)")
     get_parser.add_argument("--max-age", "-a", type=int, default=600, help="Max code age in seconds (default: 600)")
     get_parser.add_argument("--json", action="store_true", help="Output full JSON result")
 

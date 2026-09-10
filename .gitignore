@@ -55,3 +55,11 @@ decisions.md
 FILE_MAP_INDEX.md
 operations/
 vault/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+CODEX.md
+PROJECT_LINKS.md
+.agents/
+.claude/
+.gemini/

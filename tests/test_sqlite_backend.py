@@ -62,7 +62,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
             self.db_path,
             pk=721280,
             sender="Bandwagon Host <noreply@64clouds.com>",
-            recipient="alex.turner@gmail.com",
+            recipient="alex.turner@example.com",
             subject="Device verification",
             short_body="Your device verification code: 273529. It is valid for 1 hour. Do NOT share this code with anyone.",
             received_ts=ts_now - 120  # 2 minutes ago
@@ -76,7 +76,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
         self.assertEqual(otp.message_id, "721280")
 
     def test_sqlite_account_prioritization(self):
-        """Verify that when account=alex.turner@gmail.com is requested, that account's message is prioritized."""
+        """Verify that when account=alex.turner@example.com is requested, that account's message is prioritized."""
         now = datetime.now()
         ts_now = int(now.timestamp())
 
@@ -96,7 +96,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
             self.db_path,
             pk=721280,
             sender="Bandwagon Host <noreply@64clouds.com>",
-            recipient="alex.turner@gmail.com",
+            recipient="alex.turner@example.com",
             subject="Device verification",
             short_body="Your device verification code: 273529. It is valid for 1 hour.",
             received_ts=ts_now - 60
@@ -104,8 +104,8 @@ class TestSparkSqliteBackend(unittest.TestCase):
 
         client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
 
-        # Query specifying alex.turner@gmail.com
-        otp_yang = client.get_latest_otp(domain="bandwagonhost.com", account="alex.turner@gmail.com", now=now)
+        # Query specifying alex.turner@example.com
+        otp_yang = client.get_latest_otp(domain="bandwagonhost.com", account="alex.turner@example.com", now=now)
         self.assertIsNotNone(otp_yang)
         self.assertEqual(otp_yang.code, "273529", "Must prioritize alex.turner message")
 
@@ -123,7 +123,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
             self.db_path,
             pk=721280,
             sender="Bandwagon Host <noreply@64clouds.com>",
-            recipient="alex.turner@gmail.com",
+            recipient="alex.turner@example.com",
             subject="Device verification",
             short_body="Your device verification code: 875358. It is valid for 1 hour.",
             received_ts=ts_now - 60
@@ -144,7 +144,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
             self.db_path,
             pk=721200,
             sender="Bandwagon Host <noreply@64clouds.com>",
-            recipient="alex.turner@gmail.com",
+            recipient="alex.turner@example.com",
             subject="Device verification",
             short_body="Your device verification code: 999888. It is valid for 1 hour.",
             received_ts=ts_now - 4500
@@ -164,7 +164,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
             self.db_path,
             pk=721303,
             sender="Bandwagon Host <noreply@64clouds.com>",
-            recipient="alex.turner@gmail.com",
+            recipient="alex.turner@example.com",
             subject="Device verification",
             short_body="Your device verification code: 856968. It is valid for 1 hour.",
             received_ts=ts_now + 600
@@ -195,7 +195,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
             self.db_path,
             pk=721280,
             sender="Bandwagon Host <noreply@64clouds.com>",
-            recipient="alex.turner@gmail.com",
+            recipient="alex.turner@example.com",
             subject="Device verification",
             short_body="Your device verification code: 273529. It is valid for 1 hour.",
             received_ts=ts_now - 15
@@ -213,7 +213,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
             self.db_path,
             pk=721270,
             sender="Bandwagon Host <noreply@64clouds.com>",
-            recipient="alex.turner@gmail.com",
+            recipient="alex.turner@example.com",
             subject="Device verification",
             short_body="Your device verification code: 875358. It is valid for 1 hour.",
             received_ts=int(t_937.timestamp()) - 25
@@ -223,18 +223,18 @@ class TestSparkSqliteBackend(unittest.TestCase):
             self.db_path,
             pk=721280,
             sender="Bandwagon Host <noreply@64clouds.com>",
-            recipient="alex.turner@gmail.com",
+            recipient="alex.turner@example.com",
             subject="Device verification",
             short_body="Your device verification code: 273529. It is valid for 1 hour.",
             received_ts=int(t_938.timestamp()) - 36
         )
         client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
 
-        otp_937 = client.get_latest_otp(domain="bandwagonhost.com", account="alex.turner@gmail.com", now=t_937)
+        otp_937 = client.get_latest_otp(domain="bandwagonhost.com", account="alex.turner@example.com", now=t_937)
         self.assertIsNotNone(otp_937)
         self.assertEqual(otp_937.code, "875358")
 
-        otp_938 = client.get_latest_otp(domain="bandwagonhost.com", account="alex.turner@gmail.com", now=t_938)
+        otp_938 = client.get_latest_otp(domain="bandwagonhost.com", account="alex.turner@example.com", now=t_938)
         self.assertIsNotNone(otp_938)
         self.assertEqual(otp_938.code, "273529")
 

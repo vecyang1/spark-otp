@@ -17,7 +17,7 @@ class MockStreamingSparkClient:
     def __init__(self):
         self.code_to_emit = "987654"
         self.is_ready = True
-        self.accounts = ["alex.turner@gmail.com", "alex.turner@acme-cloud.net"]
+        self.accounts = ["alex.turner@example.com", "alex.turner@acme-cloud.net"]
 
     def is_available(self) -> bool:
         return self.is_ready
@@ -144,7 +144,7 @@ class TestE2EFlow(unittest.TestCase):
                 db_path,
                 pk=721280,
                 sender="Bandwagon Host <noreply@64clouds.com>",
-                recipient="alex.turner@gmail.com",
+                recipient="alex.turner@example.com",
                 subject="Device verification",
                 short_body="Your device verification code: 273529. It is valid for 1 hour. Do NOT share this code with anyone.",
                 received_ts=ts_now - 15
@@ -157,7 +157,7 @@ class TestE2EFlow(unittest.TestCase):
             t.start()
             try:
                 # Test API GET /api/otp
-                url = f"http://127.0.0.1:{custom_port}/api/otp?domain=bandwagonhost.com&account=alex.turner@gmail.com"
+                url = f"http://127.0.0.1:{custom_port}/api/otp?domain=bandwagonhost.com&account=alex.turner@example.com"
                 req = urllib.request.urlopen(url)
                 self.assertEqual(req.status, 200)
                 data = json.loads(req.read().decode("utf-8"))
@@ -167,7 +167,7 @@ class TestE2EFlow(unittest.TestCase):
                 self.assertEqual(data["otp"]["domain"], "bandwagonhost.com")
 
                 # Test SSE GET /api/stream
-                stream_url = f"http://127.0.0.1:{custom_port}/api/stream?domain=bandwagonhost.com&account=alex.turner@gmail.com"
+                stream_url = f"http://127.0.0.1:{custom_port}/api/stream?domain=bandwagonhost.com&account=alex.turner@example.com"
                 stream_req = urllib.request.urlopen(stream_url, timeout=5)
                 self.assertEqual(stream_req.status, 200)
                 for _ in range(10):

@@ -302,7 +302,7 @@ Enter this code into Dia to continue. Do not share this code with anyone else.
 ID: 76990
 Subject: Your SOLIDWORKS ID validation code
 From: noreply@3ds.com
-To: alex.turner@gmail.com
+To: alex.turner@example.com
 Date: 2021-06-06 16:17
 Type: Email
 
@@ -320,7 +320,7 @@ Please note: This code will expire in 10 mins.
 ID: 68262
 Subject: Slack confirmation code: UZW-XAD
 From: Slack <no-reply-lVnLAA12zg49UO7QzbfB6qRP@slack.com>
-To: alex.turner@gmail.com
+To: alex.turner@example.com
 Date: 2022-07-31 22:47
 Type: Email
 
@@ -339,7 +339,7 @@ UZW-XAD
 ID: 240274
 Subject: One Time Passcode for 3D Secure
 From: Saphirstein <noreply@marqeta.com>
-To: Alex Turner <alex.turner@gmail.com>
+To: Alex Turner <alex.turner@example.com>
 Date: 2026-05-18 18:53
 Type: Email
 
@@ -359,7 +359,7 @@ Expires in 10 minutes.
 ID: 96921
 Subject: รหัส OTP เพื่อยืนยันอีเมล myID OTP to verify your myID email
 From: myAIS@ais.co.th
-To: alex.turner@gmail.com
+To: alex.turner@example.com
 Date: 2025-05-22 20:20
 Type: Email
 
@@ -380,7 +380,7 @@ Type: Email
 ID: 68791
 Subject: FB-51412 is your Facebook confirmation code
 From: Facebook <registration@facebookmail.com>
-To: Alex Turner <alex.turner@gmail.com>
+To: Alex Turner <alex.turner@example.com>
 Date: 2021-10-12 15:57
 Type: Email
 
@@ -397,7 +397,7 @@ FB-51412 is your Facebook confirmation code
 ID: 62018
 Subject: Your one-time login code for BHuman
 From: Login <login@stytch.com>
-To: alex.turner@gmail.com
+To: alex.turner@example.com
 Date: 2023-11-26 20:16
 Type: Email
 
@@ -428,7 +428,7 @@ Your code expires in 5 minutes. Please verify your account.
 ID: 167617
 Subject: 安全邮箱变更-验证码
 From: 火山引擎 <no-reply@notice.volcengine.com>
-To: alex.turner@gmail.com
+To: alex.turner@example.com
 Date: 2026-03-11 14:32
 Type: Email
 
@@ -445,7 +445,7 @@ Type: Email
 ID: 107208
 Subject: 验证码
 From: 割麦网 <support@getmacapp.com>
-To: alex.turner@gmail.com
+To: alex.turner@example.com
 Date: 2025-07-06 20:07
 Type: Email
 
@@ -462,7 +462,7 @@ Type: Email
 ID: 719724
 Subject: 434490 is your verification code
 From: Clerk <notifications@clerk.com>
-To: alex.turner@gmail.com
+To: alex.turner@example.com
 Date: 2026-09-04 23:06
 Type: Email
 
@@ -481,7 +481,7 @@ Enter the following verification code when prompted:
 ID: 719983
 Subject: Your Surfshark 2FA code is 871330
 From: Surfshark <no-reply@account.surfshark.com>
-To: alex.turner@gmail.com
+To: alex.turner@example.com
 Date: 2026-09-06 21:24
 Type: Email
 
@@ -533,7 +533,7 @@ Type: Email
 ID: 680638
 Subject: 677016 is Your Panda Remit Verification Code
 From: [PandaRemit]熊猫速汇 <welcome@notify.pandaremit.com>
-To: alex.turner@gmail.com
+To: alex.turner@example.com
 Date: 2026-05-27 13:49
 Type: Email
 

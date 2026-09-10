@@ -29,14 +29,14 @@ class MockSparkClient:
         return True
 
     def get_accounts(self):
-        return ["alex.turner@gmail.com", "dev.team@acme-cloud.net"]
+        return ["alex.turner@example.com", "dev.team@acme-cloud.net"]
 
     def get_latest_otp(self, domain=None, max_age_seconds=None, account=None, exclude_codes=None, exclude_message_ids=None, since_time=None, **kwargs):
         if domain == "error.test":
             raise RuntimeError("Spark CLI timeout")
         if domain == "wrong.domain.com":
             return None
-        if account == "nonexistent@gmail.com":
+        if account == "nonexistent@example.com":
             return None
         if exclude_codes and self.mock_otp.code in exclude_codes:
             return None
@@ -95,12 +95,12 @@ class TestServer(unittest.TestCase):
         data = json.loads(req.read().decode("utf-8"))
         self.assertTrue(data["success"])
         self.assertEqual(data["count"], 2)
-        self.assertIn("alex.turner@gmail.com", data["accounts"])
+        self.assertIn("alex.turner@example.com", data["accounts"])
         self.assertIn("dev.team@acme-cloud.net", data["accounts"])
 
     def test_otp_endpoint_account_param(self):
         # Valid account
-        url = f"http://127.0.0.1:{self.port}/api/otp?domain=test.domain.com&account=alex.turner@gmail.com"
+        url = f"http://127.0.0.1:{self.port}/api/otp?domain=test.domain.com&account=alex.turner@example.com"
         req = urllib.request.urlopen(url)
         self.assertEqual(req.status, 200)
         data = json.loads(req.read().decode("utf-8"))
@@ -108,7 +108,7 @@ class TestServer(unittest.TestCase):
         self.assertEqual(data["otp"]["code"], "123456")
 
         # Nonexistent account
-        url_none = f"http://127.0.0.1:{self.port}/api/otp?domain=test.domain.com&account=nonexistent@gmail.com"
+        url_none = f"http://127.0.0.1:{self.port}/api/otp?domain=test.domain.com&account=nonexistent@example.com"
         req_none = urllib.request.urlopen(url_none)
         self.assertEqual(req_none.status, 200)
         data_none = json.loads(req_none.read().decode("utf-8"))

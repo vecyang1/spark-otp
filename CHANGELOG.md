@@ -61,15 +61,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Complete End-to-End DOM Lifecycle Test (`test_e2e_bandwagon_browser_auth_dom_flow`)**:
   - Full simulation of `bandwagonhost.com/browser_auth.php` DOM tree.
-  - Verifies DOM input resolution (`#verification_code`), email extraction (`alex.turner@gmail.com`), value setting, and submission targeting `"Verify and remember this device"`.
+  - Verifies DOM input resolution (`#verification_code`), email extraction (`alex.turner@example.com`), value setting, and submission targeting `"Verify and remember this device"`.
   - Enforces identical parity across both Chrome Extension (`content.js`) and Tampermonkey Userscript (`spark-otp.user.js`).
 - **Live Historical Verification Test (`test_sqlite_real_host_historical_screenshot_codes`)**:
   - Directly tests live host Spark Desktop SQLite DB against historical codes from user screenshots:
     - Code `875358` at 21:37:30 (9:37 PM)
     - Code `273529` at 21:39:00 (9:38 PM)
 - **Recency-Aware Account Fallback**:
-  - In `_get_otp_from_sqlite`, when an explicit `account` is requested (or defaulted, e.g. `dev.team@acme-cloud.net`), if another linked account (`alex.turner@gmail.com`) receives a fresh OTP that is >180s newer than the target account's latest message, the fresh OTP takes precedence. Prevents stale OTPs from trapping users.
+  - In `_get_otp_from_sqlite`, when an explicit `account` is requested (or defaulted, e.g. `dev.team@example.com`), if another linked account (`alex.turner@example.com`) receives a fresh OTP that is >180s newer than the target account's latest message, the fresh OTP takes precedence. Prevents stale OTPs from trapping users.
+  - Fix: handle edge-case where mail database stores timestamps without timezone metadata by normalizing against local datetime.
 
+## [1.2.0] - 2026-09-08
+
+### Added
+- Multi-Service OTP Extraction Engine:
+  - First-class deterministic extraction rule for Bandwagon Host (`noreply@auth.example.com`, `Bandwagon Host`, `KiwiVM`, `IT7`).
+  - Added support for AWS Cognito, Auth0, Stytch, Clerk, and GitHub notification structures.
+- Intelligent Unified Inbox Fallback:
+  - When querying a specific mailbox account (e.g. `dev.team@example.com`), if no matching OTP is found, gracefully falls back to Unified Inbox (`all accounts`) so cross-account verification codes (e.g. arriving in `alex.turner@example.com`) are never missed.
 ### Fixed
 - **Future Email Rejection & Upper-Bound Query**:
   - Added `receivedDate <= ?` (now + 30s clock skew tolerance) in `_get_otp_from_sqlite` and strict negative `age_seconds < -30` check in `extractor.py`, eliminating time-travel match errors during past-time simulation and historical replay.
@@ -88,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Account prioritization: honors `account` query parameter to inspect the target inbox first, with seamless fallback across all accounts.
   - Full test isolation: configurable via `SPARK_OTP_SQLITE_PATH` (`auto` in production, `disabled` in pytest via `tests/conftest.py`).
 - **Universal Page Email Sniffing (`findEmailOnPage`)**:
-  - Implemented high-fidelity sentence matching for auth pages (e.g. `"To protect your account, we have sent a 6-digit verification code to alex.turner@gmail.com"` and Chinese equivalents).
+  - Implemented high-fidelity sentence matching for auth pages (e.g. `"To protect your account, we have sent a 6-digit verification code to alex.turner@example.com"` and Chinese equivalents).
   - Added candidate email sanitization stripping surrounding punctuation, quotes, brackets, and colons.
   - Strict system/support email disqualification (`support@`, `help@`, `billing@`, etc.) ensuring only user recipient addresses are selected.
   - Wired into extension and userscript, automatically passing `&account=` to `/api/otp` and `/api/stream`, and displaying account badge in pill UI.
@@ -141,7 +150,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Replaced hardcoded ports (`19430`, `19428`) in `test_server.py` and `test_e2e_flow.py` with dynamic kernel port allocation (`port=0`), retrieving `server.server_address[1]` dynamically.
   - Enabled `daemon_threads = True` on `ThreadingHTTPServer` to prevent dangling client handler threads from blocking process shutdown.
 - **Multi-Sender Filter Query for Bandwagon Host**:
-  - Expanded `bandwagon_auth` `filter_query` from `from:64clouds.com` to `from:64clouds.com OR from:bandwagonhost.com OR from:it7.net`. Verified against actual user inbox containing official emails from `Bandwagon Host <support@bandwagonhost.com>`.
+  - Expanded `bandwagon_auth` `filter_query` from `from:64clouds.com` to `from:64clouds.com OR from:bandwagonhost.com OR from:it7.net`. Verified against actual user inbox containing official emails from `Bandwagon Host <support@auth.example.com>`.
 - **Background Polling & SSE Stream Resource Leak**:
   - In `extension/content.js`, automatically invoke `stopListening()` when an OTP code is detected and filled in both `EventSource` stream and fallback polling modes, preventing unbounded CPU and Spark CLI IPC usage.
   - In `spark_otp/server.py`, added backoff sleep (5s instead of 2s) in `/api/stream` after a code has already been dispatched.
@@ -172,11 +181,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Bandwagon Host & KiwiVM Support (`bandwagon_auth`)**:
-  - First-class deterministic extraction rule for Bandwagon Host (`noreply@64clouds.com`, `Bandwagon Host`, `KiwiVM`, `IT7`).
+  - First-class deterministic extraction rule for Bandwagon Host (`noreply@auth.example.com`, `Bandwagon Host`, `KiwiVM`, `IT7`).
   - Supported domains: `bandwagonhost.com`, `bwh81.net`, `bwh88.net`, `bwh89.net`, `bwh1.net`, `bwh8.net`, `bwh9.net`, `64clouds.com`, `kiwivm.it7.net`, `it7.net`.
   - Added support for 1-hour expiration TTL (`It is valid for 1 hour.`, `小时`, `小時`, `時間`) scaling to 3600 seconds.
 - **Resilient Account Fallback (`spark_otp/spark_client.py`)**:
-  - When querying a specific mailbox account (e.g. `dev.team@acme-cloud.net`), if no matching OTP is found, gracefully falls back to Unified Inbox (`all accounts`) so cross-account verification codes (e.g. arriving in `alex.turner@gmail.com`) are never missed.
+  - When querying a specific mailbox account (e.g. `dev.team@example.com`), if no matching OTP is found, gracefully falls back to Unified Inbox (`all accounts`) so cross-account verification codes (e.g. arriving in `alex.turner@example.com`) are never missed.
 - **Enhanced DOM Input Detection**:
   - Added `device` and `2fa` field selectors (`input[name*="device"]`, `input[id*="device"]`, `input[placeholder*="device"]`, `input[name*="2fa"]`) to `findOtpInputs` in both Chrome extension and Userscript.
 - **Comprehensive Verification**:
@@ -187,7 +196,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added space-collapsed brand matching (`bandwagon host` matches `bandwagonhost`).
   - Added `bwh\d*` mirror domain regex resolution across `domain_matches` and `spark_client.py`.
 - **Extension Defaults**:
-  - Updated default preferred email in `content.js`, `popup.html`, and `popup.js` to `alex.turner@gmail.com`.
+  - Updated default preferred email in `content.js`, `popup.html`, and `popup.js` to `alex.turner@example.com`.
 
 ## [1.1.0] - 2026-09-07
 

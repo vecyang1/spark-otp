@@ -165,7 +165,7 @@ class TestDomDetection(unittest.TestCase):
                 if (sel.includes("p,")) {
                     return [{
                         children: [],
-                        textContent: "To protect your account, we have sent a 6-digit verification code to alex.turner@gmail.com"
+                        textContent: "To protect your account, we have sent a 6-digit verification code to alex.turner@example.org"
                     }];
                 }
                 return [];
@@ -180,7 +180,7 @@ class TestDomDetection(unittest.TestCase):
                 if (sel.includes("p,")) {
                     return [{
                         children: [],
-                        textContent: "我们已将验证码发送到 alex.turner@gmail.com，请在10分钟内输入。"
+                        textContent: "我们已将验证码发送到 alex.turner@example.org，请在10分钟内输入。"
                     }];
                 }
                 return [];
@@ -210,7 +210,7 @@ class TestDomDetection(unittest.TestCase):
                 if (sel.includes("p,")) {
                     return [{
                         children: [],
-                        textContent: "Verification code sent to alex.turner@gmail.com. Questions: support@64clouds.com"
+                        textContent: "Verification code sent to alex.turner@example.org. Questions: support@64clouds.com"
                     }];
                 }
                 return [];
@@ -223,10 +223,10 @@ class TestDomDetection(unittest.TestCase):
         proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
         self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
         data = json.loads(proc.stdout)
-        self.assertEqual(data["email1"], "alex.turner@gmail.com", "Bandwagon Host verification sentence must extract alex.turner@gmail.com")
-        self.assertEqual(data["email2"], "alex.turner@gmail.com", "Chinese verification sentence must extract alex.turner@gmail.com")
+        self.assertEqual(data["email1"], "alex.turner@example.org", "Bandwagon Host verification sentence must extract alex.turner@example.org")
+        self.assertEqual(data["email2"], "alex.turner@example.org", "Chinese verification sentence must extract alex.turner@example.org")
         self.assertIsNone(data["email3"], "Support/system email must be disqualified and return null")
-        self.assertEqual(data["email4"], "alex.turner@gmail.com", "Mixed user and support email must correctly pick user email")
+        self.assertEqual(data["email4"], "alex.turner@example.org", "Mixed user and support email must correctly pick user email")
 
     def test_bandwagon_browser_auth_dom_and_submit_detection(self):
         """Verify that browser_auth.php input element and submit button are recognized."""
@@ -335,15 +335,15 @@ class TestDomDetection(unittest.TestCase):
 
         const pDescEl = {
             tagName: "P",
-            children: [{ tagName: "BR" }, { tagName: "B", children: [{ tagName: "I", textContent: "alex.turner@gmail.com" }] }],
-            textContent: "To protect your account, we have sent a 6-digit verification code to\\nalex.turner@gmail.com",
+            children: [{ tagName: "BR" }, { tagName: "B", children: [{ tagName: "I", textContent: "alex.turner@example.org" }] }],
+            textContent: "To protect your account, we have sent a 6-digit verification code to\\nalex.turner@example.org",
             querySelectorAll(sel) { return []; }
         };
 
         const sidebarInfoEl = {
             tagName: "DIV",
             className: "card panel panel-default account-info",
-            textContent: "Account Information\\nAlex Turner\\nNew York, New York 10010\\nalex.turner@gmail.com",
+            textContent: "Account Information\\nAlex Turner\\nNew York, New York 10010\\nalex.turner@example.org",
             children: []
         };
 
@@ -377,7 +377,7 @@ class TestDomDetection(unittest.TestCase):
                     return [sidebarInfoEl];
                 }
                 if (sel.includes("b, strong")) {
-                    return [{ children: [], textContent: "alex.turner@gmail.com" }];
+                    return [{ children: [], textContent: "alex.turner@example.org" }];
                 }
                 return [];
             }
@@ -439,9 +439,9 @@ class TestDomDetection(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
         res = json.loads(proc.stdout)
         self.assertTrue(res["extHasInput"], "content.js must detect verification_code input")
-        self.assertEqual(res["extEmail"], "alex.turner@gmail.com", "content.js must detect alex.turner@gmail.com")
+        self.assertEqual(res["extEmail"], "alex.turner@example.org", "content.js must detect alex.turner@example.org")
         self.assertTrue(res["userHasInput"], "spark-otp.user.js must detect verification_code input")
-        self.assertEqual(res["userEmail"], "alex.turner@gmail.com", "spark-otp.user.js must detect alex.turner@gmail.com")
+        self.assertEqual(res["userEmail"], "alex.turner@example.org", "spark-otp.user.js must detect alex.turner@example.org")
         self.assertTrue(res["clickedSubmit"], "Submit button must be clicked")
         self.assertEqual(res["submitValue"], "273529", "Submitted value must be 273529")
 

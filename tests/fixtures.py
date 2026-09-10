@@ -3,14 +3,14 @@
 REAL_CLOUDFLARE_FINANCE_EMAIL = """
 Thread: Cloudflare Access login code for finance.acme-cloud.net
 Messages: 1
-Labels: alex.turner@gmail.com:Important
+Labels: alex.turner@example.com:Important
 Link: https://sparkmailapp.com/dpl/bl?token=QTphbGV4LnR1cm5lckBnbWFpbC5jb207SUQ6bW9ja19zcGFya190b2tlbl9zYW1wbGVfMTIz
 ────────────────────────────────────────────────────────────────────────
 
   ID: 720205
   Subject: Cloudflare Access login code for finance.acme-cloud.net
   From: Cloudflare <noreply@notify.cloudflare.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -33,13 +33,13 @@ Link: https://sparkmailapp.com/dpl/bl?token=QTphbGV4LnR1cm5lckBnbWFpbC5jb207SUQ6
 REAL_CLOUDFLARE_STATUS_EMAIL = """
 Thread: Cloudflare Access login code for status.acme-cloud.net
 Messages: 1
-Labels: alex.turner@gmail.com:Important
+Labels: alex.turner@example.com:Important
 ────────────────────────────────────────────────────────────────────────
 
   ID: 720198
   Subject: Cloudflare Access login code for status.acme-cloud.net
   From: Cloudflare <noreply@notify.cloudflare.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
   Flags: unread
@@ -60,7 +60,7 @@ ADVERSARIAL_SPAM_EMAIL = """
   ID: 720188
   Subject: Check automation errors on your account
   From: Albato <support@albato.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -73,7 +73,7 @@ ADVERSARIAL_AMBIGUOUS_NUMBERS = """
   ID: 720191
   Subject: Job opportunity in Tokyo
   From: Indeed <no-reply@indeed.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -85,7 +85,7 @@ GITHUB_VERIFY_EMAIL = """
   ID: 720250
   Subject: [GitHub] Please verify your device
   From: GitHub <noreply@github.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -99,7 +99,7 @@ GOOGLE_VERIFY_EMAIL = """
   ID: 720251
   Subject: Google Verification Code
   From: Google <no-reply@accounts.google.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -111,7 +111,7 @@ AWS_VERIFY_EMAIL = """
   ID: 720252
   Subject: Amazon Web Services Sign-In Verification
   From: Amazon Web Services <no-reply-aws@amazon.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -124,7 +124,7 @@ MICROSOFT_VERIFY_EMAIL = """
   ID: 720253
   Subject: Microsoft account security code
   From: Microsoft account team <account-security-noreply@accountprotection.microsoft.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -137,7 +137,7 @@ STRIPE_VERIFY_EMAIL = """
   ID: 720254
   Subject: Your Stripe verification code
   From: Stripe <support@stripe.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -150,7 +150,7 @@ SUPABASE_VERIFY_EMAIL = """
   ID: 720255
   Subject: Confirm your signup to Supabase
   From: Supabase <noreply@mail.supabase.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -162,7 +162,7 @@ VERCEL_VERIFY_EMAIL = """
   ID: 720256
   Subject: Vercel Login Verification
   From: Vercel <registration@vercel.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -174,7 +174,7 @@ NOTION_VERIFY_EMAIL = """
   ID: 720257
   Subject: Your Notion login code
   From: Notion <notify@notion.so>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -186,7 +186,7 @@ STEAM_GUARD_EMAIL = """
   ID: 720258
   Subject: Your Steam account: Access from new computer
   From: Steam Support <noreply@steampowered.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -198,7 +198,7 @@ SLACK_VERIFY_EMAIL = """
   ID: 720259
   Subject: Your Slack confirmation code
   From: Slack <feedback@slack.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -233,7 +233,7 @@ UNIVERSAL_JAPANESE_OTP_EMAIL = """
   ID: 720262
   Subject: 【サービス】ログイン認証コードのお知らせ
   From: サポート窓口 <noreply@service.co.jp>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -246,7 +246,7 @@ NON_OTP_RECEIPT_EMAIL = """
   ID: 720263
   Subject: Your order receipt #829104
   From: Store <orders@store.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -256,8 +256,8 @@ NON_OTP_RECEIPT_EMAIL = """
 """
 
 SAMPLE_SPARK_ACCOUNTS_OUTPUT = """
-Email Account: alex.turner@gmail.com (Access: read-only)
-├── Calendar: Alex's calendar - read-write ("alex.turner@gmail.com:Alex's calendar")
+Email Account: alex.turner@example.com (Access: read-only)
+├── Calendar: Alex's calendar - read-write ("alex.turner@example.com:Alex's calendar")
 
 Email Account: marcus.vance@techcorp.io "marcus.vance@techcorp.io" (Access: read-only)
 
@@ -280,7 +280,7 @@ SPACED_OTP_EMAIL = """
   ID: 720271
   Subject: Verification code for your account
   From: Secure Auth <auth@security-service.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -292,7 +292,7 @@ JAPANESE_ONETIME_PASSWORD_EMAIL = """
   ID: 720272
   Subject: ワンタイムパスワードのご案内
   From: 会員サポート <support@portal.co.jp>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 
@@ -314,14 +314,14 @@ CHINESE_DYNAMIC_CODE_EMAIL = """
 REAL_BANDWAGON_VERIFY_EMAIL = """
 Thread: Device verification
 Messages: 1
-Labels: alex.turner@gmail.com:Important
+Labels: alex.turner@example.com:Important
 Link: https://sparkmailapp.com/dpl/bl?token=QTphbGV4LnR1cm5lckBnbWFpbC5jb207SUQ6bW9ja19zcGFya190b2tlbl9zYW1wbGVfMTIz
 ────────────────────────────────────────────────────────────────────────
 
   ID: 721250
   Subject: Device verification
   From: Bandwagon Host <noreply@64clouds.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {date_str}
   Type: Email
 

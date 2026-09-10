@@ -517,7 +517,7 @@
     return [];
   }
 
-  // Sniff recipient email address mentioned on page (e.g. "sent a 6-digit verification code to alex.turner@gmail.com")
+  // Sniff recipient email address mentioned on page (e.g. "sent a 6-digit verification code to alex.turner@example.com")
   function findEmailOnPage() {
     if (typeof document === "undefined" || !document.body) return null;
 
@@ -537,7 +537,7 @@
       return true;
     }
 
-    // 1. High-fidelity sentence matching: e.g. "sent a 6-digit verification code to alex.turner@gmail.com"
+    // 1. High-fidelity sentence matching: e.g. "sent a 6-digit verification code to alex.turner@example.com"
     const sentencePatterns = [
       /(?:sent\s+(?:a\s+)?(?:\d+[- ]*(?:digit|char)\s+)?(?:verification\s+|security\s+|login\s+|device\s+|auth\s+)?(?:code|passcode|email|link|pin)\s+to|(?:verification|security)\s+code\s+sent\s+to|code\s+(?:was|has\s+been)\s+sent\s+to|sent\s+to|sent\s+an\s+email\s+to|check\s+your\s+email\s+at|发送至|发送到|已将验证码发送(?:至|到)|已向.*?发送验证码)\s*:?\s*([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/i,
       /(?:to\s+protect\s+your\s+account[^\n]*?sent[^\n]*?to)\s*([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/i,
@@ -581,7 +581,7 @@
       }
     }
 
-    // 3. User profile / account info blocks on auth page (e.g. WHMCS sidebar "Account Information ... alex.turner@gmail.com")
+    // 3. User profile / account info blocks on auth page (e.g. WHMCS sidebar "Account Information ... alex.turner@example.com")
     const accountInfoBlocks = document.querySelectorAll(".account-info, .account-information, #account-info, .user-info, .profile-info, [class*='account' i]");
     for (const block of accountInfoBlocks) {
       const m = block.textContent.match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g);

@@ -16,7 +16,7 @@ class MockClient:
         return True
 
     def get_accounts(self):
-        return ["dev.team@acme-cloud.net", "alex.turner@gmail.com"]
+        return ["dev.team@acme-cloud.net", "alex.turner@example.com"]
 
     def get_latest_otp(self, domain=None, max_age_seconds=None, account=None):
         return OTPResult(

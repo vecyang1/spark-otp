@@ -8,9 +8,9 @@ RAW_EMAILS_OUTPUT = """
 Emails in Unified Inbox
 
   ID      Account                 From                            Date              Subject                                             Flags
-  720205  alex.turner@gmail.com   Cloudflare <noreply@notify.cl…  2026-09-07 19:35  Cloudflare Access login code for finance.acme-cloud.net…  
-  720203  alex.turner@gmail.com   "マイナビスカウティング" <ags-support@my…  2026-09-07 19:03  【ピックアップ】編集部おススメ！関東の注目求人25選                          unread
-  720198  alex.turner@gmail.com   Cloudflare <noreply@notify.cl…  2026-09-07 18:36  Cloudflare Access login code for status.acme-cloud.net…   unread
+  720205  alex.turner@example.com   Cloudflare <noreply@notify.cl…  2026-09-07 19:35  Cloudflare Access login code for finance.acme-cloud.net…  
+  720203  alex.turner@example.com   "マイナビスカウティング" <ags-support@my…  2026-09-07 19:03  【ピックアップ】編集部おススメ！関東の注目求人25選                          unread
+  720198  alex.turner@example.com   Cloudflare <noreply@notify.cl…  2026-09-07 18:36  Cloudflare Access login code for status.acme-cloud.net…   unread
 
 Page 1 of 67 (996 total emails)
 """
@@ -21,7 +21,7 @@ class TestSparkClient(unittest.TestCase):
         self.assertEqual(len(emails), 3)
         
         self.assertEqual(emails[0].message_id, "720205")
-        self.assertEqual(emails[0].account, "alex.turner@gmail.com")
+        self.assertEqual(emails[0].account, "alex.turner@example.com")
         self.assertIn("Cloudflare", emails[0].sender)
         self.assertEqual(emails[0].date_str, "2026-09-07 19:35")
         self.assertIn("Cloudflare Access login code for finance.acme-cloud.net", emails[0].subject)
@@ -33,7 +33,7 @@ class TestSparkClient(unittest.TestCase):
     def test_parse_accounts_output(self):
         accounts = parse_accounts_output(SAMPLE_SPARK_ACCOUNTS_OUTPUT)
         self.assertEqual(len(accounts), 3)
-        self.assertEqual(accounts[0], "alex.turner@gmail.com")
+        self.assertEqual(accounts[0], "alex.turner@example.com")
         self.assertEqual(accounts[1], "marcus.vance@techcorp.io")
         self.assertEqual(accounts[2], "alex.turner@acme-cloud.net")
 
@@ -63,7 +63,7 @@ class TestSparkClient(unittest.TestCase):
         client = SparkClient(spark_bin="/usr/local/bin/spark", sqlite_path="disabled")
         otp = client.get_latest_otp(
             domain="finance.acme-cloud.net",
-            account="alex.turner@gmail.com",
+            account="alex.turner@example.com",
             max_age_seconds=600
         )
         self.assertIsNotNone(otp)
@@ -78,7 +78,7 @@ class TestSparkClient(unittest.TestCase):
 Emails in Unified Inbox
 
   ID      Account                 From                            Date              Subject                                             Flags
-  720272  alex.turner@gmail.com   会員サポート <support@portal.co.jp>  {fresh_time}  ワンタイムパスワードのご案内                                 unread
+  720272  alex.turner@example.com   会員サポート <support@portal.co.jp>  {fresh_time}  ワンタイムパスワードのご案内                                 unread
 """
         from tests.fixtures import JAPANESE_ONETIME_PASSWORD_EMAIL
         mock_emails_res = MagicMock(returncode=0, stdout=japanese_emails_table)
@@ -101,7 +101,7 @@ Emails in Unified Inbox
 Emails in Unified Inbox
 
   ID      Account                 From                            Date              Subject                                             Flags
-  720254  alex.turner@gmail.com   Stripe <support@stripe.com>     {fresh_time}  Stripe 2FA Verification                             unread
+  720254  alex.turner@example.com   Stripe <support@stripe.com>     {fresh_time}  Stripe 2FA Verification                             unread
 """
         from tests.fixtures import STRIPE_VERIFY_EMAIL
         mock_emails_res = MagicMock(returncode=0, stdout=stripe_emails_table)
@@ -124,7 +124,7 @@ Emails in Unified Inbox
 Emails in Unified Inbox
 
   ID      Account                 From                            Date              Subject                                             Flags
-  720254  alex.turner@gmail.com   Stripe <support@stripe.com>     2020-01-01 10:00  Stripe 2FA Verification                             unread
+  720254  alex.turner@example.com   Stripe <support@stripe.com>     2020-01-01 10:00  Stripe 2FA Verification                             unread
 """
         mock_emails_res = MagicMock(returncode=0, stdout=expired_emails_table)
         mock_run.return_value = mock_emails_res
@@ -163,9 +163,9 @@ Emails in alex.turner@acme-cloud.net
 Emails in Unified Inbox
 
   ID      Account                 From                            Date              Subject                                             Flags
-  720181  alex.turner@gmail.com   XinChaoVi Operations <hello@x…  {fresh_time}  [TidyCal Code: 182105] Verify your device on Tidy…  unread
-  720198  alex.turner@gmail.com   Cloudflare <noreply@notify.cl…  {fresh_time}  Cloudflare Access login code for status.acme-cloud.net… unread
-  719983  alex.turner@gmail.com   Surfshark <no-reply@account.s…  {fresh_time}  Your Surfshark 2FA code is 871330                   unread
+  720181  alex.turner@example.com   XinChaoVi Operations <hello@x…  {fresh_time}  [TidyCal Code: 182105] Verify your device on Tidy…  unread
+  720198  alex.turner@example.com   Cloudflare <noreply@notify.cl…  {fresh_time}  Cloudflare Access login code for status.acme-cloud.net… unread
+  719983  alex.turner@example.com   Surfshark <no-reply@account.s…  {fresh_time}  Your Surfshark 2FA code is 871330                   unread
 """
         mock_emails_res = MagicMock(returncode=0, stdout=emails_table)
         mock_run.return_value = mock_emails_res
@@ -189,13 +189,13 @@ Emails in Unified Inbox
 Emails in Unified Inbox
 
   ID      Account                 From                            Date              Subject                                             Flags
-  721250  alex.turner@gmail.com   Bandwagon Host <noreply@64clo…  {fresh_time}  Device verification                                 
+  721250  alex.turner@example.com   Bandwagon Host <noreply@64clo…  {fresh_time}  Device verification                                 
 """
         thread_content = f"""
   ID: 721250
   Subject: Device verification
   From: Bandwagon Host <noreply@64clouds.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {fresh_time}
   Type: Email
 
@@ -232,13 +232,13 @@ Emails in dev.team@acme-cloud.net
 Emails in Unified Inbox
 
   ID      Account                 From                            Date              Subject                                             Flags
-  721250  alex.turner@gmail.com   Bandwagon Host <noreply@64clo…  {fresh_time}  Device verification                                 
+  721250  alex.turner@example.com   Bandwagon Host <noreply@64clo…  {fresh_time}  Device verification                                 
 """
         thread_content = f"""
   ID: 721250
   Subject: Device verification
   From: Bandwagon Host <noreply@64clouds.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {fresh_time}
   Type: Email
 
@@ -271,13 +271,13 @@ Emails in Unified Inbox
 Emails in Unified Inbox (filter: from:64clouds.com)
 
   ID      Account                 From                            Date              Subject              Flags
-  721250  alex.turner@gmail.com   Bandwagon Host <noreply@64clo…  {fresh_time}  Device verification  
+  721250  alex.turner@example.com   Bandwagon Host <noreply@64clo…  {fresh_time}  Device verification  
 """
         thread_content = f"""
   ID: 721250
   Subject: Device verification
   From: Bandwagon Host <noreply@64clouds.com>
-  To: alex.turner@gmail.com
+  To: alex.turner@example.com
   Date: {fresh_time}
   Type: Email
 

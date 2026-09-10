@@ -51,7 +51,7 @@
    - Recency-aware account fallback: automatically promotes fresher OTPs from linked accounts if stale by >180s.
 
 3. **5-Tier Universal Page Email Sniffing**:
-   - Automatically sniffs the recipient email address from auth pages (e.g. `"To protect your account, we have sent a 6-digit code to alex.turner@gmail.com"`).
+   - Automatically sniffs the recipient email address from auth pages (e.g. `"To protect your account, we have sent a 6-digit code to alex.turner@example.com"`).
    - Dynamically binds `&account=` into API queries and displays the account badge in the floating pill UI.
    - 5-tier fallback cascade: form context, sentence regex matching, user profile cards, emphasis tags, and single valid user email scan.
 
@@ -175,7 +175,7 @@ spark-otp accounts
 spark-otp get --domain github.com
 
 # Target a specific email account:
-spark-otp get --domain dashboard.stripe.com --account alex.turner@gmail.com
+spark-otp get --domain dashboard.stripe.com --account alex.turner@example.com
 
 # Output structured JSON:
 spark-otp get --domain finance.acme-cloud.net --json
