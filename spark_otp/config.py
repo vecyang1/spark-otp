@@ -27,9 +27,9 @@ DEFAULT_RULES = [
     ),
     RuleDefinition(
         name="google_auth",
-        sender_pattern=r"(?i)(?:google|no-reply@accounts\.google\.com|accounts\.google\.com)",
-        subject_pattern=r"(?i)(?:verification code|security code|Google.*code)",
-        code_regex=r"(?i)(?:G-(\d{6})|(?:verification|security)?\s*code(?: is)?:?\s*(\d{6}))",
+        sender_pattern=r"(?i)(?:google|no-reply@accounts\.google\.com|accounts\.google\.com|noreply@google\.com)",
+        subject_pattern=r"(?i)(?:verification code|security code|Google.*code|verify (?:your )?email)",
+        code_regex=r"(?i)(?:G-(\d{6})|(?:verification|security)?\s*code(?: is)?:?\s*(\d{6})|(?:use this code to verify.*?|code.*?(?:belongs to you|verify).*?)\s*(\d{6}))",
         default_ttl_seconds=600,
         associated_domains=["google.com", "accounts.google.com"],
     ),
@@ -139,7 +139,7 @@ DEFAULT_RULES = [
     ),
     RuleDefinition(
         name="tidycal_auth",
-        sender_pattern=r"(?i)(?:tidycal|xinchaovi|glintmuse|service@tidycal\.com)",
+        sender_pattern=r"(?i)(?:tidycal|service@tidycal\.com)",
         subject_pattern=r"(?i)(?:TidyCal|Verify your device|New booking)",
         code_regex=r"(?i)(?:\[TidyCal Code:\s*([0-9]{6})\]|🔑\s*TidyCal Verification Code[^\n]*\n\s*([0-9]{6})|verify it's you\.\s*([0-9]{6}))",
         default_ttl_seconds=900,
@@ -269,6 +269,8 @@ class Config:
         self.telemetry_enabled = os.environ.get("SPARK_OTP_TELEMETRY", "1").lower() in ("1", "true", "yes")
         self.log_path = os.environ.get("SPARK_OTP_LOG_PATH", None)
         self.sqlite_db_path = os.environ.get("SPARK_OTP_SQLITE_PATH", "auto")
+        self.apple_mail_sqlite_path = os.environ.get("APPLE_MAIL_SQLITE_PATH", "auto")
+        self.apple_mail_enabled = os.environ.get("SPARK_OTP_APPLE_MAIL_ENABLED", "1").lower() in ("1", "true", "yes")
         self.rules: List[RuleDefinition] = DEFAULT_RULES
         
         if config_path and os.path.exists(config_path):
@@ -286,6 +288,9 @@ class Config:
             self.sentry_dsn = data.get("sentry_dsn", self.sentry_dsn)
             self.telemetry_enabled = data.get("telemetry_enabled", self.telemetry_enabled)
             self.log_path = data.get("log_path", self.log_path)
+            self.sqlite_db_path = data.get("sqlite_db_path", self.sqlite_db_path)
+            self.apple_mail_sqlite_path = data.get("apple_mail_sqlite_path", self.apple_mail_sqlite_path)
+            self.apple_mail_enabled = data.get("apple_mail_enabled", self.apple_mail_enabled)
             if "custom_rules" in data:
                 custom = [
                     RuleDefinition(**r) for r in data["custom_rules"]

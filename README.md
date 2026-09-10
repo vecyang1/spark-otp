@@ -14,9 +14,9 @@
 [![Chrome Extension](https://img.shields.io/badge/Chrome_Extension-MV3-brightgreen.svg)](extension/)
 [![Userscript](https://img.shields.io/badge/Userscript-Tampermonkey-orange.svg)](userscript/)
 [![Architecture](https://img.shields.io/badge/Architecture-Zero--LLM_Deterministic-success.svg)](docs/architecture.md)
-[![Tests](https://img.shields.io/badge/Tests-133%20passed-success.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-137%20passed-success.svg)](tests/)
 
-**Universal zero-LLM email verification code (OTP / 2FA) auto-detection, extraction, and autofill engine powered by local macOS Spark Desktop.**
+**Universal zero-LLM email verification code (OTP / 2FA) auto-detection, extraction, and autofill engine powered by local macOS Spark Desktop & Apple Mail.**
 
 [Features](#key-capabilities) • [Quick Start](#quick-start) • [Repository Structure](#repository-structure) • [API Contracts](#api-reference) • [Verification](#testing--verification) • [License](#license)
 
@@ -44,8 +44,9 @@
    - **Intelligent Multilingual Fallback**: Contextual proximity keyword scoring extracts codes from arbitrary enterprise SaaS platforms across English, 简体中文, 日本語, ภาษาไทย, and Tiếng Việt.
    - **Disqualification Safeguards**: Prevents false positive extraction of shipment tracking numbers, invoice amounts, reference codes, phone numbers, and dictionary words.
 
-2. **Sub-Millisecond Direct SQLite Fast-Path (Tier 0)**:
+2. **Sub-Millisecond Direct SQLite Fast-Path (Tier 0 & Tier 0b Dual-Client)**:
    - Direct read-only URI connection (`mode=ro`) to Spark Desktop's CoreData database (`~/Library/Application Support/Spark Mail/core-data/messages.sqlite`).
+   - Seamless automatic cascade to macOS native **Mail.app Envelope Index** (`~/Library/Mail/V10/MailData/Envelope Index`, Tier 0b) when Spark returns no OTP, effortlessly covering custom business domain emails (@example.com, @auth.example.com, etc.).
    - Retrieval latency drops from ~7,500ms (CLI IPC) to **sub-3ms**.
    - Solves the Spark CLI thread-collapsing bug on identical subjects (e.g. `Device verification`), ensuring newly arrived OTPs are never masked.
    - Recency-aware account fallback: automatically promotes fresher OTPs from linked accounts if stale by >180s.
@@ -131,6 +132,7 @@
 │   ├── conftest.py
 │   ├── fixtures.py
 │   ├── test_adversarial.py
+│   ├── test_apple_mail_fastpath.py
 │   ├── test_contracts.py
 │   ├── test_dom_detection.py
 │   ├── test_e2e_flow.py
@@ -149,7 +151,7 @@
 
 ### Prerequisites
 - macOS 12+
-- [Spark Mail Desktop](https://sparkmailapp.com/) (with mail accounts logged in)
+- [Spark Mail Desktop](https://sparkmailapp.com/) and/or macOS native **Mail.app** (with mail accounts logged in)
 - Python 3.10 or later
 
 ### 1. Install & Start Daemon
