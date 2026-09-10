@@ -257,6 +257,7 @@ OPENAPI_SPEC: Dict[str, Any] = {
                 "properties": {
                     "status": {"type": "string", "example": "ok"},
                     "spark_available": {"type": "boolean", "example": True},
+                    "apple_mail_available": {"type": "boolean", "example": True},
                     "timestamp": {"type": "number"},
                     "port": {"type": "integer", "example": 9428},
                     "metrics": {"type": "object"}

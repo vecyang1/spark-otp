@@ -33,6 +33,8 @@ def main():
     watch_parser.add_argument("--domain", "-d", help="Filter by target website domain")
     watch_parser.add_argument("--account", "-A", help="Filter by specific email account")
     watch_parser.add_argument("--interval", "-i", type=float, default=2.0, help="Check interval in seconds")
+    watch_parser.add_argument("--exit-on-match", "-1", action="store_true", help="Exit immediately upon first match")
+    watch_parser.add_argument("--json", action="store_true", help="Output as JSON stream / object")
 
     # Command: accounts
     subparsers.add_parser("accounts", help="List all email accounts configured in Spark Desktop")
@@ -98,19 +100,29 @@ def main():
     elif args.command == "watch":
         client = SparkClient()
         account = getattr(args, "account", None)
-        print(f"Watching Spark for OTP codes (domain: {args.domain or 'all'}, account: {account or 'all'})... Press Ctrl+C to stop.")
+        as_json = getattr(args, "json", False)
+        exit_on_match = getattr(args, "exit_on_match", False)
+
+        if not as_json:
+            print(f"Watching for OTP codes (domain: {args.domain or 'all'}, account: {account or 'all'})... Press Ctrl+C to stop.")
         last_id = None
         try:
             while True:
                 otp = client.get_latest_otp(domain=args.domain, max_age_seconds=600, account=account)
                 if otp and otp.message_id != last_id:
                     last_id = otp.message_id
-                    print(f"\n[OTP DETECTED] Code: {otp.code} | Domain: {otp.domain} | Sender: {otp.sender}")
-                    if otp.callback_url:
-                        print(f"  Callback: {otp.callback_url}")
+                    if as_json:
+                        print(json.dumps({"success": True, "otp": otp.to_dict()}), flush=True)
+                    else:
+                        print(f"\n[OTP DETECTED] Code: {otp.code} | Domain: {otp.domain} | Sender: {otp.sender}")
+                        if otp.callback_url:
+                            print(f"  Callback: {otp.callback_url}")
+                    if exit_on_match:
+                        sys.exit(0)
                 time.sleep(args.interval)
         except KeyboardInterrupt:
-            print("\nStopped watching.")
+            if not as_json:
+                print("\nStopped watching.")
 
     elif args.command == "accounts":
         client = SparkClient()

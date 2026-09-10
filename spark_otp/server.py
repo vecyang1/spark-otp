@@ -74,9 +74,17 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.end_headers()
         metrics = telemetry.get_metrics()
+        apple_mail_avail = False
+        if self.client and hasattr(self.client, "_find_apple_mail_sqlite_db"):
+            try:
+                apple_mail_avail = bool(self.client._find_apple_mail_sqlite_db())
+            except Exception:
+                pass
+
         data = {
             "status": "ok",
             "spark_available": self.client.is_available() if self.client else False,
+            "apple_mail_available": apple_mail_avail,
             "timestamp": time.time(),
             "port": self.server.server_port,
             "metrics": metrics
@@ -89,7 +97,12 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
         self._set_cors_headers()
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        accounts = self.client.get_accounts() if self.client else []
+        accounts = []
+        if self.client:
+            try:
+                accounts = self.client.get_accounts(include_apple_mail=True)
+            except TypeError:
+                accounts = self.client.get_accounts()
         duration_ms = (time.perf_counter() - t0) * 1000
         telemetry.record(
             endpoint="/api/accounts",
