@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.6] - 2026-09-11
+
+### Fixed
+- **Eliminate False-Positive OTP Detection on Non-SMS and KYC Pages**:
+  - **Purged Blind Auth Path Fallback**: Completely removed the aggressive single-input form fallback in `findOtpInputs()` Priority 6 that triggered on any URL containing `/verify/`, `/login/`, or `/auth/` (which caused business onboarding and profile forms, such as Kraken's `https://kraken.com/verify/flow`, to incorrectly flag `Company website` inputs as OTP fields). Form context detection now strictly targets dedicated 2FA/OTP forms (`form[action*="browser_auth.php"]`, `form[action*="twofactor"]`, `form[id*="totp"]`, `form[id*="otp"]`).
+  - **Comprehensive Negative Semantic Disqualification Heuristics**: Overhauled `isDisqualifiedInput` in `extension/content.js` and `isDisqualified` in `userscript/spark-otp.user.js` to disqualify non-SMS inputs across:
+    - Web addresses and URLs: `type="url"`, `website`, `web_url`, `domain`, `homepage`, or placeholder starting with `http://`, `https://`, `www.`.
+    - Business & onboarding profile data: `business_activity`, `company_name`, `industry`, `occupation`, `job_title`.
+    - Identity & KYC documentation: `passport_number`, `tax_id`, `ein`, `ssn`, `driver_license`, `doc_num`.
+    - Non-auth codes: `country_code`, `area_code`, `currency_code`, `tracking_code`, `postal_code`, `airport_code`, `source_code`.
+    - Device attributes: `device_name`, `device_alias`, `device_model` (preserving authentic `devicecode` / `device_code`).
+    - Input length constraint: fields with `maxlength > 20` disqualified from OTP consideration.
+  - **Session Dismissal Memory**:
+    - When a user clicks the dismiss button (`×`) on the floating pill, the plugin records `spark_otp_dismissed_{domain} = "1"` in session storage, preventing the pill from re-emerging on the current browsing session.
+  - **Polled Loop Removal in Userscript**:
+    - Replaced the aggressive 1-second `setInterval` loop in `spark-otp.user.js` with reactive `MutationObserver` (which cleanly disconnects once found or dismissed) and targeted `focusin` listeners.
+  - **Restricted `focusin` Activation**:
+    - Focused events now verify `if (otpInputs.includes(e.target))` instead of eagerly starting collection on any non-disqualified element focus.
+
+### Added
+- **Two-Sided Verification & Adversarial Test Coverage**:
+  - Added `test_kraken_onboarding_and_kyc_non_sms_disqualification` in `tests/test_dom_detection.py` simulating the exact Kraken onboarding page structure (`https://kraken.com/verify/flow` with `company_website`, textarea, and checkbox), asserting 0 detected OTP inputs while simultaneously proving authentic 2FA inputs on the same domain remain detected with 100% parity across extension and userscript.
+  - Added adversarial DOM tests in `tests/test_adversarial.py` verifying negative semantic rejection for URLs, KYC/business onboarding fields, and non-auth codes.
+  - Expanded automated test suite from 137 to 141 passing tests.
+
 ## [1.3.5] - 2026-09-10
 
 ### Added

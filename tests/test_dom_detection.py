@@ -42,7 +42,21 @@ class TestDomDetection(unittest.TestCase):
             { el: { type: "email", name: "email", id: "user_email", placeholder: "Email address", getAttribute: (k) => null }, expectedDisqualified: true, label: "email_address" },
             { el: { type: "text", name: "zip_code", id: "zip", placeholder: "ZIP code", getAttribute: (k) => null }, expectedDisqualified: true, label: "zip_code" },
             { el: { type: "text", name: "promo_code", id: "promo", placeholder: "Coupon code", getAttribute: (k) => null }, expectedDisqualified: true, label: "promo_code" },
-            { el: { type: "text", name: "query", id: "search_input", placeholder: "Search site", getAttribute: (k) => null }, expectedDisqualified: true, label: "search_input" }
+            { el: { type: "text", name: "query", id: "search_input", placeholder: "Search site", getAttribute: (k) => null }, expectedDisqualified: true, label: "search_input" },
+            { el: { type: "text", name: "company_website", id: "company_website", placeholder: "https://example.com", getAttribute: (k) => null }, expectedDisqualified: true, label: "company_website" },
+            { el: { type: "url", name: "website", id: "url", placeholder: "", getAttribute: (k) => null }, expectedDisqualified: true, label: "type_url" },
+            { el: { type: "text", name: "business_activity", id: "activity", placeholder: "Financial services", getAttribute: (k) => null }, expectedDisqualified: true, label: "business_activity" },
+            { el: { type: "text", name: "company_name", id: "company", placeholder: "Acme Corp", getAttribute: (k) => null }, expectedDisqualified: true, label: "company_name" },
+            { el: { type: "text", name: "industry", id: "industry", placeholder: "Fintech", getAttribute: (k) => null }, expectedDisqualified: true, label: "industry" },
+            { el: { type: "text", name: "country_code", id: "country", placeholder: "+1", getAttribute: (k) => null }, expectedDisqualified: true, label: "country_code" },
+            { el: { type: "text", name: "area_code", id: "area", placeholder: "415", getAttribute: (k) => null }, expectedDisqualified: true, label: "area_code" },
+            { el: { type: "text", name: "currency_code", id: "curr", placeholder: "USD", getAttribute: (k) => null }, expectedDisqualified: true, label: "currency_code" },
+            { el: { type: "text", name: "tracking_code", id: "track", placeholder: "FEDEX-91823", getAttribute: (k) => null }, expectedDisqualified: true, label: "tracking_code" },
+            { el: { type: "text", name: "postal_code", id: "postcode", placeholder: "10001", getAttribute: (k) => null }, expectedDisqualified: true, label: "postal_code" },
+            { el: { type: "text", name: "passport_number", id: "passport", placeholder: "Passport #", getAttribute: (k) => null }, expectedDisqualified: true, label: "passport_number" },
+            { el: { type: "text", name: "tax_id", id: "ein", placeholder: "Tax ID / EIN", getAttribute: (k) => null }, expectedDisqualified: true, label: "tax_id" },
+            { el: { type: "text", name: "device_name", id: "device_alias", placeholder: "My MacBook", getAttribute: (k) => null }, expectedDisqualified: true, label: "device_name" },
+            { el: { type: "text", name: "desc", id: "desc", placeholder: "Brief description", getAttribute: (k) => k === "maxlength" ? "100" : null }, expectedDisqualified: true, label: "maxlength_over_20" }
         ];
 
         const results = testCases.map(tc => {
@@ -1054,5 +1068,192 @@ class TestDomDetection(unittest.TestCase):
         self.assertTrue(data["hasUserEnPill"], "userscript missing English floating pill translations")
         self.assertTrue(data["hasUserZhPill"], "userscript missing Chinese floating pill translations")
 
+    def test_kraken_onboarding_and_kyc_non_sms_disqualification(self):
+        """
+        Two-Sided Verification:
+        1. On Kraken KYC / business onboarding (https://kraken.com/verify/flow), non-SMS fields like
+           'Company website', 'Business activity', and single text input forms MUST NOT trigger OTP detection.
+        2. Real OTP / 2FA fields on the same domain (e.g. twofactorauthcode, otp) MUST still be detected.
+        3. Tests 100% parity across extension/content.js and userscript/spark-otp.user.js.
+        """
+        js_code = """
+        const fs = require('fs');
+        const contentJs = fs.readFileSync('extension/content.js', 'utf8');
+        const userJs = fs.readFileSync('userscript/spark-otp.user.js', 'utf8');
+
+        function runDomTest(scriptSource, isUserScript) {
+            const extractFunc = (name) => {
+                const pat = new RegExp("function " + name + "\\\\([\\\\s\\\\S]*?\\\\n  \\\\}");
+                const m = scriptSource.match(pat);
+                if (!m) throw new Error("Function " + name + " not found in script");
+                return m[0];
+            };
+
+            const mockStorage = {};
+            const mockSessionStorage = {
+                getItem(k) { return mockStorage[k] || null; },
+                setItem(k, v) { mockStorage[k] = String(v); }
+            };
+
+            const websiteInput = {
+                tagName: "INPUT",
+                type: "text",
+                name: "company_website",
+                id: "company_website",
+                placeholder: "https://example.com",
+                value: "",
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                getAttribute(k) {
+                    if (k === "maxlength") return "100";
+                    return null;
+                },
+                getBoundingClientRect() { return { top: 100, left: 100, width: 300, height: 40 }; }
+            };
+
+            const tosCheckbox = {
+                tagName: "INPUT",
+                type: "checkbox",
+                name: "tos",
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                getAttribute() { return null; }
+            };
+
+            const submitBtn = {
+                tagName: "BUTTON",
+                type: "submit",
+                textContent: "Continue",
+                disabled: false,
+                offsetParent: {},
+                getAttribute() { return null; }
+            };
+
+            const krakenForm = {
+                tagName: "FORM",
+                action: "/verify/flow",
+                querySelectorAll(sel) {
+                    if (sel.includes('input[type="text"]')) return [websiteInput];
+                    if (sel.includes("button") || sel.includes("submit")) return [submitBtn];
+                    return [];
+                },
+                querySelector(sel) {
+                    if (sel.includes("button") || sel.includes("submit")) return submitBtn;
+                    return null;
+                }
+            };
+
+            const mockDoc = {
+                body: {
+                    innerText: "Verify your business details Company website https://example.com Continue",
+                    textContent: "Verify your business details Company website https://example.com Continue"
+                },
+                location: {
+                    href: "https://kraken.com/verify/flow",
+                    search: "",
+                    hostname: "kraken.com",
+                    pathname: "/verify/flow"
+                },
+                getElementById(id) {
+                    if (id === "company_website") return websiteInput;
+                    return null;
+                },
+                querySelector(sel) {
+                    if (sel.includes("company_website")) return websiteInput;
+                    return null;
+                },
+                querySelectorAll(sel) {
+                    if (sel.includes("form")) return [krakenForm];
+                    if (sel.includes("company_website")) return [websiteInput];
+                    return [];
+                }
+            };
+
+            global.window = {
+                location: mockDoc.location,
+                sessionStorage: mockSessionStorage,
+                HTMLInputElement: { prototype: {} },
+                getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" })
+            };
+            global.document = mockDoc;
+
+            eval(extractFunc("detectTargetDomain"));
+            eval(extractFunc("isInteractiveElement"));
+            if (isUserScript) {
+                eval(extractFunc("isDisqualified"));
+                eval(extractFunc("sortInputs"));
+            } else {
+                eval(extractFunc("isDisqualifiedInput"));
+                eval(extractFunc("sortInputsByVisualOrder"));
+                eval(extractFunc("isVerifyButton"));
+            }
+            eval(extractFunc("findOtpInputs"));
+            eval(extractFunc("getStorageItem"));
+            eval(extractFunc("setStorageItem"));
+
+            // 1. Non-SMS KYC onboarding: Company website must NOT be detected as OTP
+            const nonSmsFound = findOtpInputs();
+
+            // 2. Real OTP test: Now add an authentic 2FA / OTP field to the page
+            const authenticOtpInput = {
+                tagName: "INPUT",
+                type: "text",
+                name: "twofactorauthcode",
+                id: "twofactorauthcode",
+                placeholder: "Enter 6-digit code",
+                value: "",
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                getAttribute(k) { return null; },
+                getBoundingClientRect() { return { top: 200, left: 100, width: 160, height: 40 }; }
+            };
+
+            mockDoc.getElementById = (id) => (id === "twofactorauthcode" ? authenticOtpInput : null);
+            mockDoc.querySelectorAll = (sel) => {
+                if (sel.includes("twofactorauthcode") || sel.includes("twofactor") || sel.includes("two-factor")) {
+                    return [authenticOtpInput];
+                }
+                return [];
+            };
+
+            const authenticFound = findOtpInputs();
+
+            // 3. Dismissal tracking test
+            setStorageItem("spark_otp_dismissed_kraken.com", "1");
+            const isDismissed = getStorageItem("spark_otp_dismissed_kraken.com") === "1";
+
+            return {
+                nonSmsCount: nonSmsFound.length,
+                authenticCount: authenticFound.length,
+                authenticCodeMatches: authenticFound.length === 1 && authenticFound[0] === authenticOtpInput,
+                isDismissed
+            };
+        }
+
+        const extResult = runDomTest(contentJs, false);
+        const userResult = runDomTest(userJs, true);
+
+        console.log(JSON.stringify({ ext: extResult, user: userResult }));
+        """
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        # Extension assertions
+        self.assertEqual(data["ext"]["nonSmsCount"], 0, "Extension must not detect company website on Kraken onboarding")
+        self.assertEqual(data["ext"]["authenticCount"], 1, "Extension must detect authentic 2FA field")
+        self.assertTrue(data["ext"]["authenticCodeMatches"], "Extension must return the authentic 2FA field")
+        self.assertTrue(data["ext"]["isDismissed"], "Extension session dismissal must be stored")
+
+        # Userscript assertions
+        self.assertEqual(data["user"]["nonSmsCount"], 0, "Userscript must not detect company website on Kraken onboarding")
+        self.assertEqual(data["user"]["authenticCount"], 1, "Userscript must detect authentic 2FA field")
+        self.assertTrue(data["user"]["authenticCodeMatches"], "Userscript must return the authentic 2FA field")
+        self.assertTrue(data["user"]["isDismissed"], "Userscript session dismissal must be stored")
+
 if __name__ == "__main__":
     unittest.main()
+

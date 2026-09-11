@@ -194,6 +194,48 @@ class TestAdversarialDomInputs(unittest.TestCase):
         for item in res:
             self.assertTrue(item["disqualified"], f"{item['id']} must be disqualified")
 
+    def test_disqualify_url_and_website_fields(self):
+        """Website, domain, and URL fields must be disqualified even on auth/verify pages."""
+        elements = [
+            {"id": "comp_site", "name": "company_website", "placeholder": "https://example.com"},
+            {"id": "url_input", "type": "url", "name": "site_url", "placeholder": ""},
+            {"id": "domain_inp", "name": "company_domain", "placeholder": "example.com"},
+            {"id": "homepage", "name": "homepage_url", "placeholder": "Enter website"}
+        ]
+        res = self._eval_elements(elements)
+        for item in res:
+            self.assertTrue(item["disqualified"], f"{item['id']} must be disqualified")
+
+    def test_disqualify_kyc_and_business_onboarding_fields(self):
+        """KYC identity, tax, company information, and free-text inputs must be disqualified."""
+        elements = [
+            {"id": "biz_act", "name": "business_activity", "placeholder": "Briefly describe your business"},
+            {"id": "comp_name", "name": "company_name", "placeholder": "Acme Inc"},
+            {"id": "ind", "name": "industry", "placeholder": "Financial Technology"},
+            {"id": "pass_num", "name": "passport_number", "placeholder": "Passport number"},
+            {"id": "tax", "name": "tax_id", "placeholder": "EIN or SSN"},
+            {"id": "ein_field", "name": "ein", "placeholder": "12-3456789"},
+            {"id": "long_text", "name": "description", "placeholder": "Provide details", "attributes": {"maxlength": "200"}}
+        ]
+        res = self._eval_elements(elements)
+        for item in res:
+            self.assertTrue(item["disqualified"], f"{item['id']} must be disqualified")
+
+    def test_disqualify_device_and_non_auth_codes(self):
+        """Device metadata, telephone country codes, tracking codes, and currencies must be disqualified."""
+        elements = [
+            {"id": "dev_name", "name": "device_name", "placeholder": "MacBook Pro"},
+            {"id": "dev_alias", "name": "device_alias", "placeholder": "Work Laptop"},
+            {"id": "cntry_code", "name": "country_code", "placeholder": "+1"},
+            {"id": "area_code", "name": "area_code", "placeholder": "415"},
+            {"id": "curr_code", "name": "currency_code", "placeholder": "USD"},
+            {"id": "trk_code", "name": "tracking_code", "placeholder": "USPS-91823"},
+            {"id": "post_code", "name": "postal_code", "placeholder": "94103"}
+        ]
+        res = self._eval_elements(elements)
+        for item in res:
+            self.assertTrue(item["disqualified"], f"{item['id']} must be disqualified")
+
 
 class TestAdversarialSparkClient(unittest.TestCase):
     """Verify that SparkClient handles corrupted output, timeouts, and edge cases gracefully."""
