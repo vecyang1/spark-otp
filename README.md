@@ -14,7 +14,7 @@
 [![Chrome Extension](https://img.shields.io/badge/Chrome_Extension-MV3-brightgreen.svg)](extension/)
 [![Userscript](https://img.shields.io/badge/Userscript-Tampermonkey-orange.svg)](userscript/)
 [![Architecture](https://img.shields.io/badge/Architecture-Zero--LLM_Deterministic-success.svg)](docs/architecture.md)
-[![Tests](https://img.shields.io/badge/Tests-137%20passed-success.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-142%20passed-success.svg)](tests/)
 
 **Universal zero-LLM email verification code (OTP / 2FA) auto-detection, extraction, and autofill engine powered by local macOS Spark Desktop & Apple Mail.**
 
@@ -117,7 +117,9 @@
 │   └── README.md
 ├── scripts
 │   ├── com.spark_otp.daemon.plist
-│   └── manage_daemon.sh
+│   ├── manage_daemon.sh
+│   ├── release.sh
+│   └── sync_engine.py
 ├── spark_otp
 │   ├── cli.py
 │   ├── config.py
@@ -184,6 +186,12 @@ spark-otp get --domain finance.acme-cloud.net --json
 
 # Watch for incoming codes in real-time in your terminal:
 spark-otp watch --domain vercel.com
+
+# Synchronize SSOT DOM detection engine into userscript:
+spark-otp sync
+
+# Check SSOT parity in CI / pre-commit:
+spark-otp sync --check
 ```
 
 ### 3. Chrome Extension (Manifest V3)
@@ -224,7 +232,7 @@ The local daemon exposes a high-performance REST and SSE API on port `9428`:
 Spark OTP includes a rigorous two-sided test suite covering positive paths, edge cases, adversarial challenges, and multi-threaded concurrency:
 
 ```bash
-# Run the full automated test suite (132 tests):
+# Run the full automated test suite (142 tests):
 python3 -m unittest discover -s tests -p "test_*.py" -v
 
 # Or using pytest:
@@ -233,9 +241,10 @@ python3 -m pytest tests/ -v
 
 ### Verification Coverage
 - `tests/test_extractor.py`: 54 tests validating deterministic parsing across 25+ services and multilingual patterns.
-- `tests/test_dom_detection.py`: 8 tests validating WHMCS, segmented inputs, and anti-loop error recovery.
-- `tests/test_adversarial.py`: 14 tests validating rejection of shipping tracking numbers, invoice numbers, expired tokens, and 30-client concurrency.
+- `tests/test_dom_detection.py`: 11 tests validating WHMCS, segmented inputs, anti-loop error recovery, and KYC onboarding & Persona QR handoff rejection.
+- `tests/test_adversarial.py`: 17 tests validating rejection of shipping tracking numbers, invoice numbers, expired tokens, KYC/business onboarding inputs, and 30-client concurrency.
 - `tests/test_sqlite_backend.py`: 9 tests validating sub-millisecond SQLite fast-path, account prioritization, and since-time filtering.
+- `tests/test_apple_mail_fastpath.py`: 4 tests validating macOS Mail.app envelope index SQLite discovery and fallback.
 - `tests/test_spark_client.py`: 14 tests validating table parsing, account extraction, and rule queries.
 - `tests/test_server.py`: 16 tests validating all HTTP/SSE endpoints, error handling, CORS, and keepalive.
 - `tests/test_e2e_flow.py`: 7 tests validating full end-to-end integration and streaming delivery.
