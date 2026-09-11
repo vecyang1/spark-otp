@@ -59,6 +59,10 @@ def main():
     inst_parser = subparsers.add_parser("install-native", help="Install Chrome Native Messaging Host manifest")
     inst_parser.add_argument("--extension-id", default="*", help="Allowed Chrome Extension ID (default: *)")
 
+    # Command: sync
+    sync_parser = subparsers.add_parser("sync", help="Synchronize DOM detection engine between extension and userscript (SSOT)")
+    sync_parser.add_argument("--check", action="store_true", help="Check parity without modifying files")
+
     args = parser.parse_args()
 
     if not args.command or args.command == "get":
@@ -165,6 +169,16 @@ def main():
     elif args.command == "install-native":
         from .native_messaging import install_host_manifest
         install_host_manifest(args.extension_id)
+
+    elif args.command == "sync":
+        import subprocess
+        from pathlib import Path
+        sync_script = Path(__file__).resolve().parent.parent / "scripts" / "sync_engine.py"
+        cmd = [sys.executable, str(sync_script)]
+        if args.check:
+            cmd.append("--check")
+        res = subprocess.run(cmd)
+        sys.exit(res.returncode)
 
 if __name__ == "__main__":
     main()

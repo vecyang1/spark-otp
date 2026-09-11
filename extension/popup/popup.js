@@ -13,10 +13,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   const btnSave = document.getElementById("btn-save");
   const btnRefresh = document.getElementById("btn-refresh");
   const saveMsg = document.getElementById("save-msg");
+  const inputNewDisabledDomain = document.getElementById("input-new-disabled-domain");
+  const btnAddDisabledDomain = document.getElementById("btn-add-disabled-domain");
+  const disabledDomainsList = document.getElementById("disabled-domains-list");
 
   let savedAccount = "";
   let currentLang = "auto";
   let lastDaemonStatus = "checking"; // checking, online, spark_offline, daemon_offline
+  let disabledDomains = [];
 
   const POPUP_I18N = {
     en: {
@@ -48,7 +52,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       check_daemon: "Check Daemon",
       save_settings: "Save Settings",
       saved_msg: "Settings saved!",
-      left_sec: "s left"
+      left_sec: "s left",
+      disabled_sites_label: "Disabled Sites (Blacklist)",
+      add_domain: "Add",
+      no_disabled_sites: "No disabled sites"
     },
     zh: {
       connecting: "正在连接...",
@@ -79,7 +86,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       check_daemon: "检查服务状态",
       save_settings: "保存配置",
       saved_msg: "配置已保存并同步!",
-      left_sec: "秒有效"
+      left_sec: "秒有效",
+      disabled_sites_label: "已禁用网站名单 (黑名单)",
+      add_domain: "添加",
+      no_disabled_sites: "暂无禁用网站"
     }
   };
 
@@ -133,9 +143,57 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  function renderDisabledDomains() {
+    if (!disabledDomainsList) return;
+    disabledDomainsList.innerHTML = "";
+    if (!disabledDomains || disabledDomains.length === 0) {
+      disabledDomainsList.innerHTML = `<span style="font-size:11px;color:#64748b;">${t("no_disabled_sites")}</span>`;
+      return;
+    }
+    disabledDomains.forEach(domain => {
+      const pill = document.createElement("span");
+      pill.className = "tag-pill";
+      pill.innerHTML = `<span>${domain}</span><button class="tag-remove" title="Remove" data-domain="${domain}">×</button>`;
+      disabledDomainsList.appendChild(pill);
+    });
+
+    disabledDomainsList.querySelectorAll(".tag-remove").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const d = btn.getAttribute("data-domain");
+        disabledDomains = disabledDomains.filter(x => x !== d);
+        saveDisabledDomains();
+        renderDisabledDomains();
+      });
+    });
+  }
+
+  function saveDisabledDomains() {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.sync) {
+      chrome.storage.sync.set({ disabledDomains });
+    }
+  }
+
+  if (btnAddDisabledDomain && inputNewDisabledDomain) {
+    btnAddDisabledDomain.addEventListener("click", () => {
+      const val = (inputNewDisabledDomain.value || "").trim().toLowerCase();
+      if (val && !disabledDomains.includes(val)) {
+        disabledDomains.push(val);
+        inputNewDisabledDomain.value = "";
+        saveDisabledDomains();
+        renderDisabledDomains();
+      }
+    });
+    inputNewDisabledDomain.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        btnAddDisabledDomain.click();
+      }
+    });
+  }
+
   // Load saved settings
   if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.sync) {
-    chrome.storage.sync.get(["serverPort", "autoSubmit", "autoEmail", "defaultEmail", "selectedAccount", "autoDirectJump", "language"], (res) => {
+    chrome.storage.sync.get(["serverPort", "autoSubmit", "autoEmail", "defaultEmail", "selectedAccount", "autoDirectJump", "language", "disabledDomains"], (res) => {
       if (res.serverPort) inputPort.value = res.serverPort;
       if (typeof res.autoSubmit !== "undefined") toggleAutoSubmit.checked = res.autoSubmit;
       if (typeof res.autoEmail !== "undefined") toggleAutoEmail.checked = res.autoEmail;
@@ -146,11 +204,16 @@ document.addEventListener("DOMContentLoaded", async () => {
         selectLang.value = res.language;
         currentLang = res.language;
       }
+      if (res.disabledDomains && Array.isArray(res.disabledDomains)) {
+        disabledDomains = res.disabledDomains;
+      }
       applyLanguage(currentLang);
+      renderDisabledDomains();
       checkDaemon();
     });
   } else {
     applyLanguage("auto");
+    renderDisabledDomains();
     checkDaemon();
   }
 
@@ -281,7 +344,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         defaultEmail: defaultEmail,
         selectedAccount: selectedAccountVal,
         autoDirectJump: autoDirectJump,
-        language: languageVal
+        language: languageVal,
+        disabledDomains: disabledDomains
       }, () => {
         saveMsg.textContent = t("saved_msg");
         setTimeout(() => { saveMsg.textContent = ""; }, 2000);

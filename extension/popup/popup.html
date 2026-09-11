@@ -93,6 +93,15 @@
       <input type="number" id="input-port" value="9428" min="1024" max="65535">
     </div>
 
+    <div class="card" id="disabled-domains-card">
+      <div class="card-label" data-i18n="disabled_sites_label">Disabled Sites (Blacklist)</div>
+      <div class="domain-input-wrap">
+        <input type="text" id="input-new-disabled-domain" placeholder="e.g. kraken.com" class="input-sm">
+        <button id="btn-add-disabled-domain" class="btn-sm" data-i18n="add_domain">Add</button>
+      </div>
+      <div id="disabled-domains-list" class="tags-container"></div>
+    </div>
+
     <div class="actions">
       <button id="btn-refresh" class="btn btn-secondary" data-i18n="check_daemon">Check Daemon</button>
       <button id="btn-save" class="btn btn-primary" data-i18n="save_settings">Save Settings</button>
