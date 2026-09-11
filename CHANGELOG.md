@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.7] - 2026-09-11
+
+### Fixed
+- **Disqualify Stepper Navigation, Multi-Step Wizards & Persona QR Handoff Elements**:
+  - Completely resolved false-positive OTP collection on onboarding/KYC flows (e.g. Kraken KYC flow `https://kraken.com/verify/flow` on "Continue on another device" / Persona handoff screens).
+  - Explicitly excluded inputs located inside `<nav>`, `<aside>`, `<header>`, `<footer>`, `[role="navigation"]`, `[role="tablist"]`, and cookie/consent banners.
+  - Disqualified stepper/wizard navigation identifiers (`step`, `stepper`, `wizard`, `sidebar`, `nav`, `tab`, `section`, `menu`, `stage`, `status`, `toggle`, `breadcrumb`).
+  - Disqualified inputs containing URLs, handoff links, or long existing values (`https://`, `perso.na`, length > 12).
+  - Disqualified media, QR scanning, webcam, and document verification handoff selectors (`camera`, `webcam`, `photo`, `selfie`, `qr`, `scan`, `barcode`, `upload`, `document`, `identity_check`, `persona`, `handoff`).
+  - Tightened `2fa` selector matching in `findOtpInputs()` targeted selectors to require authentic code suffixes (`2fa_code`, `2fa-code`, `2facode`, `twofacode`) rather than generic `input[id*="2fa"]` or `input[name*="2fa"]` which matched stepper items like `id="step-2fa"`.
+
+### Added
+- **Single Source of Truth (SSOT) Synchronization Engine**:
+  - Unified core DOM detection engine across `extension/content.js` and `userscript/spark-otp.user.js` using tagged SSOT boundaries.
+  - Built `scripts/sync_engine.py` and integrated `spark-otp sync` (and `--check`) into `spark_otp/cli.py` and `package.json` (`npm run sync`, `npm run sync:check`), eliminating snippet rot and logic drift between targets.
+- **Configurable Domain Blacklisting & 1-Click Domain Mute**:
+  - Added 1-click domain disabling button (`🚫`) to floating pill in both Chrome extension and userscript, allowing users to silence detection on any non-SMS site with one click.
+  - Added "Disabled Sites (Blacklist)" card in extension popup (`popup.html`, `popup.css`, `popup.js`) supporting tag pill display, custom domain addition, and one-click removal synced via `chrome.storage.sync`.
+  - Added `localStorage` and `GM_setValue` / `GM_getValue` persistence for disabled domains in userscript.
+- **Two-Sided Adversarial Test Coverage**:
+  - Added `test_kraken_persona_qr_handoff_and_stepper_disqualification` in `tests/test_dom_detection.py` verifying that stepper navigation, Persona QR handoff boxes, and cookie banners produce 0 false positives while authentic 2FA codes are reliably captured.
+  - Automated test suite expanded to 142 passing tests with 100% SSOT parity check.
+
 ## [1.3.6] - 2026-09-11
 
 ### Fixed

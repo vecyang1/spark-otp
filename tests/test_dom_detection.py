@@ -425,10 +425,12 @@ class TestDomDetection(unittest.TestCase):
         // 2. Test userscript/spark-otp.user.js detection and email sniffing
         const userFuncFindInputs = userJs.match(/function findOtpInputs\\(\\) \\{[\\s\\S]*?\\n  \\}/)[0];
         const userFuncFindEmail = userJs.match(/function findEmailOnPage\\(\\) \\{[\\s\\S]*?\\n  \\}/)[0];
-        const userFuncIsDisq = userJs.match(/function isDisqualified\\(el\\) \\{[\\s\\S]*?\\n  \\}/)[0];
-        const userFuncSort = userJs.match(/function sortInputs\\(inputs\\) \\{[\\s\\S]*?\\n  \\}/)[0];
+        const userFuncIsDisq = userJs.match(/function isDisqualifiedInput\\(el\\) \\{[\\s\\S]*?\\n  \\}/)[0];
+        const userFuncIsInteractive = userJs.match(/function isInteractiveElement\\(el\\) \\{[\\s\\S]*?\\n  \\}/)[0];
+        const userFuncSort = userJs.match(/function sortInputsByVisualOrder\\(inputs\\) \\{[\\s\\S]*?\\n  \\}/)[0];
 
         eval(userFuncIsDisq);
+        eval(userFuncIsInteractive);
         eval(userFuncSort);
         eval(userFuncFindInputs);
         eval(userFuncFindEmail);
@@ -611,13 +613,11 @@ class TestDomDetection(unittest.TestCase):
 
             eval(extractFunc("detectTargetDomain"));
             eval(extractFunc("isInteractiveElement"));
+            eval(extractFunc("isDisqualifiedInput"));
+            eval(extractFunc("sortInputsByVisualOrder"));
             if (isUserScript) {
-                eval(extractFunc("isDisqualified"));
-                eval(extractFunc("sortInputs"));
                 eval(extractFunc("setInputValue"));
             } else {
-                eval(extractFunc("isDisqualifiedInput"));
-                eval(extractFunc("sortInputsByVisualOrder"));
                 eval(extractFunc("setInputValueWithReactSupport"));
                 eval(extractFunc("isVerifyButton"));
             }
@@ -820,13 +820,11 @@ class TestDomDetection(unittest.TestCase):
 
             eval(extractFunc("detectTargetDomain"));
             eval(extractFunc("isInteractiveElement"));
+            eval(extractFunc("isDisqualifiedInput"));
+            eval(extractFunc("sortInputsByVisualOrder"));
             if (isUserScript) {
-                eval(extractFunc("isDisqualified"));
-                eval(extractFunc("sortInputs"));
                 eval(extractFunc("setInputValue"));
             } else {
-                eval(extractFunc("isDisqualifiedInput"));
-                eval(extractFunc("sortInputsByVisualOrder"));
                 eval(extractFunc("setInputValueWithReactSupport"));
                 eval(extractFunc("isVerifyButton"));
             }
@@ -1181,12 +1179,9 @@ class TestDomDetection(unittest.TestCase):
 
             eval(extractFunc("detectTargetDomain"));
             eval(extractFunc("isInteractiveElement"));
-            if (isUserScript) {
-                eval(extractFunc("isDisqualified"));
-                eval(extractFunc("sortInputs"));
-            } else {
-                eval(extractFunc("isDisqualifiedInput"));
-                eval(extractFunc("sortInputsByVisualOrder"));
+            eval(extractFunc("isDisqualifiedInput"));
+            eval(extractFunc("sortInputsByVisualOrder"));
+            if (!isUserScript) {
                 eval(extractFunc("isVerifyButton"));
             }
             eval(extractFunc("findOtpInputs"));
@@ -1253,6 +1248,200 @@ class TestDomDetection(unittest.TestCase):
         self.assertEqual(data["user"]["authenticCount"], 1, "Userscript must detect authentic 2FA field")
         self.assertTrue(data["user"]["authenticCodeMatches"], "Userscript must return the authentic 2FA field")
         self.assertTrue(data["user"]["isDismissed"], "Userscript session dismissal must be stored")
+
+    def test_kraken_persona_qr_handoff_and_stepper_disqualification(self):
+        """
+        Two-Sided Verification for Kraken KYC Persona QR Handoff & Stepper navigation:
+        1. Non-SMS / Stepper / QR handoff elements:
+           - Stepper sidebar item with id="step-2fa" inside nav/aside container.
+           - Persona handoff URL input with value="https://perso.na/s/7xNNFG-980FVZ3-519680".
+           - Cookie consent modal input.
+           - QR scan text container.
+           -> Must return 0 OTP inputs (zero false positive).
+        2. Legitimate OTP field added:
+           - Authentic 6-digit 2FA input with name="twofactorauthcode".
+           -> Must return 1 valid OTP input (authentic capture).
+        3. Tested identically across both extension/content.js and userscript/spark-otp.user.js.
+        """
+        js_code = """
+        const fs = require('fs');
+        const contentJs = fs.readFileSync('extension/content.js', 'utf8');
+        const userJs = fs.readFileSync('userscript/spark-otp.user.js', 'utf8');
+
+        function runHandoffTest(scriptSource, isUserScript) {
+            const extractFunc = (name) => {
+                const pat = new RegExp("function " + name + "\\\\([\\\\s\\\\S]*?\\\\n  \\\\}");
+                const m = scriptSource.match(pat);
+                if (!m) throw new Error("Function " + name + " not found in script");
+                return m[0];
+            };
+
+            const stepperContainer = {
+                tagName: "NAV",
+                closest: () => null,
+                getAttribute: () => "navigation"
+            };
+
+            const stepper2faInput = {
+                tagName: "INPUT",
+                type: "text",
+                name: "step_2fa",
+                id: "step-2fa",
+                placeholder: "Step 2FA",
+                value: "",
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                closest(sel) {
+                    if (sel.includes("nav") || sel.includes("aside")) return stepperContainer;
+                    return null;
+                },
+                getAttribute(k) { return null; },
+                getBoundingClientRect() { return { top: 100, left: 20, width: 100, height: 30 }; }
+            };
+
+            const personaHandoffInput = {
+                tagName: "INPUT",
+                type: "text",
+                name: "persona_link",
+                id: "persona-link",
+                placeholder: "Copy link",
+                value: "https://perso.na/s/7xNNFG-980FVZ3-519680",
+                disabled: false,
+                readOnly: true,
+                offsetParent: {},
+                closest(sel) { return null; },
+                getAttribute(k) { return null; },
+                getBoundingClientRect() { return { top: 300, left: 200, width: 320, height: 40 }; }
+            };
+
+            const cookieContainer = {
+                tagName: "DIV",
+                id: "cookie-consent-banner",
+                closest: () => null,
+                getAttribute: () => null
+            };
+
+            const cookieInput = {
+                tagName: "INPUT",
+                type: "text",
+                name: "cookie_pref",
+                id: "cookie_pref",
+                value: "",
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                closest(sel) {
+                    if (sel.includes("cookie") || sel.includes("consent")) return cookieContainer;
+                    return null;
+                },
+                getAttribute(k) { return null; },
+                getBoundingClientRect() { return { top: 700, left: 100, width: 200, height: 30 }; }
+            };
+
+            const mockDoc = {
+                body: {
+                    innerText: "Continue on another device. Scan QR code with phone camera or use link. Keep Kraken secure.",
+                    textContent: "Continue on another device. Scan QR code with phone camera or use link. Keep Kraken secure."
+                },
+                location: {
+                    href: "https://kraken.com/verify/flow",
+                    hostname: "kraken.com",
+                    pathname: "/verify/flow"
+                },
+                getElementById(id) {
+                    if (id === "step-2fa") return stepper2faInput;
+                    if (id === "persona-link") return personaHandoffInput;
+                    return null;
+                },
+                querySelector(sel) {
+                    if (sel.includes("step-2fa")) return stepper2faInput;
+                    if (sel.includes("persona")) return personaHandoffInput;
+                    return null;
+                },
+                querySelectorAll(sel) {
+                    const results = [];
+                    if (sel.includes("step-2fa") || sel.includes("2fa")) results.push(stepper2faInput);
+                    if (sel.includes("persona") || sel.includes("link")) results.push(personaHandoffInput);
+                    if (sel.includes("cookie")) results.push(cookieInput);
+                    return results;
+                }
+            };
+
+            global.window = {
+                location: mockDoc.location,
+                HTMLInputElement: { prototype: {} },
+                getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" })
+            };
+            global.document = mockDoc;
+
+            eval(extractFunc("detectTargetDomain"));
+            eval(extractFunc("isInteractiveElement"));
+            eval(extractFunc("isDisqualifiedInput"));
+            eval(extractFunc("sortInputsByVisualOrder"));
+            if (!isUserScript) {
+                eval(extractFunc("isVerifyButton"));
+            }
+            eval(extractFunc("findOtpInputs"));
+
+            // 1. Adversarial Check: QR handoff and Stepper navigation must NOT be detected as OTP
+            const nonOtpFound = findOtpInputs();
+
+            // 2. Authentic Check: Legitimate 2FA input is added
+            const real2faInput = {
+                tagName: "INPUT",
+                type: "text",
+                name: "twofactorauthcode",
+                id: "twofactorauthcode",
+                placeholder: "Enter 6-digit code",
+                value: "",
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                closest(sel) { return null; },
+                getAttribute(k) { return null; },
+                getBoundingClientRect() { return { top: 400, left: 200, width: 180, height: 40 }; }
+            };
+
+            mockDoc.getElementById = (id) => {
+                if (id === "twofactorauthcode") return real2faInput;
+                if (id === "step-2fa") return stepper2faInput;
+                return null;
+            };
+            mockDoc.querySelectorAll = (sel) => {
+                if (sel.includes("twofactor") || sel.includes("two-factor") || sel.includes("twofa")) {
+                    return [real2faInput];
+                }
+                return [];
+            };
+
+            const authenticFound = findOtpInputs();
+
+            return {
+                nonOtpCount: nonOtpFound.length,
+                authenticCount: authenticFound.length,
+                authenticMatches: authenticFound.length === 1 && authenticFound[0] === real2faInput
+            };
+        }
+
+        const extResult = runHandoffTest(contentJs, false);
+        const userResult = runHandoffTest(userJs, true);
+
+        console.log(JSON.stringify({ ext: extResult, user: userResult }));
+        """
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        # Extension assertions
+        self.assertEqual(data["ext"]["nonOtpCount"], 0, "Extension must not detect QR handoff or stepper nav as OTP")
+        self.assertEqual(data["ext"]["authenticCount"], 1, "Extension must detect authentic 2FA code field")
+        self.assertTrue(data["ext"]["authenticMatches"], "Extension must return authentic 2FA input")
+
+        # Userscript assertions
+        self.assertEqual(data["user"]["nonOtpCount"], 0, "Userscript must not detect QR handoff or stepper nav as OTP")
+        self.assertEqual(data["user"]["authenticCount"], 1, "Userscript must detect authentic 2FA code field")
+        self.assertTrue(data["user"]["authenticMatches"], "Userscript must return authentic 2FA input")
 
 if __name__ == "__main__":
     unittest.main()
