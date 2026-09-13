@@ -775,6 +775,17 @@ Type: Email
         result = extract_otp_from_thread(raw, domain_filter="secure.sakura.ad.jp", now=now_expired)
         self.assertIsNone(result, "Sakura code must expire after 30 minutes (1800s)")
 
+    def test_sakura_allow_expired(self):
+        # 35 minutes after 16:51 is 17:26 -> expired, but allow_expired=True extracts it!
+        now_expired = datetime(2026, 9, 13, 17, 26)
+        raw = REAL_SAKURA_INTERNET_EMAIL.format(date_str="2026-09-13 16:51")
+
+        result = extract_otp_from_thread(raw, domain_filter="secure.sakura.ad.jp", now=now_expired, allow_expired=True)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.code, "945521")
+        self.assertTrue(result.is_expired)
+        self.assertEqual(result.time_remaining_seconds, 0)
+
     def test_full_width_japanese_digits_extraction(self):
         now = datetime(2026, 9, 13, 16, 53)
         raw = """

@@ -136,6 +136,7 @@ class SparkClient:
         exclude_codes: Optional[List[str]] = None,
         exclude_message_ids: Optional[List[str]] = None,
         since_time: Optional[float] = None,
+        allow_expired: bool = False,
     ) -> Optional[OTPResult]:
         """
         Direct Apple Mail Envelope Index fast-path (<5ms).
@@ -146,7 +147,7 @@ class SparkClient:
             return None
 
         rule_max_ttl = max((r.default_ttl_seconds for r in config.rules), default=600)
-        effective_max_age = max(max_age, rule_max_ttl)
+        effective_max_age = max(max_age, rule_max_ttl, 86400 if allow_expired else 0)
         since_timestamp = current_time.timestamp() - effective_max_age
         if since_time is not None and since_time > since_timestamp:
             since_timestamp = since_time
@@ -223,6 +224,7 @@ class SparkClient:
                 rules=config.rules,
                 now=current_time,
                 max_age_seconds=max_age,
+                allow_expired=allow_expired,
             )
             if not res:
                 # Only check full .emlx body if the subject, body, or rule relates to the domain or OTP intent
@@ -253,6 +255,7 @@ class SparkClient:
                             rules=config.rules,
                             now=current_time,
                             max_age_seconds=max_age,
+                            allow_expired=allow_expired,
                         )
 
             if res:
@@ -342,7 +345,8 @@ class SparkClient:
         current_time: datetime,
         exclude_codes: Optional[List[str]] = None,
         exclude_message_ids: Optional[List[str]] = None,
-        since_time: Optional[float] = None
+        since_time: Optional[float] = None,
+        allow_expired: bool = False,
     ) -> Optional[OTPResult]:
         """
         Direct SQLite fast-path lookup (<5ms).
@@ -354,7 +358,7 @@ class SparkClient:
             return None
 
         rule_max_ttl = max((r.default_ttl_seconds for r in config.rules), default=600)
-        effective_max_age = max(max_age, rule_max_ttl)
+        effective_max_age = max(max_age, rule_max_ttl, 86400 if allow_expired else 0)
         since_timestamp = current_time.timestamp() - effective_max_age
         if since_time is not None and since_time > since_timestamp:
             since_timestamp = since_time
@@ -422,7 +426,8 @@ class SparkClient:
                 domain_filter=domain,
                 rules=config.rules,
                 now=current_time,
-                max_age_seconds=max_age
+                max_age_seconds=max_age,
+                allow_expired=allow_expired,
             )
             if res:
                 if exclude_codes_set and res.code.strip().upper() in exclude_codes_set:
@@ -457,7 +462,8 @@ class SparkClient:
                             domain_filter=domain,
                             rules=config.rules,
                             now=current_time,
-                            max_age_seconds=max_age
+                            max_age_seconds=max_age,
+                            allow_expired=allow_expired,
                         )
                         if res_full:
                             if exclude_codes_set and res_full.code.strip().upper() in exclude_codes_set:
@@ -595,7 +601,8 @@ class SparkClient:
         preferred_account: Optional[str] = None,
         exclude_codes: Optional[List[str]] = None,
         exclude_message_ids: Optional[List[str]] = None,
-        since_time: Optional[float] = None
+        since_time: Optional[float] = None,
+        allow_expired: bool = False,
     ) -> Optional[OTPResult]:
         df_clean = ""
         brand = ""
@@ -627,7 +634,7 @@ class SparkClient:
                     if since_time is not None and parsed_date.timestamp() <= since_time:
                         continue
                     age = (current_time - parsed_date).total_seconds()
-                    allowed_cutoff = max(max_age * 2, 7200) if domain else max_age
+                    allowed_cutoff = 86400 if allow_expired else (max(max_age * 2, 7200) if domain else max_age)
                     if age > allowed_cutoff:
                         continue
 
@@ -699,7 +706,8 @@ class SparkClient:
                 domain_filter=domain,
                 rules=config.rules,
                 now=current_time,
-                max_age_seconds=max_age
+                max_age_seconds=max_age,
+                allow_expired=allow_expired,
             )
             if otp_result:
                 if exclude_codes_set and otp_result.code.strip().upper() in exclude_codes_set:
@@ -719,6 +727,7 @@ class SparkClient:
         exclude_codes: Optional[List[str]] = None,
         exclude_message_ids: Optional[List[str]] = None,
         since_time: Optional[float] = None,
+        allow_expired: bool = False,
         **kwargs
     ) -> Optional[OTPResult]:
         """
@@ -759,7 +768,8 @@ class SparkClient:
             current_time=current_time,
             exclude_codes=exclude_codes,
             exclude_message_ids=exclude_message_ids,
-            since_time=since_time
+            since_time=since_time,
+            allow_expired=allow_expired
         )
         if sqlite_res:
             return sqlite_res
@@ -773,7 +783,8 @@ class SparkClient:
                 current_time=current_time,
                 exclude_codes=exclude_codes,
                 exclude_message_ids=exclude_message_ids,
-                since_time=since_time
+                since_time=since_time,
+                allow_expired=allow_expired
             )
             if apple_mail_res:
                 return apple_mail_res
@@ -790,7 +801,8 @@ class SparkClient:
                     preferred_account=account,
                     exclude_codes=exclude_codes,
                     exclude_message_ids=exclude_message_ids,
-                    since_time=since_time
+                    since_time=since_time,
+                    allow_expired=allow_expired
                 )
                 if res:
                     return res
@@ -806,7 +818,8 @@ class SparkClient:
                 preferred_account=account,
                 exclude_codes=exclude_codes,
                 exclude_message_ids=exclude_message_ids,
-                since_time=since_time
+                since_time=since_time,
+                allow_expired=allow_expired
             )
             if res:
                 return res
@@ -822,7 +835,8 @@ class SparkClient:
                     current_time,
                     exclude_codes=exclude_codes,
                     exclude_message_ids=exclude_message_ids,
-                    since_time=since_time
+                    since_time=since_time,
+                    allow_expired=allow_expired
                 )
                 if res:
                     return res

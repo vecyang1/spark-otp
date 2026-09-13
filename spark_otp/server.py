@@ -138,7 +138,7 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
         logs = telemetry.get_recent_logs(limit=limit)
         self.wfile.write(json.dumps({"success": True, "count": len(logs), "logs": logs}).encode("utf-8"))
 
-    def _safe_get_otp(self, domain, max_age, account, exclude_codes=None, exclude_message_ids=None, since_time=None):
+    def _safe_get_otp(self, domain, max_age, account, exclude_codes=None, exclude_message_ids=None, since_time=None, allow_expired=False):
         if not self.client:
             return None
         kwargs = {}
@@ -148,6 +148,8 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
             kwargs["exclude_message_ids"] = exclude_message_ids
         if since_time is not None:
             kwargs["since_time"] = since_time
+        if allow_expired:
+            kwargs["allow_expired"] = True
         try:
             return self.client.get_latest_otp(domain=domain, max_age_seconds=max_age, account=account, **kwargs)
         except TypeError:
@@ -162,6 +164,9 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
         account = params.get("account", [None])[0]
         max_age_param = params.get("max_age", [None])[0]
         max_age = int(max_age_param) if max_age_param and max_age_param.isdigit() else None
+
+        allow_expired_param = params.get("allow_expired", [None])[0]
+        allow_expired = allow_expired_param.lower() in ("1", "true", "yes") if allow_expired_param else False
 
         exclude_codes_raw = params.get("exclude_codes", [None])[0]
         exclude_codes = [c.strip() for c in exclude_codes_raw.split(",") if c.strip()] if exclude_codes_raw else None
@@ -187,8 +192,21 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
                 account=account,
                 exclude_codes=exclude_codes,
                 exclude_message_ids=exclude_message_ids,
-                since_time=since_time
+                since_time=since_time,
+                allow_expired=allow_expired
             )
+            # Domain-targeted fallback: if an exact domain was requested and no active unexpired OTP was found,
+            # fallback to the most recent OTP for this domain (flagged as is_expired=True).
+            if not otp and domain and not allow_expired:
+                otp = self._safe_get_otp(
+                    domain=domain,
+                    max_age=max_age,
+                    account=account,
+                    exclude_codes=exclude_codes,
+                    exclude_message_ids=exclude_message_ids,
+                    since_time=since_time,
+                    allow_expired=True
+                )
             status = "hit" if otp else "miss"
         except Exception as e:
             status = "error"

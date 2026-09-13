@@ -254,6 +254,7 @@ def extract_universal_otp(
     domain_filter: Optional[str] = None,
     now: Optional[datetime] = None,
     max_age_seconds: int = 600,
+    allow_expired: bool = False,
 ) -> Optional[OTPResult]:
     """Universal intelligent fallback OTP matcher based on proximity, keyword analysis, and markdown normalization."""
     thread_text = unicodedata.normalize("NFKC", thread_text)
@@ -303,7 +304,8 @@ def extract_universal_otp(
     detected_ttl = detect_ttl(raw_search_text)
     ttl = detected_ttl if detected_ttl is not None else max_age_seconds
     remaining = int(ttl - age_seconds)
-    if remaining <= 0 or age_seconds > max(ttl, max_age_seconds):
+    is_expired = remaining <= 0
+    if not allow_expired and (remaining <= 0 or age_seconds > max(ttl, max_age_seconds)):
         return None
 
     # 3. Proximity-based code patterns evaluated against normalized & raw text
@@ -414,8 +416,8 @@ def extract_universal_otp(
                     sender=sender,
                     received_at=email_dt.isoformat(),
                     expires_at=(email_dt + timedelta(seconds=ttl)).isoformat(),
-                    is_expired=False,
-                    time_remaining_seconds=remaining,
+                    is_expired=is_expired,
+                    time_remaining_seconds=max(0, remaining),
                 )
 
     return None
@@ -426,6 +428,7 @@ def extract_otp_from_thread(
     rules: List[RuleDefinition] = DEFAULT_RULES,
     now: Optional[datetime] = None,
     max_age_seconds: int = 600,
+    allow_expired: bool = False,
 ) -> Optional[OTPResult]:
     """
     Extract OTP from full thread text matching against rules and domain.
@@ -456,7 +459,7 @@ def extract_otp_from_thread(
 
     rule_max_ttl = max((r.default_ttl_seconds for r in rules), default=600)
     effective_max_age = max(max_age_seconds, rule_max_ttl)
-    if age_seconds > effective_max_age:
+    if not allow_expired and age_seconds > effective_max_age:
         return None
 
     body_text = get_thread_body(thread_text)
@@ -512,7 +515,8 @@ def extract_otp_from_thread(
         ttl = detected_ttl if detected_ttl is not None else rule.default_ttl_seconds
         expires_at_dt = email_dt + timedelta(seconds=ttl)
         remaining = int(ttl - age_seconds)
-        if remaining <= 0 or age_seconds > max(ttl, max_age_seconds):
+        is_expired = remaining <= 0
+        if not allow_expired and (remaining <= 0 or age_seconds > max(ttl, max_age_seconds)):
             return None
 
         return OTPResult(
@@ -525,8 +529,8 @@ def extract_otp_from_thread(
             sender=sender,
             received_at=email_dt.isoformat(),
             expires_at=expires_at_dt.isoformat(),
-            is_expired=False,
-            time_remaining_seconds=remaining,
+            is_expired=is_expired,
+            time_remaining_seconds=max(0, remaining),
         )
 
     # 2. Universal intelligent fallback matcher
@@ -536,5 +540,6 @@ def extract_otp_from_thread(
         email_dt=email_dt,
         domain_filter=domain_filter,
         now=now,
-        max_age_seconds=max_age_seconds
+        max_age_seconds=max_age_seconds,
+        allow_expired=allow_expired
     )
