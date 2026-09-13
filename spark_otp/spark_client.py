@@ -2,6 +2,7 @@
 Spark CLI Client Wrapper.
 """
 import os
+import time
 import sqlite3
 import subprocess
 import shutil
@@ -96,6 +97,7 @@ class SparkClient:
         self.spark_bin = spark_bin if spark_bin is not None else config.spark_bin
         self.sqlite_path = sqlite_path
         self.apple_mail_path = apple_mail_path
+        self._thread_cache: Dict[str, str] = {}
         if spark_bin is None and not shutil.which(self.spark_bin):
             found = shutil.which("spark")
             if found:
@@ -155,9 +157,11 @@ class SparkClient:
             since_timestamp = since_time
         until_timestamp = current_time.timestamp() + 30.0
 
+        rows = None
         try:
             uri = f"file:{db_path}?mode=ro"
-            with sqlite3.connect(uri, uri=True, timeout=2.0) as conn:
+            conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+            try:
                 cursor = conn.cursor()
                 cursor.execute(
                     """
@@ -182,6 +186,8 @@ class SparkClient:
                     (since_timestamp, until_timestamp),
                 )
                 rows = cursor.fetchall()
+            finally:
+                conn.close()
         except Exception:
             return None
 
@@ -214,6 +220,8 @@ class SparkClient:
                 continue
             if since_time is not None and received_ts <= since_time:
                 continue
+            if first_expired_otp and received_ts < (current_time.timestamp() - max_age):
+                break
             sender = sender or ""
             recipient = recipient or ""
             subject = subject or ""
@@ -447,6 +455,8 @@ class SparkClient:
                 continue
             if since_time is not None and received_ts <= since_time:
                 continue
+            if first_expired_otp and received_ts < (current_time.timestamp() - max_age):
+                break
             sender = sender or ""
             recipient = recipient or ""
             subject = subject or ""
@@ -580,20 +590,24 @@ class SparkClient:
         if accounts_sqlite.is_file() and os.access(accounts_sqlite, os.R_OK):
             try:
                 uri = f"file:{accounts_sqlite.resolve()}?mode=ro"
-                with sqlite3.connect(uri, uri=True, timeout=2.0) as aconn:
+                aconn = sqlite3.connect(uri, uri=True, timeout=2.0)
+                try:
                     acur = aconn.cursor()
                     acur.execute("SELECT ZUSERNAME FROM ZACCOUNT WHERE ZUSERNAME IS NOT NULL")
                     for (u,) in acur.fetchall():
                         u_str = (u or "").strip()
                         if "@" in u_str and u_str not in acc_list:
                             acc_list.append(u_str)
+                finally:
+                    aconn.close()
             except Exception:
                 pass
 
         if not acc_list:
             try:
                 uri = f"file:{db_path.resolve()}?mode=ro"
-                with sqlite3.connect(uri, uri=True, timeout=2.0) as conn:
+                conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+                try:
                     cur = conn.cursor()
                     cur.execute(
                         "SELECT DISTINCT a.address FROM recipients r JOIN addresses a ON r.address = a.ROWID WHERE a.address LIKE '%@%' LIMIT 30"
@@ -601,6 +615,8 @@ class SparkClient:
                     for (addr,) in cur.fetchall():
                         if addr and addr not in acc_list:
                             acc_list.append(addr)
+                finally:
+                    conn.close()
             except Exception:
                 pass
         return sorted(acc_list)
@@ -634,16 +650,24 @@ class SparkClient:
 
     def fetch_thread(self, message_id: str) -> str:
         """Fetch thread details for a specific message ID."""
+        msg_key = str(message_id)
+        if hasattr(self, "_thread_cache") and msg_key in self._thread_cache:
+            return self._thread_cache[msg_key]
         try:
             res = subprocess.run(
-                [self.spark_bin, "thread", str(message_id)],
+                [self.spark_bin, "thread", msg_key],
                 capture_output=True,
                 text=True,
                 timeout=15
             )
             if res.returncode != 0:
                 return ""
-            return res.stdout
+            out = res.stdout
+            if out and hasattr(self, "_thread_cache"):
+                if len(self._thread_cache) >= 50:
+                    self._thread_cache.pop(next(iter(self._thread_cache)))
+                self._thread_cache[msg_key] = out
+            return out
         except Exception:
             return ""
 
@@ -658,6 +682,7 @@ class SparkClient:
         exclude_message_ids: Optional[List[str]] = None,
         since_time: Optional[float] = None,
         allow_expired: bool = False,
+        fallback_expired: bool = False,
     ) -> Optional[OTPResult]:
         df_clean = ""
         brand = ""
@@ -666,6 +691,8 @@ class SparkClient:
             df_clean = clean_domain(domain)
             brand = get_domain_brand(df_clean)
             root_domain = get_root_domain(df_clean)
+
+        include_expired = allow_expired or (domain is not None and fallback_expired)
 
         # If a preferred account is specified, prioritize emails from that account
         sorted_emails = emails
@@ -676,6 +703,8 @@ class SparkClient:
 
         exclude_codes_set = set(str(c).strip().upper() for c in exclude_codes) if exclude_codes else set()
         exclude_msg_ids_set = set(str(m).strip() for m in exclude_message_ids) if exclude_message_ids else set()
+
+        first_expired_otp: Optional[OTPResult] = None
 
         for email in sorted_emails:
             if exclude_msg_ids_set and str(email.message_id) in exclude_msg_ids_set:
@@ -689,7 +718,7 @@ class SparkClient:
                     if since_time is not None and parsed_date.timestamp() <= since_time:
                         continue
                     age = (current_time - parsed_date).total_seconds()
-                    allowed_cutoff = 86400 if allow_expired else (max(max_age * 2, 7200) if domain else max_age)
+                    allowed_cutoff = 86400 if include_expired else (max(max_age * 2, 7200) if domain else max_age)
                     if age > allowed_cutoff:
                         continue
 
@@ -762,14 +791,26 @@ class SparkClient:
                 rules=config.rules,
                 now=current_time,
                 max_age_seconds=max_age,
-                allow_expired=allow_expired,
+                allow_expired=False,
             )
             if otp_result:
-                if exclude_codes_set and otp_result.code.strip().upper() in exclude_codes_set:
-                    continue
-                if exclude_msg_ids_set and otp_result.message_id in exclude_msg_ids_set:
-                    continue
-                return otp_result
+                if (not exclude_codes_set or otp_result.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or otp_result.message_id not in exclude_msg_ids_set):
+                    return otp_result
+            elif include_expired and first_expired_otp is None:
+                otp_exp = extract_otp_from_thread(
+                    thread_text=thread_text,
+                    domain_filter=domain,
+                    rules=config.rules,
+                    now=current_time,
+                    max_age_seconds=max_age,
+                    allow_expired=True,
+                )
+                if otp_exp:
+                    if (not exclude_codes_set or otp_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or otp_exp.message_id not in exclude_msg_ids_set):
+                        first_expired_otp = otp_exp
+
+        if include_expired and first_expired_otp:
+            return first_expired_otp
 
         return None
 
@@ -783,14 +824,17 @@ class SparkClient:
         exclude_message_ids: Optional[List[str]] = None,
         since_time: Optional[float] = None,
         allow_expired: bool = False,
+        fallback_expired: bool = False,
         **kwargs
     ) -> Optional[OTPResult]:
         """
         Finds the most recent matching OTP email and extracts code.
         Optimized multi-tiered search:
-        1. Targeted rule filter query (runs in ~0.2s, immune to inbox noise/overflow).
-        2. Unified Inbox listing with preferred account sorting.
-        3. Specific account folder fallback if explicitly requested and not found in Unified Inbox.
+        1. Direct SQLite Fast-Path (<5ms)
+        2. Apple Mail Envelope Index Fast-Path (<5ms)
+        3. Targeted rule filter query (runs in ~0.2s, immune to inbox noise/overflow)
+        4. Unified Inbox listing with preferred account sorting
+        5. Specific account folder fallback if explicitly requested
         """
         max_age = max_age_seconds if max_age_seconds is not None else config.max_email_age_seconds
         page_size = getattr(config, "email_page_size", 35)
@@ -816,18 +860,27 @@ class SparkClient:
                         break
 
         # Tier 0: Direct SQLite Fast-Path (<5ms, real-time message stream, immune to thread deduplication)
-        sqlite_res = self._get_otp_from_sqlite(
-            domain=domain,
-            max_age=max_age,
-            account=account,
-            current_time=current_time,
-            exclude_codes=exclude_codes,
-            exclude_message_ids=exclude_message_ids,
-            since_time=since_time,
-            allow_expired=allow_expired
-        )
-        if sqlite_res:
-            return sqlite_res
+        sqlite_db = self._find_sqlite_db()
+        sqlite_available = sqlite_db is not None
+        sqlite_succeeded = False
+        if sqlite_available:
+            try:
+                sqlite_res = self._get_otp_from_sqlite(
+                    domain=domain,
+                    max_age=max_age,
+                    account=account,
+                    current_time=current_time,
+                    exclude_codes=exclude_codes,
+                    exclude_message_ids=exclude_message_ids,
+                    since_time=since_time,
+                    allow_expired=allow_expired,
+                    fallback_expired=fallback_expired,
+                )
+                sqlite_succeeded = True
+                if sqlite_res:
+                    return sqlite_res
+            except Exception:
+                sqlite_succeeded = False
 
         # Tier 0b: Apple Mail SQLite Fast-Path (<5ms, checks macOS Mail.app for business domain mailboxes)
         if getattr(config, "apple_mail_enabled", True):
@@ -839,10 +892,17 @@ class SparkClient:
                 exclude_codes=exclude_codes,
                 exclude_message_ids=exclude_message_ids,
                 since_time=since_time,
-                allow_expired=allow_expired
+                allow_expired=allow_expired,
+                fallback_expired=fallback_expired,
             )
             if apple_mail_res:
                 return apple_mail_res
+
+        # If Spark SQLite DB is available and was queried without error, skip slow CLI child processes.
+        # Spark Desktop synchronizes all accounts directly to SQLite in real time, so Spark CLI will
+        # not contain emails missing from SQLite, and running CLI commands introduces 5-15s latency.
+        if sqlite_available and sqlite_succeeded:
+            return None
 
         # Tier 1: Targeted rule filter query (runs in ~0.2s, immune to inbox noise/overflow)
         if matching_rule and matching_rule.filter_query:
@@ -857,7 +917,8 @@ class SparkClient:
                     exclude_codes=exclude_codes,
                     exclude_message_ids=exclude_message_ids,
                     since_time=since_time,
-                    allow_expired=allow_expired
+                    allow_expired=allow_expired,
+                    fallback_expired=fallback_expired,
                 )
                 if res:
                     return res
@@ -874,7 +935,8 @@ class SparkClient:
                 exclude_codes=exclude_codes,
                 exclude_message_ids=exclude_message_ids,
                 since_time=since_time,
-                allow_expired=allow_expired
+                allow_expired=allow_expired,
+                fallback_expired=fallback_expired,
             )
             if res:
                 return res
@@ -891,7 +953,8 @@ class SparkClient:
                     exclude_codes=exclude_codes,
                     exclude_message_ids=exclude_message_ids,
                     since_time=since_time,
-                    allow_expired=allow_expired
+                    allow_expired=allow_expired,
+                    fallback_expired=fallback_expired,
                 )
                 if res:
                     return res

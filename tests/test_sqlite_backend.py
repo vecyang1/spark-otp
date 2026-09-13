@@ -153,7 +153,20 @@ class TestSparkSqliteBackend(unittest.TestCase):
 
         client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
         otp = client.get_latest_otp(domain="bandwagonhost.com", now=now)
-        self.assertIsNone(otp, "Expired OTP (75 min > 60 min TTL) must be rejected")
+        self.assertIsNone(otp, "Expired OTP (75 min > 60 min TTL) must be rejected by default")
+
+        # When fallback_expired=True, it gracefully returns the expired code flagged as expired
+        otp_fallback = client.get_latest_otp(domain="bandwagonhost.com", now=now, fallback_expired=True)
+        self.assertIsNotNone(otp_fallback)
+        self.assertEqual(otp_fallback.code, "999888")
+        self.assertTrue(otp_fallback.is_expired)
+        self.assertEqual(otp_fallback.time_remaining_seconds, 0)
+
+        # When allow_expired=True, it also returns the expired code
+        otp_allowed = client.get_latest_otp(domain="bandwagonhost.com", now=now, allow_expired=True)
+        self.assertIsNotNone(otp_allowed)
+        self.assertEqual(otp_allowed.code, "999888")
+        self.assertTrue(otp_allowed.is_expired)
 
     def test_sqlite_upper_bound_future_rejection(self):
         """Verify that emails received in the future (>30s) relative to 'now' are rejected."""

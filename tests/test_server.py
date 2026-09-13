@@ -43,7 +43,7 @@ class MockSparkClient:
         if exclude_message_ids and self.mock_otp.message_id in exclude_message_ids:
             return None
         if domain == "expired.domain.com":
-            if kwargs.get("allow_expired"):
+            if kwargs.get("allow_expired") or kwargs.get("fallback_expired"):
                 return OTPResult(
                     code="998877",
                     service="expired_service",
@@ -244,6 +244,20 @@ class TestServer(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertEqual(data["otp"]["code"], "998877")
         self.assertTrue(data["otp"]["is_expired"])
+
+    def test_stream_endpoint_allow_expired_fallback(self):
+        """Test that /api/stream streams expired OTP when domain is queried."""
+        url = f"http://127.0.0.1:{self.port}/api/stream?domain=expired.domain.com"
+        req = urllib.request.urlopen(url, timeout=3)
+        self.assertEqual(req.status, 200)
+        event_line = req.readline().decode("utf-8").strip()
+        self.assertEqual(event_line, "event: otp")
+        data_line = req.readline().decode("utf-8").strip()
+        self.assertTrue(data_line.startswith("data: "))
+        payload = json.loads(data_line[6:])
+        self.assertEqual(payload["code"], "998877")
+        self.assertTrue(payload["is_expired"])
+        req.close()
 
 if __name__ == "__main__":
     unittest.main()

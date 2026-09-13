@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PYTHONUNBUFFERED=1
 PID_FILE="/tmp/spark-otp.pid"
 LOG_FILE="/tmp/spark-otp.log"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -47,7 +48,7 @@ case "$1" in
       exit 0
     fi
     echo "Starting spark-otp daemon on port 9428..."
-    nohup "$PYTHON_BIN" "$PROJECT_DIR/cli.py" serve --port 9428 > "$LOG_FILE" 2>&1 &
+    nohup "$PYTHON_BIN" -u "$PROJECT_DIR/cli.py" serve --port 9428 > "$LOG_FILE" 2>&1 &
     PID=$!
     echo $PID > "$PID_FILE"
     for i in {1..20}; do
@@ -66,7 +67,7 @@ case "$1" in
     ;;
   run)
     # Foreground runner for launchd / process supervisor
-    exec "$PYTHON_BIN" "$PROJECT_DIR/cli.py" serve --port 9428
+    exec "$PYTHON_BIN" -u "$PROJECT_DIR/cli.py" serve --port 9428
     ;;
   stop)
     echo "Stopping spark-otp daemon..."
@@ -85,15 +86,27 @@ case "$1" in
   status)
     HEALTH=$(curl -s http://127.0.0.1:9428/api/health 2>/dev/null)
     PID=$(lsof -ti :9428 2>/dev/null | head -n 1)
+    LAUNCHD_STATUS=$(launchctl list | grep -E "spark[-_]otp" || true)
     if [ -n "$HEALTH" ]; then
       echo "spark-otp daemon is RUNNING (PID $PID, Port 9428)"
       echo "Health: $HEALTH"
+      if [ -n "$LAUNCHD_STATUS" ]; then
+        echo "LaunchAgent (launchd): $LAUNCHD_STATUS"
+      fi
     else
       echo "spark-otp daemon is STOPPED"
+      if [ -n "$LAUNCHD_STATUS" ]; then
+        echo "LaunchAgent status in launchd: $LAUNCHD_STATUS"
+        echo "Check error log: tail -n 20 /tmp/spark-otp-err.log"
+      fi
     fi
     ;;
   restart)
     $0 stop
+    for i in {1..10}; do
+      if ! lsof -ti :9428 >/dev/null 2>&1; then break; fi
+      sleep 0.5
+    done
     sleep 1
     $0 start
     ;;
@@ -112,8 +125,23 @@ case "$1" in
     sed "s|__SPARK_OTP_SCRIPT__|$PROJECT_DIR/scripts/manage_daemon.sh|g" "$SRC_PLIST" > "$TARGET_PLIST"
     launchctl unload "$TARGET_PLIST" 2>/dev/null || true
     launchctl load "$TARGET_PLIST"
-    sleep 1
-    echo "Auto-start enabled! Daemon will automatically start whenever your Mac boots or logs in."
+    for i in {1..20}; do
+      HEALTH=$(curl -s http://127.0.0.1:9428/api/health 2>/dev/null)
+      if [ -n "$HEALTH" ]; then break; fi
+      sleep 0.5
+    done
+    if [ -n "$HEALTH" ]; then
+      echo "Auto-start enabled and daemon running on port 9428!"
+      echo "Health: $HEALTH"
+    else
+      LAUNCHD_STATUS=$(launchctl list | grep -E "spark[-_]otp" || true)
+      echo "Warning: LaunchAgent loaded but daemon health check failed on port 9428."
+      if [ -n "$LAUNCHD_STATUS" ]; then
+        echo "LaunchAgent status in launchd: $LAUNCHD_STATUS"
+      fi
+      echo "Check $LOG_FILE and /tmp/spark-otp-err.log"
+      exit 1
+    fi
     ;;
   disable-autostart)
     echo "Disabling macOS auto-start..."
