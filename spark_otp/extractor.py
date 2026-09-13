@@ -3,6 +3,7 @@ Deterministic zero-LLM OTP Extraction Engine.
 Supports universal auth providers, brand/domain matching, and open fallback extraction.
 """
 import re
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from .models import OTPResult, RuleDefinition
@@ -61,21 +62,23 @@ OTP_INTENT_PATTERN = re.compile(
 )
 
 EXP_PATTERNS = [
-    (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in))\s*(\d+)\s*hour", 3600),
-    (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in))\s*(\d+)\s*minute", 60),
+    (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in)|within)\s*(\d+)\s*hour", 3600),
+    (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in)|within)\s*(\d+)\s*minute", 60),
     (r"(?i)(?:有效时间|有效期|有效期限)(?:为|：|:)?\s*(\d+)\s*(?:小时|小時|時間)", 3600),
     (r"(?i)(\d+)\s*(?:个)?(?:小时|小時|時間)(?:之?内)?有效", 3600),
     (r"(?i)(?:有效时间|有效期|有效期限)(?:为|：|:)?\s*(\d+)\s*分钟", 60),
     (r"(?i)(\d+)\s*分钟(?:之?内)?有效", 60),
     (r"(?i)有効(?:期限|時間)(?:は[、\s]*[^\d\n]{0,35}|：|:)?\s*(\d+)\s*分", 60),
     (r"(?i)有効(?:期限|時間)(?:は[、\s]*[^\d\n]{0,35}|：|:)?\s*(\d+)\s*(?:時間|時間間)", 3600),
-    (r"(?i)(\d+)\s*分(?:间|間)?有效", 60),
+    (r"(?i)(\d+)\s*分(?:以内|間以内|间以内|間|间)?(?:有效|以内)", 60),
+    (r"(?i)(\d+)\s*(?:時間|時間間|小时|小時)(?:以内|間以内|间以内)?(?:有效|以内)", 3600),
 ]
 
 def detect_ttl(text: str) -> Optional[int]:
     """Detect explicit expiration TTL in English, Chinese, Japanese (seconds)."""
+    norm_text = unicodedata.normalize("NFKC", text)
     for pat, mult in EXP_PATTERNS:
-        m = re.search(pat, text)
+        m = re.search(pat, norm_text)
         if m:
             for g in m.groups():
                 if g:
@@ -230,7 +233,7 @@ def domain_matches(
 
 def clean_extracted_code(code_str: str) -> str:
     """Normalize extracted code string."""
-    cleaned = code_str.strip()
+    cleaned = unicodedata.normalize("NFKC", code_str).strip()
     # Strip markdown bold/italic asterisks or quotes
     cleaned = re.sub(r"^[\*\"'_`#]+|[\*\"'_`#]+$", "", cleaned).strip()
     # Normalize Google G-XXXXXX to XXXXXX
@@ -253,6 +256,7 @@ def extract_universal_otp(
     max_age_seconds: int = 600,
 ) -> Optional[OTPResult]:
     """Universal intelligent fallback OTP matcher based on proximity, keyword analysis, and markdown normalization."""
+    thread_text = unicodedata.normalize("NFKC", thread_text)
     subject = headers.get("subject", "")
     sender = headers.get("from", "")
     msg_id = headers.get("id", "0")
@@ -427,6 +431,7 @@ def extract_otp_from_thread(
     Extract OTP from full thread text matching against rules and domain.
     Returns OTPResult if a valid, non-expired OTP is found.
     """
+    thread_text = unicodedata.normalize("NFKC", thread_text)
     if now is None:
         now = datetime.now()
 

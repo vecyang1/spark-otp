@@ -275,6 +275,62 @@ class TestDomDetection(unittest.TestCase):
         self.assertTrue(data["notDisq1"], "verification_code input must not be disqualified")
         self.assertTrue(data["notDisq2"], "code input must not be disqualified")
 
+    def test_verify_button_adversarial_negative_words_and_cjk_acceptance(self):
+        """Verify that negative words (resend, cancel, back) are rejected and CJK submit terms accepted."""
+        js_code = """
+        const fs = require('fs');
+        const contentJs = fs.readFileSync('extension/content.js', 'utf8');
+        const userJs = fs.readFileSync('userscript/spark-otp.user.js', 'utf8');
+
+        function testScript(src) {
+            const match = src.match(/function isVerifyButton\\(btn\\) \\{[\\s\\S]*?\\n  \\}/);
+            if (!match) throw new Error("isVerifyButton not found");
+            eval(match[0]);
+
+            const rejectedTexts = [
+                "認証コードを再送信",
+                "再送信する",
+                "重新发送验证码",
+                "重发",
+                "メールアドレス入力に戻る",
+                "前へ戻る",
+                "Cancel and return",
+                "Back to sign in",
+                "Close modal",
+                "Dismiss"
+            ];
+
+            const acceptedTexts = [
+                "認証して次へ",
+                "会員登録を完了する",
+                "送信する",
+                "次へ進む",
+                "次へ",
+                "Verify and continue",
+                "Confirm code",
+                "Submit OTP",
+                "登录",
+                "确认"
+            ];
+
+            const allRejected = rejectedTexts.every(t => !isVerifyButton({ textContent: t }));
+            const allAccepted = acceptedTexts.every(t => isVerifyButton({ textContent: t }));
+
+            return { allRejected, allAccepted };
+        }
+
+        const ext = testScript(contentJs);
+        const user = testScript(userJs);
+        console.log(JSON.stringify({ ext, user }));
+        """
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+        self.assertTrue(data["ext"]["allRejected"], "content.js: negative action buttons must be rejected")
+        self.assertTrue(data["ext"]["allAccepted"], "content.js: positive verify buttons must be accepted")
+        self.assertTrue(data["user"]["allRejected"], "user.js: negative action buttons must be rejected")
+        self.assertTrue(data["user"]["allAccepted"], "user.js: positive verify buttons must be accepted")
+
     def test_e2e_bandwagon_browser_auth_dom_flow(self):
         """End-to-end verification of browser_auth.php DOM detection, email sniffing, filling and submission."""
         js_code = """

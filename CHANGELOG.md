@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.9] - 2026-09-13
+
+### Fixed
+- **CJK Boundary Handling in Regular Expressions**:
+  - Replaced trailing ASCII word boundaries (`\b`) with lookaheads `(?!\d)` and `(?![0-9a-zA-Z])` across `sakura_internet` and `generic_otp` in `spark_otp/config.py`, eliminating extraction failure when OTP digits are directly followed by Japanese/Chinese characters (e.g. `認証コードは945521です`, `842075用于登录`).
+- **Unicode NFKC Normalization across Extraction Pipeline**:
+  - Added `unicodedata.normalize("NFKC", ...)` across `detect_ttl`, `clean_extracted_code`, `extract_universal_otp`, and `extract_otp_from_thread` in `spark_otp/extractor.py`, automatically normalizing full-width CJK digits (e.g., `９４５５２１` -> `945521`), full-width colons (`：` -> `:`), and ideographic spaces.
+- **SQLite Fast-Path Gating on OTP Intent & Fallback Robustness**:
+  - Gated `fetch_thread` in `spark_otp/spark_client.py` on OTP intent (`OTP_INTENT_PATTERN` in subject/shortBody or matching rules), ensuring non-OTP transactional emails (e.g. `会員登録完了のお知らせ`) never trigger expensive subprocess calls.
+  - Handled `domain=None` and associated domains (e.g. `64clouds.com` for `bandwagonhost.com`) in `_get_otp_from_sqlite` and `_get_otp_from_apple_mail` so truncated messages trigger `fetch_thread` accurately without false rejections.
+- **SSOT DOM Engine Isolation & Dynamic Setter Dispatch**:
+  - Resolved `ReferenceError` in isolated test runners and heterogeneous browser environments by implementing dynamic setter dispatch (`setValueFn`) and making `setInputValueWithReactSupport` and `setInputValue` self-contained within the SSOT block.
+  - Hardened `triggerSubmit` with safe `checkVerifyBtn` fallback and negative action keyword disqualification (`認証コードを再送信`, `重新发送`, `戻る`, `Cancel`, `Back`), preventing accidental clicks on resend or navigation controls.
+
+### Added
+- **Adversarial & CJK Test Suite Expansion (157 passing tests)**:
+  - Added tests for full-width digits, boundary-less CJK text, and bracketed Japanese codes in `tests/test_extractor.py`.
+  - Added tests for `domain=None` truncated fallback and non-OTP email fetch rejection in `tests/test_sqlite_backend.py`.
+  - Added adversarial negative action keyword disqualification tests in `tests/test_dom_detection.py`.
+
 ## [1.3.8] - 2026-09-13
 
 ### Fixed

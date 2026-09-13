@@ -1107,10 +1107,10 @@
     return null;
   }
 
-  // === END CORE DOM DETECTION ENGINE (SSOT) ===
-
   function setInputValue(input, value) {
     input.focus();
+
+    // Native prototype setter bypass for React/controlled inputs
     const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set ||
                          Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
 
@@ -1120,9 +1120,14 @@
       input.value = value;
     }
 
+    // React _valueTracker update:
+    // Setting tracker.setValue("") ensures React recognizes that the value changed and fires onChange
     const tracker = input._valueTracker;
-    if (tracker) tracker.setValue("");
+    if (tracker) {
+      tracker.setValue("");
+    }
 
+    // Dispatch simulated paste event (handles input-otp and onPaste handlers)
     try {
       const dt = new DataTransfer();
       dt.setData("text/plain", value);
@@ -1148,37 +1153,107 @@
     } catch (e) {}
   }
 
-  function triggerSubmit(el, shouldSubmit = true) {
-    if (!shouldSubmit) return;
-    setTimeout(() => {
-      const form = el.closest("form") || document.getElementById("totp-form");
-      const verifyWords = ["verify", "continue", "submit", "confirm", "sign in", "log in", "next", "check", "validate", "验证", "确认", "登录", "認証", "次へ", "進む", "送信", "登録"];
-      function isBtnVerify(b) {
-        const txt = (b.textContent || b.value || "").trim().toLowerCase();
-        return verifyWords.some(w => txt.includes(w));
-      }
+  function setInputValueWithReactSupport(input, value) {
+    input.focus();
 
+    // Native prototype setter bypass for React/controlled inputs
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set ||
+                         Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
+
+    if (nativeSetter) {
+      nativeSetter.call(input, value);
+    } else {
+      input.value = value;
+    }
+
+    // React _valueTracker update:
+    // Setting tracker.setValue("") ensures React recognizes that the value changed and fires onChange
+    const tracker = input._valueTracker;
+    if (tracker) {
+      tracker.setValue("");
+    }
+
+    // Dispatch simulated paste event (handles input-otp and onPaste handlers)
+    try {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", value);
+      input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }));
+    } catch (e) {}
+
+    try {
+      if (typeof InputEvent !== "undefined") {
+        input.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }));
+      }
+    } catch (e) {}
+    try {
+      if (typeof Event !== "undefined") {
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    } catch (e) {}
+    try {
+      if (typeof KeyboardEvent !== "undefined") {
+        input.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: value }));
+        input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: value }));
+      }
+    } catch (e) {}
+  }
+
+  function isVerifyButton(btn) {
+    const txt = (btn.textContent || btn.value || "").trim().toLowerCase();
+    const negativeWords = ["resend", "re-send", "cancel", "back", "close", "dismiss", "edit", "change", "再送", "重新发送", "重发", "取消", "返回", "戻る", "前へ", "閉じる", "変更"];
+    if (negativeWords.some(w => txt.includes(w))) {
+      return false;
+    }
+    const verifyWords = ["verify", "continue", "submit", "confirm", "sign in", "log in", "next", "check", "validate", "验证", "确认", "登录", "認証", "次へ", "進む", "送信", "登録"];
+    return verifyWords.some(w => txt.includes(w));
+  }
+
+  function triggerSubmit(targetElement, shouldSubmit) {
+    if (!shouldSubmit) return;
+
+    const checkVerifyBtn = (typeof isVerifyButton === "function") ? isVerifyButton : function(b) {
+      const txt = (b.textContent || b.value || "").trim().toLowerCase();
+      const negativeWords = ["resend", "re-send", "cancel", "back", "close", "dismiss", "edit", "change", "再送", "重新发送", "重发", "取消", "返回", "戻る", "前へ", "閉じる", "変更"];
+      if (negativeWords.some(w => txt.includes(w))) {
+        return false;
+      }
+      const verifyWords = ["verify", "continue", "submit", "confirm", "sign in", "log in", "next", "check", "validate", "验证", "确认", "登录", "認証", "次へ", "進む", "送信", "登録"];
+      return verifyWords.some(w => txt.includes(w));
+    };
+
+    setTimeout(() => {
+      // 1. Look for enclosing form only (do not blindly match search or unrelated forms)
+      const form = targetElement.closest("form") || document.getElementById("totp-form");
       if (form) {
-        const allSubmitBtns = Array.from(form.querySelectorAll('button[type="submit"], input[type="submit"], button:not([type]), input[type="button"]'));
-        const verifySubmit = allSubmitBtns.find(b => isBtnVerify(b) && !b.disabled);
+        const allSubmitBtns = Array.from(form.querySelectorAll('button[type="submit"], input[type="submit"], button:not([type]), input[type="button"], [role="button"], a.btn, a.button, a[class*="btn" i], a[class*="button" i]'));
+        const verifySubmit = allSubmitBtns.find(b => checkVerifyBtn(b) && !b.disabled);
         if (verifySubmit) {
           verifySubmit.click();
           return;
         }
-        const btn = form.querySelector('button[type="submit"], input[type="submit"]');
-        if (btn && !btn.disabled) { btn.click(); return; }
-        const anyBtn = form.querySelector("button");
-        if (anyBtn && isBtnVerify(anyBtn) && !anyBtn.disabled) {
+        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+        if (submitBtn && !submitBtn.disabled) {
+          submitBtn.click();
+          return;
+        }
+        const anyBtn = form.querySelector('button, [role="button"], a.btn, a.button');
+        if (anyBtn && checkVerifyBtn(anyBtn) && !anyBtn.disabled) {
           anyBtn.click();
           return;
         }
-        try { form.submit(); return; } catch (e) {}
+        try {
+          form.submit();
+          return;
+        } catch (e) {}
       }
-      const container = el.closest('[role="dialog"], [role="region"], .modal, .card, main') || document.body;
-      const buttons = container ? container.querySelectorAll('button, input[type="button"], input[type="submit"]') : [];
-      for (const b of buttons) {
-        if (isBtnVerify(b) && !b.disabled && b.offsetParent !== null) {
-          b.click();
+
+      // 2. Look for verify button in modal/dialog container or page
+      const container = targetElement.closest('[role="dialog"], [role="region"], .modal, .card, main') || document.body;
+      const buttons = container ? container.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], a.btn, a.button, a[class*="btn" i], a[class*="button" i]') : [];
+      for (const btn of buttons) {
+        if (checkVerifyBtn(btn) && !btn.disabled && btn.offsetParent !== null) {
+          btn.click();
           return;
         }
       }
@@ -1205,6 +1280,7 @@
     const inputs = findOtpInputs();
     if (!inputs || inputs.length === 0) return false;
 
+    // Case 1: contenteditable OTP component
     if (inputs.length === 1 && inputs[0].isContentEditable) {
       const el = inputs[0];
       el.focus();
@@ -1215,27 +1291,61 @@
       return true;
     }
 
+    // Case 2: Single input (including React input-otp / shadcn)
+    const setValueFn = (typeof setInputValueWithReactSupport === "function") ? setInputValueWithReactSupport : setInputValue;
     if (inputs.length === 1) {
-      setInputValue(inputs[0], cleanCode);
-      triggerSubmit(inputs[0], shouldActuallySubmit);
+      const input = inputs[0];
+      setValueFn(input, cleanCode);
+      triggerSubmit(input, shouldActuallySubmit);
       return true;
     }
 
+    // Case 3: Segmented multi-box inputs (4, 6, 8 digit inputs)
     if (inputs.length > 1) {
+      // Attempt clipboard paste event on first input
       try {
         const dt = new DataTransfer();
         dt.setData("text/plain", cleanCode);
-        inputs[0].dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }));
+        const pasteEvt = new ClipboardEvent("paste", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dt
+        });
+        inputs[0].dispatchEvent(pasteEvt);
       } catch (e) {}
 
+      // Fill each box individually
       for (let i = 0; i < inputs.length && i < cleanCode.length; i++) {
-        setInputValue(inputs[i], cleanCode[i]);
+        const char = cleanCode[i];
+        const inp = inputs[i];
+        setValueFn(inp, char);
+        inp.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, key: char, charCode: char.charCodeAt(0) }));
       }
+
       triggerSubmit(inputs[inputs.length - 1], shouldActuallySubmit);
       return true;
     }
+
     return false;
   }
+
+  function fillEmailAndSubmit(email) {
+    const input = findEmailInput();
+    if (!input) return;
+    const setValueFn = (typeof setInputValueWithReactSupport === "function") ? setInputValueWithReactSupport : setInputValue;
+    setValueFn(input, email);
+
+    setTimeout(() => {
+      const form = input.closest("form") || document.getElementById("totp-form");
+      if (form) {
+        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+        if (submitBtn) submitBtn.click();
+        else form.submit();
+      }
+    }, 250);
+  }
+
+  // === END CORE DOM DETECTION ENGINE (SSOT) ===
 
   function injectUI() {
     if (!document.getElementById("spark-otp-style")) {

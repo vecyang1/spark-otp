@@ -225,15 +225,25 @@ class SparkClient:
                 max_age_seconds=max_age,
             )
             if not res:
-                # Only check full .emlx body if the subject or sender relates to the domain or OTP intent
-                intent_match = bool(OTP_INTENT_PATTERN.search(subject))
-                if not intent_match and domain:
-                    d_clean = clean_domain(domain)
-                    d_brand = get_domain_brand(d_clean)
-                    d_root = get_root_domain(d_clean)
-                    if d_brand in sender.lower() or d_brand in subject.lower() or d_root in sender.lower() or d_root in subject.lower():
-                        intent_match = True
-                if intent_match:
+                # Only check full .emlx body if the subject, body, or rule relates to the domain or OTP intent
+                intent_match = bool(OTP_INTENT_PATTERN.search(subject) or OTP_INTENT_PATTERN.search(body))
+                matching_rules = [
+                    r for r in config.rules
+                    if re.search(r.sender_pattern, sender) and re.search(r.subject_pattern, subject)
+                ]
+                if matching_rules:
+                    intent_match = True
+
+                domain_ok = not domain
+                if domain:
+                    for r in matching_rules:
+                        if domain_matches(domain, None, r.associated_domains, sender, subject, body):
+                            domain_ok = True
+                            break
+                    if not domain_ok:
+                        domain_ok = domain_matches(domain, None, None, sender, subject, body)
+
+                if intent_match and domain_ok:
                     full_body = self._find_emlx_for_message(db_path, pk)
                     if full_body and full_body != body:
                         full_thread_text = f"ID: {pk}\nSubject: {subject}\nFrom: {sender}\nTo: {recipient}\nDate: {dt_str}\n\n{full_body}\n"
@@ -421,23 +431,40 @@ class SparkClient:
                     continue
                 return res
 
-            # If short_body was truncated or did not yield code, but domain/sender matches, fetch full thread
-            if domain and domain_matches(domain, None, None, sender, subject, short_body):
-                full_thread = self.fetch_thread(str(pk))
-                if full_thread:
-                    res_full = extract_otp_from_thread(
-                        thread_text=full_thread,
-                        domain_filter=domain,
-                        rules=config.rules,
-                        now=current_time,
-                        max_age_seconds=max_age
-                    )
-                    if res_full:
-                        if exclude_codes_set and res_full.code.strip().upper() in exclude_codes_set:
-                            continue
-                        if exclude_msg_ids_set and res_full.message_id in exclude_msg_ids_set:
-                            continue
-                        return res_full
+            # If short_body was truncated or did not yield code, check if full thread should be fetched
+            has_otp_intent = bool(OTP_INTENT_PATTERN.search(subject) or OTP_INTENT_PATTERN.search(short_body))
+            matching_rules = [
+                r for r in config.rules
+                if re.search(r.sender_pattern, sender) and re.search(r.subject_pattern, subject)
+            ]
+            has_otp_intent = has_otp_intent or bool(matching_rules)
+
+            if has_otp_intent:
+                domain_ok = not domain
+                if domain:
+                    for r in matching_rules:
+                        if domain_matches(domain, None, r.associated_domains, sender, subject, short_body):
+                            domain_ok = True
+                            break
+                    if not domain_ok:
+                        domain_ok = domain_matches(domain, None, None, sender, subject, short_body)
+
+                if domain_ok:
+                    full_thread = self.fetch_thread(str(pk))
+                    if full_thread:
+                        res_full = extract_otp_from_thread(
+                            thread_text=full_thread,
+                            domain_filter=domain,
+                            rules=config.rules,
+                            now=current_time,
+                            max_age_seconds=max_age
+                        )
+                        if res_full:
+                            if exclude_codes_set and res_full.code.strip().upper() in exclude_codes_set:
+                                continue
+                            if exclude_msg_ids_set and res_full.message_id in exclude_msg_ids_set:
+                                continue
+                            return res_full
 
         return None
 
@@ -614,8 +641,9 @@ class SparkClient:
                             rule_matches_domain = True
                         else:
                             for ad in rule.associated_domains:
-                                ad = ad.lower()
-                                if df_clean == ad or df_clean.endswith("." + ad) or ad.endswith("." + df_clean) or (len(brand) >= 3 and brand in ad):
+                                ad_clean = clean_domain(ad)
+                                ad_root = get_root_domain(ad_clean)
+                                if df_clean == ad_clean or df_clean.endswith("." + ad_clean) or ad_clean.endswith("." + df_clean) or root_domain == ad_root or (len(brand) >= 3 and brand in ad_clean):
                                     rule_matches_domain = True
                                     break
                     if rule_matches_domain and re.search(rule.sender_pattern, email.sender) and re.search(rule.subject_pattern, email.subject):

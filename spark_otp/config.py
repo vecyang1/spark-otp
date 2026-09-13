@@ -251,8 +251,8 @@ DEFAULT_RULES = [
     RuleDefinition(
         name="sakura_internet",
         sender_pattern=r"(?i)(?:さくらインターネット|support@sakura\.ad\.jp|noreply@sakura\.ad\.jp|@sakura\.ad\.jp|@sakura\.ne\.jp)",
-        subject_pattern=r"(?i)(?:さくらインターネット|認証コード|会員情報登録)",
-        code_regex=r"(?i)(?:認証コード(?:入力|は|为|：|:|\s)+|code[：:\s]+)([0-9]{6})\b",
+        subject_pattern=r"(?i)(?:認証コード|会員情報登録|確認コード|仮登録|ワンタイムパスワード)",
+        code_regex=r"(?i)(?:(?:【|\[)?認証コード(?:】|\])?(?:入力|は|为|：|:|\s)*|code[：:\s]+)(?:\s*\[|\s*【)?([0-9]{6})(?!\d)",
         default_ttl_seconds=1800,
         associated_domains=["sakura.ad.jp", "sakura.ne.jp"],
         filter_query="from:sakura.ad.jp OR from:sakura.ne.jp OR さくらインターネット",
@@ -261,7 +261,7 @@ DEFAULT_RULES = [
         name="generic_otp",
         sender_pattern=r".*",
         subject_pattern=r"(?i)(?:verification|login|security|access|auth|otp|one-time|verify|confirm|passcode|validation|device).*code|(?:device\s+)?verification\b|验证码|动态码|校验码|安全码|授权码|認証コード|確認コード|ワンタイムパスワード",
-        code_regex=r"(?i)(?:your\s+(?:device\s+)?(?:verification|login|security|confirmation|access)?\s*code\s*(?:is|为|:)\s*|(?:device\s+)?verification\s*code:?\s*|code is:?|code:\s*|passcode:\s*|validation code:\s*|验证码(?:是|为|)[：:]?\s*|动态码(?:是|为|)[：:]?\s*|校验码(?:是|为|)[：:]?\s*|認証コード(?:は|：|:)\s*|ワンタイムパスワード(?:は|：|:)\s*)([0-9]{4,8}|[0-9A-Za-z]{5,8})\b",
+        code_regex=r"(?i)(?:your\s+(?:device\s+)?(?:verification|login|security|confirmation|access)?\s*code\s*(?:is|为|:)\s*|(?:device\s+)?verification\s*code:?\s*|code is:?|code:\s*|passcode:\s*|validation code:\s*|验证码(?:是|为|)[：:]?\s*|动态码(?:是|为|)[：:]?\s*|校验码(?:是|为|)[：:]?\s*|認証コード(?:は|：|:)\s*|ワンタイムパスワード(?:は|：|:)\s*)([0-9]{4,8}|[0-9A-Za-z]{5,8})(?![0-9a-zA-Z])",
         default_ttl_seconds=600,
     )
 ]

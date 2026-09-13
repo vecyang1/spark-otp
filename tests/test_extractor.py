@@ -775,6 +775,68 @@ Type: Email
         result = extract_otp_from_thread(raw, domain_filter="secure.sakura.ad.jp", now=now_expired)
         self.assertIsNone(result, "Sakura code must expire after 30 minutes (1800s)")
 
+    def test_full_width_japanese_digits_extraction(self):
+        now = datetime(2026, 9, 13, 16, 53)
+        raw = """
+ID: 722912
+Subject: [さくらインターネット]認証コード入力のお願い
+From: "さくらインターネット" <support@sakura.ad.jp>
+To: alex@example.com
+Date: 2026-09-13 16:51
+Type: Email
+
+さくらインターネットの会員登録をお申込みいただき、誠にありがとうございます。
+認証コード：９４５５２１
+有効期限は送信後30分以内です。
+"""
+        result = extract_otp_from_thread(raw, domain_filter="secure.sakura.ad.jp", now=now)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.code, "945521")
+        self.assertEqual(result.time_remaining_seconds, 1680)
+
+    def test_cjk_characters_immediately_following_digits(self):
+        now = datetime(2026, 9, 13, 16, 53)
+        # Japanese no-boundary: 認証コードは945521です
+        raw_jp = """
+ID: 722913
+Subject: [さくらインターネット]確認コード
+From: support@sakura.ad.jp
+Date: 2026-09-13 16:51
+
+認証コードは945521です。有効期間は30分以内です。
+"""
+        result_jp = extract_otp_from_thread(raw_jp, domain_filter="sakura.ad.jp", now=now)
+        self.assertIsNotNone(result_jp)
+        self.assertEqual(result_jp.code, "945521")
+
+        # Chinese no-boundary: 验证码842075用于登录
+        raw_cn = """
+ID: 722914
+Subject: 验证码
+From: support@example.com
+Date: 2026-09-13 16:51
+
+您的验证码为842075用于本次身份核验。
+"""
+        result_cn = extract_otp_from_thread(raw_cn, domain_filter=None, now=now)
+        self.assertIsNotNone(result_cn)
+        self.assertEqual(result_cn.code, "842075")
+
+    def test_bracketed_japanese_code_extraction(self):
+        now = datetime(2026, 9, 13, 16, 53)
+        raw = """
+ID: 722915
+Subject: 【さくらインターネット】認証コードのご案内
+From: support@sakura.ad.jp
+Date: 2026-09-13 16:51
+
+【認証コード】945521
+上記コードを30分以内に入力してください。
+"""
+        result = extract_otp_from_thread(raw, domain_filter="sakura.ad.jp", now=now)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.code, "945521")
+
 if __name__ == "__main__":
     unittest.main()
 

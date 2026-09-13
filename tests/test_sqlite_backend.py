@@ -415,5 +415,66 @@ class TestSparkSqliteBackend(unittest.TestCase):
         self.assertIsNone(otp)
         self.assertEqual(len(fetch_thread_called), 0, "fetch_thread must NOT be invoked for mismatched domain")
 
+    def test_sqlite_sakura_truncated_short_body_fetches_thread_when_domain_is_none(self):
+        """When domain is None, truncated short body with OTP intent must trigger fetch_thread."""
+        now = datetime.now()
+        ts_now = int(now.timestamp())
+        dt_str = now.strftime("%Y-%m-%d %H:%M:%S")
+
+        truncated_body = "メールアドレスの確認ページで、以下6桁の認証コードを入力してください。"
+        insert_mock_message(
+            self.db_path,
+            pk=722913,
+            sender='さくらインターネット <support@sakura.ad.jp>',
+            recipient='user@example.com',
+            subject='[さくらインターネット]認証コード入力と会員情報登録のお願い',
+            short_body=truncated_body,
+            received_ts=ts_now - 60
+        )
+
+        full_thread_content = f"""
+ID: 722913
+Subject: [さくらインターネット]認証コード入力と会員情報登録のお願い
+From: さくらインターネット <support@sakura.ad.jp>
+To: user@example.com
+Date: {dt_str}
+
+メールアドレスの確認ページで、以下6桁の認証コードを入力してください。
+
+認証コード：945521
+有効期限は、本メールが送信されてから30分間です。
+"""
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+        fetch_thread_called = []
+        client.fetch_thread = lambda msg_id: fetch_thread_called.append(msg_id) or full_thread_content
+
+        otp = client.get_latest_otp(domain=None, now=now)
+        self.assertIsNotNone(otp)
+        self.assertEqual(otp.code, "945521")
+        self.assertEqual(fetch_thread_called, ["722913"], "fetch_thread must be invoked when domain is None and OTP intent matches")
+
+    def test_sqlite_non_otp_email_does_not_fetch_thread(self):
+        """Adversarial check: Non-OTP emails (e.g. registration complete) must NOT trigger fetch_thread."""
+        now = datetime.now()
+        ts_now = int(now.timestamp())
+
+        insert_mock_message(
+            self.db_path,
+            pk=722914,
+            sender='さくらインターネット <support@sakura.ad.jp>',
+            recipient='user@example.com',
+            subject='会員登録完了のお知らせ [icc75482]',
+            short_body='この度は、さくらインターネットの会員にご登録をいただき、誠にありがとうございます。',
+            received_ts=ts_now - 30
+        )
+
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+        fetch_thread_called = []
+        client.fetch_thread = lambda msg_id: fetch_thread_called.append(msg_id) or ""
+
+        otp = client.get_latest_otp(domain="secure.sakura.ad.jp", now=now)
+        self.assertIsNone(otp)
+        self.assertEqual(len(fetch_thread_called), 0, "fetch_thread must NOT be invoked for non-OTP messages")
+
 if __name__ == "__main__":
     unittest.main()
