@@ -848,6 +848,189 @@ Date: 2026-09-13 16:51
         self.assertIsNotNone(result)
         self.assertEqual(result.code, "945521")
 
+    def test_multilingual_otp_extraction_and_ttl(self):
+        now = datetime(2026, 9, 13, 17, 0)
+
+        # 1. Korean (한국어)
+        raw_kr = """
+ID: 800001
+Subject: [서비스] 회원가입 인증번호 안내
+From: noreply@korea-auth.co.kr
+Date: 2026-09-13 16:55
+
+인증번호는 492015 입니다. 10분 이내에 입력해주세요.
+"""
+        res_kr = extract_otp_from_thread(raw_kr, now=now)
+        self.assertIsNotNone(res_kr)
+        self.assertEqual(res_kr.code, "492015")
+        self.assertEqual(res_kr.time_remaining_seconds, 300)
+
+        # 2. Spanish (Español)
+        raw_es = """
+ID: 800002
+Subject: Código de verificación de inicio de sesión
+From: soporte@banco.example.com
+Date: 2026-09-13 16:50
+
+Su código de verificación es 718293. Válido por 15 minutos.
+"""
+        res_es = extract_otp_from_thread(raw_es, now=now)
+        self.assertIsNotNone(res_es)
+        self.assertEqual(res_es.code, "718293")
+        self.assertEqual(res_es.time_remaining_seconds, 300)
+
+        # 3. French (Français)
+        raw_fr = """
+ID: 800003
+Subject: Votre code de confirmation
+From: contact@banque.example.com
+Date: 2026-09-13 16:52
+
+Votre code de vérification est 384729. Ce code est valide pendant 10 minutes.
+"""
+        res_fr = extract_otp_from_thread(raw_fr, now=now)
+        self.assertIsNotNone(res_fr)
+        self.assertEqual(res_fr.code, "384729")
+        self.assertEqual(res_fr.time_remaining_seconds, 120)
+
+        # 4. German (Deutsch)
+        raw_de = """
+ID: 800004
+Subject: Ihr Bestätigungscode für das Kundenkonto
+From: service@berlin.example.com
+Date: 2026-09-13 16:48
+
+Ihr Verifizierungscode lautet 581920. Gültig für 20 Minuten.
+"""
+        res_de = extract_otp_from_thread(raw_de, now=now)
+        self.assertIsNotNone(res_de)
+        self.assertEqual(res_de.code, "581920")
+        self.assertEqual(res_de.time_remaining_seconds, 480)
+
+        # 5. Russian (Русский)
+        raw_ru = """
+ID: 800005
+Subject: Код подтверждения входа
+From: security@moscow.example.com
+Date: 2026-09-13 16:54
+
+Ваш проверочный код: 918234. Действителен в течение 10 минут.
+"""
+        res_ru = extract_otp_from_thread(raw_ru, now=now)
+        self.assertIsNotNone(res_ru)
+        self.assertEqual(res_ru.code, "918234")
+        self.assertEqual(res_ru.time_remaining_seconds, 240)
+
+        # 6. Portuguese (Português)
+        raw_pt = """
+ID: 800006
+Subject: Seu código de segurança
+From: suporte@brasil.example.com
+Date: 2026-09-13 16:53
+
+Seu código de verificação é 627184. Válido por 10 minutos.
+"""
+        res_pt = extract_otp_from_thread(raw_pt, now=now)
+        self.assertIsNotNone(res_pt)
+        self.assertEqual(res_pt.code, "627184")
+        self.assertEqual(res_pt.time_remaining_seconds, 180)
+
+        # 7. Italian (Italiano)
+        raw_it = """
+ID: 800007
+Subject: Codice di sicurezza per il tuo account
+From: info@milano.example.com
+Date: 2026-09-13 16:52
+
+Il tuo codice di verifica è 482910. Valido per 15 minutos.
+"""
+        res_it = extract_otp_from_thread(raw_it, now=now)
+        self.assertIsNotNone(res_it)
+        self.assertEqual(res_it.code, "482910")
+        self.assertEqual(res_it.time_remaining_seconds, 420)
+
+        # 8. Vietnamese (Tiếng Việt)
+        raw_vn = """
+ID: 800008
+Subject: Mã xác thực đăng nhập tài khoản
+From: cskh@vietnam.example.com
+Date: 2026-09-13 16:55
+
+Mã xác thực của bạn là: 839201. Hiệu lực trong 10 phút.
+"""
+        res_vn = extract_otp_from_thread(raw_vn, now=now)
+        self.assertIsNotNone(res_vn)
+        self.assertEqual(res_vn.code, "839201")
+        self.assertEqual(res_vn.time_remaining_seconds, 300)
+
+        # 9. Indonesian (Bahasa Indonesia)
+        raw_id = """
+ID: 800009
+Subject: Kode verifikasi akun Anda
+From: support@jakarta.example.com
+Date: 2026-09-13 16:51
+
+Kode verifikasi Anda adalah 592810. Berlaku selama 15 menit.
+"""
+        res_id = extract_otp_from_thread(raw_id, now=now)
+        self.assertIsNotNone(res_id)
+        self.assertEqual(res_id.code, "592810")
+        self.assertEqual(res_id.time_remaining_seconds, 360)
+
+        # 10. Arabic (العربية)
+        raw_ar = """
+ID: 800010
+Subject: رمز التحقق لتسجيل الدخول
+From: security@dubai.example.com
+Date: 2026-09-13 16:53
+
+رمز التحقق الخاص بك هو 381920. صالح لمدة 10 دقائق.
+"""
+        res_ar = extract_otp_from_thread(raw_ar, now=now)
+        self.assertIsNotNone(res_ar)
+        self.assertEqual(res_ar.code, "381920")
+        self.assertEqual(res_ar.time_remaining_seconds, 180)
+
+        # 11. Hindi (हिन्दी)
+        raw_hi = """
+ID: 800011
+Subject: आपके खाते के लिए सत्यापन कोड
+From: verify@india.example.com
+Date: 2026-09-13 16:52
+
+आपका सत्यापन कोड 847291 है। 15 मिनट के लिए मान्य।
+"""
+        res_hi = extract_otp_from_thread(raw_hi, now=now)
+        self.assertIsNotNone(res_hi)
+        self.assertEqual(res_hi.code, "847291")
+        self.assertEqual(res_hi.time_remaining_seconds, 420)
+
+    def test_multilingual_adversarial_rejection(self):
+        now = datetime(2026, 9, 13, 17, 0)
+        # German invoice number without OTP intent
+        raw_invoice = """
+ID: 800012
+Subject: Ihre Rechnung Nr. 981245
+From: billing@berlin.example.com
+Date: 2026-09-13 16:55
+
+Vielen Dank für Ihre Zahlung von 981245 Euro für die Rechnung.
+"""
+        res_inv = extract_otp_from_thread(raw_invoice, now=now)
+        self.assertIsNone(res_inv)
+
+        # Spanish tracking order without OTP intent
+        raw_track = """
+ID: 800013
+Subject: Estado de su envío 549120
+From: envios@madrid.example.com
+Date: 2026-09-13 16:55
+
+Su pedido con número de referencia 549120 ha salido del almacén.
+"""
+        res_track = extract_otp_from_thread(raw_track, now=now)
+        self.assertIsNone(res_track)
+
 if __name__ == "__main__":
     unittest.main()
 

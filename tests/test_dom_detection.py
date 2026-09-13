@@ -331,6 +331,74 @@ class TestDomDetection(unittest.TestCase):
         self.assertTrue(data["user"]["allRejected"], "user.js: negative action buttons must be rejected")
         self.assertTrue(data["user"]["allAccepted"], "user.js: positive verify buttons must be accepted")
 
+    def test_verify_button_global_multilingual_acceptance_and_rejection(self):
+        """Verify that multilingual submit/verify buttons and negative action buttons are correctly classified."""
+        js_code = """
+        const fs = require('fs');
+        const contentJs = fs.readFileSync('extension/content.js', 'utf8');
+        const userJs = fs.readFileSync('userscript/spark-otp.user.js', 'utf8');
+
+        function testScript(src) {
+            const match = src.match(/function isVerifyButton\\(btn\\) \\{[\\s\\S]*?\\n  \\}/);
+            if (!match) throw new Error("isVerifyButton not found");
+            eval(match[0]);
+
+            const globalAccepted = [
+                // Korean
+                "확인", "인증하기", "다음 단계",
+                // Spanish
+                "Verificar código", "Continuar", "Confirmar",
+                // French
+                "Vérifier", "Confirmer le code", "Suivant",
+                // German
+                "Bestätigen", "Weiter zur Registrierung", "Code prüfen",
+                // Russian
+                "Подтвердить", "Продолжить",
+                // Vietnamese
+                "Xác thực", "Tiếp tục",
+                // Thai
+                "ยืนยัน", "ดำเนินการต่อ",
+                // Indonesian
+                "Verifikasi", "Lanjutkan"
+            ];
+
+            const globalRejected = [
+                // Korean
+                "다시 보내기", "재전송", "취소", "뒤로",
+                // Spanish
+                "Reenviar código", "Cancelar", "Volver",
+                // French
+                "Renvoyer le code", "Annuler", "Retour",
+                // German
+                "Erneut senden", "Abbrechen", "Zurück",
+                // Russian
+                "Отправить повторно", "Отмена", "Назад",
+                // Vietnamese
+                "Gửi lại mã", "Hủy", "Quay lại",
+                // Thai
+                "ส่งอีกครั้ง", "ยกเลิก",
+                // Indonesian
+                "Kirim ulang", "Batalkan"
+            ];
+
+            const allAccepted = globalAccepted.every(t => isVerifyButton({ textContent: t }));
+            const allRejected = globalRejected.every(t => !isVerifyButton({ textContent: t }));
+
+            return { allAccepted, allRejected };
+        }
+
+        const ext = testScript(contentJs);
+        const user = testScript(userJs);
+        console.log(JSON.stringify({ ext, user }));
+        """
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+        self.assertTrue(data["ext"]["allAccepted"], "content.js: global verify buttons must be accepted")
+        self.assertTrue(data["ext"]["allRejected"], "content.js: global negative buttons must be rejected")
+        self.assertTrue(data["user"]["allAccepted"], "user.js: global verify buttons must be accepted")
+        self.assertTrue(data["user"]["allRejected"], "user.js: global negative buttons must be rejected")
+
     def test_e2e_bandwagon_browser_auth_dom_flow(self):
         """End-to-end verification of browser_auth.php DOM detection, email sniffing, filling and submission."""
         js_code = """

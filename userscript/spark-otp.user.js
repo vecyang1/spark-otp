@@ -727,7 +727,7 @@
       } catch (e) {}
 
       const textSample = `${name} ${id} ${placeholder} ${aria} ${title} ${labelText}`;
-      if (/(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|sms[-_ ]*code|email[-_ ]*code|security[-_ ]*code|auth[-_ ]*code|login[-_ ]*code|device[-_ ]*code|验证码|校验码|动态码|ワンタイム|認証コード)/i.test(textSample) || /(?:sent\s*to\s*(?:your\s*)?(?:email|phone|mobile|device)|check\s*your\s*(?:email|phone|inbox|sms))/i.test(textSample)) {
+      if (/(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|sms[-_ ]*code|email[-_ ]*code|security[-_ ]*code|auth[-_ ]*code|login[-_ ]*code|device[-_ ]*code|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(textSample) || /(?:sent\s*to\s*(?:your\s*)?(?:email|phone|mobile|device)|check\s*your\s*(?:email|phone|inbox|sms)|보낸|전송|enviado|envoyé|gesendet|отправлен)/i.test(textSample)) {
         return true;
       }
 
@@ -1201,11 +1201,34 @@
 
   function isVerifyButton(btn) {
     const txt = (btn.textContent || btn.value || "").trim().toLowerCase();
-    const negativeWords = ["resend", "re-send", "cancel", "back", "close", "dismiss", "edit", "change", "再送", "重新发送", "重发", "取消", "返回", "戻る", "前へ", "閉じる", "変更"];
+    const negativeWords = [
+      "resend", "re-send", "cancel", "back", "close", "dismiss", "edit", "change",
+      "再送", "重新发送", "重发", "取消", "返回", "戻る", "前へ", "閉じる", "変更",
+      "다시 보내기", "재전송", "취소", "뒤로", "이전", "닫기",
+      "reenviar", "cancelar", "volver", "atrás", "atras", "cerrar",
+      "renvoyer", "annuler", "retour", "fermer",
+      "erneut senden", "abbrechen", "zurück", "zurueck", "schließen", "schliessen",
+      "повторно", "отмена", "назад", "закрыть",
+      "gửi lại", "hủy", "huỷ", "quay lại", "đóng",
+      "ส่งอีกครั้ง", "ส่งใหม่", "ยกเลิก", "ย้อนกลับ", "ปิด",
+      "kirim ulang", "batalkan", "kembali", "tutup"
+    ];
     if (negativeWords.some(w => txt.includes(w))) {
       return false;
     }
-    const verifyWords = ["verify", "continue", "submit", "confirm", "sign in", "log in", "next", "check", "validate", "验证", "确认", "登录", "認証", "次へ", "進む", "送信", "登録"];
+    const verifyWords = [
+      "verify", "continue", "submit", "confirm", "sign in", "log in", "next", "check", "validate", "proceed",
+      "验证", "确认", "登录", "下一步", "提交", "登入", "進む", "次へ", "認証", "送信", "登録",
+      "확인", "인증", "다음", "제출", "로그인",
+      "verificar", "confirmar", "continuar", "siguiente", "enviar",
+      "vérifier", "verifier", "confirmer", "continuer", "suivant", "valider", "soumettre",
+      "bestätigen", "bestaetigen", "verifizieren", "weiter", "fortfahren", "absenden", "anmelden", "prüfen", "pruefen", "überprüfen",
+      "подтвердить", "продолжить", "далее", "отправить", "войти",
+      "xác thực", "xác nhận", "tiếp tục", "tiep tuc", "gửi",
+      "ยืนยัน", "ดำเนินการต่อ", "ถัดไป", "ส่ง",
+      "verifikasi", "konfirmasi", "lanjutkan", "kirim",
+      "تأكيد", "تحقق", "متابعة", "إرسال", "पुष्टि", "सत्यापित"
+    ];
     return verifyWords.some(w => txt.includes(w));
   }
 
@@ -1214,11 +1237,34 @@
 
     const checkVerifyBtn = (typeof isVerifyButton === "function") ? isVerifyButton : function(b) {
       const txt = (b.textContent || b.value || "").trim().toLowerCase();
-      const negativeWords = ["resend", "re-send", "cancel", "back", "close", "dismiss", "edit", "change", "再送", "重新发送", "重发", "取消", "返回", "戻る", "前へ", "閉じる", "変更"];
+      const negativeWords = [
+        "resend", "re-send", "cancel", "back", "close", "dismiss", "edit", "change",
+        "再送", "重新发送", "重发", "取消", "返回", "戻る", "前へ", "閉じる", "変更",
+        "다시 보내기", "재전송", "취소", "뒤로", "이전", "닫기",
+        "reenviar", "cancelar", "volver", "atrás", "atras", "cerrar",
+        "renvoyer", "annuler", "retour", "fermer",
+        "erneut senden", "abbrechen", "zurück", "zurueck", "schließen", "schliessen",
+        "повторно", "отмена", "назад", "закрыть",
+        "gửi lại", "hủy", "huỷ", "quay lại", "đóng",
+        "ส่งอีกครั้ง", "ส่งใหม่", "ยกเลิก", "ย้อนกลับ", "ปิด",
+        "kirim ulang", "batalkan", "kembali", "tutup"
+      ];
       if (negativeWords.some(w => txt.includes(w))) {
         return false;
       }
-      const verifyWords = ["verify", "continue", "submit", "confirm", "sign in", "log in", "next", "check", "validate", "验证", "确认", "登录", "認証", "次へ", "進む", "送信", "登録"];
+      const verifyWords = [
+        "verify", "continue", "submit", "confirm", "sign in", "log in", "next", "check", "validate", "proceed",
+        "验证", "确认", "登录", "下一步", "提交", "登入", "進む", "次へ", "認証", "送信", "登録",
+        "확인", "인증", "다음", "제출", "로그인",
+        "verificar", "confirmar", "continuar", "siguiente", "enviar",
+        "vérifier", "verifier", "confirmer", "continuer", "suivant", "valider", "soumettre",
+        "bestätigen", "bestaetigen", "verifizieren", "weiter", "fortfahren", "absenden", "anmelden", "prüfen", "pruefen", "überprüfen",
+        "подтвердить", "продолжить", "далее", "отправить", "войти",
+        "xác thực", "xác nhận", "tiếp tục", "tiep tuc", "gửi",
+        "ยืนยัน", "ดำเนินการต่อ", "ถัดไป", "ส่ง",
+        "verifikasi", "konfirmasi", "lanjutkan", "kirim",
+        "تأكيد", "تحقق", "متابعة", "إرسال", "पुष्टि", "सत्यापित"
+      ];
       return verifyWords.some(w => txt.includes(w));
     };
 
