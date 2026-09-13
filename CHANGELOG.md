@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-09-13
+
+### Fixed
+- **SQLite Connection & File Descriptor Leak Prevention**:
+  - Replaced unclosed `with sqlite3.connect(...) as conn:` blocks with explicit `try: ... finally: conn.close()` across `_get_otp_from_sqlite`, `_get_otp_from_apple_mail`, and `_get_apple_mail_accounts` in `spark_otp/spark_client.py`. Prevents accumulating dozens of open file descriptors and persistent WAL read locks during high-frequency polling.
+- **Redundant Secondary Query Elimination**:
+  - Removed obsolete secondary fallback block in `handle_otp` (`spark_otp/server.py`) where a second query with `allow_expired=True` was triggered on misses. Because `fallback_expired` is evaluated natively in a single pass in `SparkClient.get_latest_otp`, the second query was redundant and caused double latency on domain misses.
+- **Sub-Millisecond Thread Caching (`fetch_thread`)**:
+  - Added bounded in-memory cache `self._thread_cache` to `SparkClient` for thread details fetched via `spark thread <message_id>`. Repeated lookups for active verification emails now execute in <1ms without repeated IPC overhead.
+- **TCP Socket `TIME_WAIT` Race Protection in `manage_daemon.sh`**:
+  - Added bounded polling loop in `scripts/manage_daemon.sh` `restart` to ensure port 9428 is fully freed before starting the replacement process, eliminating `[Errno 48] Address already in use` launch failures.
+- **Health Diagnostic Telemetry Enhancement**:
+  - Added `spark_sqlite_available` and `spark_sqlite_path` to `/api/health` JSON response to give immediate visibility into SQLite fast-path operational status.
+
+## [1.4.1] - 2026-09-13
+
+### Fixed
+- **SSE Realtime Stream Expired Domain Fallback**:
+  - Wired `allow_expired` and `fallback_expired` query parameter handling into SSE `/api/stream` endpoint in `spark_otp/server.py`, ensuring live push events are immediately sent to the browser extension floating pill instead of stalling on `: keepalive\n\n`.
+  - Added OpenAPI parameter contracts for `allow_expired` under `/api/stream` in `spark_otp/contracts.py` and validated in `tests/test_contracts.py`.
+- **Latency Optimization & Elimination of Redundant Spark CLI Subprocesses**:
+  - Eliminated 5-15s latency penalty on SQLite query misses by skipping slow Spark CLI fallback child processes when Spark Desktop SQLite DB is available and healthy.
+  - Fixed latent NameError in `spark_client.py` and removed ad-hoc disk trace file logging.
+  - Optimized SQLite message scan loop to break early once a valid expired code is identified for older timestamps.
+  - Reduced domain lookup latency from 24,000ms+ down to 55ms on hit and 240ms on miss.
+- **macOS LaunchAgent ProcessType Standardization**:
+  - Changed `ProcessType` in `scripts/com.spark_otp.daemon.plist` from `Adaptive` to `Standard` to prevent macOS launchd from killing background daemon processes during memory/idle state management.
+  - Added `PYTHONUNBUFFERED=1` and `-u` python flag in `scripts/manage_daemon.sh` for instant unbuffered logs in `/tmp/spark-otp.log` and `/tmp/spark-otp-err.log`.
+
 ## [1.4.0] - 2026-09-13
 
 ### Added

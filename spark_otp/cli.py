@@ -21,6 +21,8 @@ def main():
     get_parser.add_argument("--domain", "-d", help="Filter by target website domain (e.g. dashboard.stripe.com)")
     get_parser.add_argument("--account", "-A", help="Filter by specific email account (e.g. alex.turner@example.com)")
     get_parser.add_argument("--max-age", "-a", type=int, default=600, help="Max code age in seconds (default: 600)")
+    get_parser.add_argument("--allow-expired", action="store_true", help="Allow returning expired OTP codes")
+    get_parser.add_argument("--no-fallback-expired", action="store_false", dest="fallback_expired", default=True, help="Disable fallback to expired OTP when domain is queried")
     get_parser.add_argument("--json", action="store_true", help="Output full JSON result")
 
     # Command: serve
@@ -33,6 +35,7 @@ def main():
     watch_parser.add_argument("--domain", "-d", help="Filter by target website domain")
     watch_parser.add_argument("--account", "-A", help="Filter by specific email account")
     watch_parser.add_argument("--interval", "-i", type=float, default=2.0, help="Check interval in seconds")
+    watch_parser.add_argument("--allow-expired", action="store_true", help="Allow returning expired OTP codes")
     watch_parser.add_argument("--exit-on-match", "-1", action="store_true", help="Exit immediately upon first match")
     watch_parser.add_argument("--json", action="store_true", help="Output as JSON stream / object")
 
@@ -70,13 +73,21 @@ def main():
         account = getattr(args, "account", None)
         max_age = getattr(args, "max_age", 600)
         as_json = getattr(args, "json", False)
+        allow_expired = getattr(args, "allow_expired", False)
+        fallback_expired = getattr(args, "fallback_expired", True)
 
         client = SparkClient()
         if not client.is_available():
             print("Error: Spark CLI is not available. Please ensure Spark Desktop is running.", file=sys.stderr)
             sys.exit(1)
 
-        otp = client.get_latest_otp(domain=domain, max_age_seconds=max_age, account=account)
+        otp = client.get_latest_otp(
+            domain=domain,
+            max_age_seconds=max_age,
+            account=account,
+            allow_expired=allow_expired,
+            fallback_expired=fallback_expired if domain else False,
+        )
         if not otp:
             if as_json:
                 print(json.dumps({"success": False, "message": "No valid OTP found"}))
@@ -110,9 +121,10 @@ def main():
         if not as_json:
             print(f"Watching for OTP codes (domain: {args.domain or 'all'}, account: {account or 'all'})... Press Ctrl+C to stop.")
         last_id = None
+        allow_expired = getattr(args, "allow_expired", False)
         try:
             while True:
-                otp = client.get_latest_otp(domain=args.domain, max_age_seconds=600, account=account)
+                otp = client.get_latest_otp(domain=args.domain, max_age_seconds=600, account=account, allow_expired=allow_expired)
                 if otp and otp.message_id != last_id:
                     last_id = otp.message_id
                     if as_json:

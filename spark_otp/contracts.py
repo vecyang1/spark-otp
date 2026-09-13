@@ -91,6 +91,13 @@ OPENAPI_SPEC: Dict[str, Any] = {
                         "required": False,
                         "schema": {"type": "number"},
                         "description": "Only return OTPs received strictly after this unix timestamp"
+                    },
+                    {
+                        "name": "allow_expired",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "boolean", "default": False},
+                        "description": "If true, returns expired OTP if no active code exists (flagged with is_expired=True)"
                     }
                 ],
                 "responses": {
@@ -152,6 +159,13 @@ OPENAPI_SPEC: Dict[str, Any] = {
                         "in": "query",
                         "required": False,
                         "schema": {"type": "number"}
+                    },
+                    {
+                        "name": "allow_expired",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "boolean", "default": False},
+                        "description": "If true, streams expired OTP if no active code exists (flagged with is_expired=True)"
                     }
                 ],
                 "responses": {

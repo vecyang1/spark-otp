@@ -81,9 +81,19 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
+        spark_sqlite_path = None
+        if self.client and hasattr(self.client, "_find_sqlite_db"):
+            try:
+                p = self.client._find_sqlite_db()
+                spark_sqlite_path = str(p) if p else None
+            except Exception:
+                pass
+
         data = {
             "status": "ok",
             "spark_available": self.client.is_available() if self.client else False,
+            "spark_sqlite_available": bool(spark_sqlite_path),
+            "spark_sqlite_path": spark_sqlite_path,
             "apple_mail_available": apple_mail_avail,
             "timestamp": time.time(),
             "port": self.server.server_port,
@@ -138,7 +148,7 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
         logs = telemetry.get_recent_logs(limit=limit)
         self.wfile.write(json.dumps({"success": True, "count": len(logs), "logs": logs}).encode("utf-8"))
 
-    def _safe_get_otp(self, domain, max_age, account, exclude_codes=None, exclude_message_ids=None, since_time=None, allow_expired=False):
+    def _safe_get_otp(self, domain, max_age, account, exclude_codes=None, exclude_message_ids=None, since_time=None, allow_expired=False, fallback_expired=False):
         if not self.client:
             return None
         kwargs = {}
@@ -150,13 +160,19 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
             kwargs["since_time"] = since_time
         if allow_expired:
             kwargs["allow_expired"] = True
+        if fallback_expired:
+            kwargs["fallback_expired"] = True
         try:
             return self.client.get_latest_otp(domain=domain, max_age_seconds=max_age, account=account, **kwargs)
         except TypeError:
             try:
-                return self.client.get_latest_otp(domain=domain, max_age_seconds=max_age, account=account)
+                kwargs_filtered = {k: v for k, v in kwargs.items() if k != "fallback_expired"}
+                return self.client.get_latest_otp(domain=domain, max_age_seconds=max_age, account=account, **kwargs_filtered)
             except TypeError:
-                return self.client.get_latest_otp(domain=domain, max_age_seconds=max_age)
+                try:
+                    return self.client.get_latest_otp(domain=domain, max_age_seconds=max_age, account=account)
+                except TypeError:
+                    return self.client.get_latest_otp(domain=domain, max_age_seconds=max_age)
 
     def handle_otp(self, params):
         t0 = time.perf_counter()
@@ -167,6 +183,7 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
 
         allow_expired_param = params.get("allow_expired", [None])[0]
         allow_expired = allow_expired_param.lower() in ("1", "true", "yes") if allow_expired_param else False
+        fallback_expired = bool(domain) and not (allow_expired_param and allow_expired_param.lower() in ("0", "false", "no"))
 
         exclude_codes_raw = params.get("exclude_codes", [None])[0]
         exclude_codes = [c.strip() for c in exclude_codes_raw.split(",") if c.strip()] if exclude_codes_raw else None
@@ -193,20 +210,9 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
                 exclude_codes=exclude_codes,
                 exclude_message_ids=exclude_message_ids,
                 since_time=since_time,
-                allow_expired=allow_expired
+                allow_expired=allow_expired,
+                fallback_expired=fallback_expired
             )
-            # Domain-targeted fallback: if an exact domain was requested and no active unexpired OTP was found,
-            # fallback to the most recent OTP for this domain (flagged as is_expired=True).
-            if not otp and domain and not allow_expired:
-                otp = self._safe_get_otp(
-                    domain=domain,
-                    max_age=max_age,
-                    account=account,
-                    exclude_codes=exclude_codes,
-                    exclude_message_ids=exclude_message_ids,
-                    since_time=since_time,
-                    allow_expired=True
-                )
             status = "hit" if otp else "miss"
         except Exception as e:
             status = "error"
@@ -287,6 +293,10 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
             except ValueError:
                 pass
 
+        allow_expired_param = params.get("allow_expired", [None])[0]
+        allow_expired = allow_expired_param.lower() in ("1", "true", "yes") if allow_expired_param else False
+        fallback_expired = bool(domain) and not (allow_expired_param and allow_expired_param.lower() in ("0", "false", "no"))
+
         self.send_response(200)
         self._set_cors_headers()
         self.send_header("Content-Type", "text/event-stream")
@@ -309,7 +319,9 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
                         account=account,
                         exclude_codes=exclude_codes,
                         exclude_message_ids=exclude_message_ids,
-                        since_time=since_time
+                        since_time=since_time,
+                        allow_expired=allow_expired,
+                        fallback_expired=fallback_expired
                     )
                 except Exception as e:
                     telemetry.record(
