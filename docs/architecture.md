@@ -91,5 +91,5 @@ Scope: project-local
 
 ## Runtime And Deployment
 - Python 3.10+ standard library (zero external pip dependencies for daemon core).
-- Managed via `./operations/manage_daemon.sh {start|stop|restart|status}`.
+- Managed via `./scripts/manage_daemon.sh {start|stop|restart|status}`.
 - Default port 9428 (localhost only).

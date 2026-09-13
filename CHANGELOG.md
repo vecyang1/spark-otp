@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.10] - 2026-09-13
+
+### Fixed
+- **macOS LaunchAgent Self-Healing & Legacy Plist Cleanup**:
+  - Fixed broken LaunchAgent configuration that referenced obsolete `operations/manage_daemon.sh` (which caused launchd crash loop exit code 127), unifying daemon management under `scripts/manage_daemon.sh`.
+  - Added automatic detection and unloading/removal of legacy LaunchAgent plists (`com.worldinspirelab.spark-otp.plist`, `com.spark-otp.daemon.plist`) in `scripts/manage_daemon.sh`.
+  - Updated `start` and `restart` subcommands in `scripts/manage_daemon.sh` to prioritize launchd supervision (`launchctl load`) when `TARGET_PLIST` is present, maintaining `KeepAlive: true` daemon persistence.
+  - Added 10-second bounded health check polling during daemon startup to eliminate intermittent false-negative launch reports.
+- **Domain-Targeted Expired OTP Fallback & Parameter Support**:
+  - Added `allow_expired: bool = False` parameter across `extract_universal_otp`, `extract_otp_from_thread`, `_get_otp_from_sqlite`, `_get_otp_from_apple_mail`, and `get_latest_otp`.
+  - Implemented automatic domain-targeted fallback in `spark_otp/server.py`: when a specific domain is queried (e.g., `secure.sakura.ad.jp`) and no fresh code is found within its TTL, the server returns the most recent OTP for that domain marked with `is_expired=True` and `time_remaining_seconds=0` according to OpenAPI specification.
+  - Added query parameter `?allow_expired=true` support on `/api/otp` for instant sub-second lookup of recent verification codes.
+
+### Added
+- **Test Suite Expansion (160 passing tests)**:
+  - Added `test_sakura_allow_expired` in `tests/test_extractor.py`.
+  - Added `test_otp_endpoint_allow_expired_fallback` and `test_otp_endpoint_explicit_allow_expired` in `tests/test_server.py`.
+
 ## [1.3.9] - 2026-09-13
 
 ### Fixed

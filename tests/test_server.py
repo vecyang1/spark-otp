@@ -42,6 +42,22 @@ class MockSparkClient:
             return None
         if exclude_message_ids and self.mock_otp.message_id in exclude_message_ids:
             return None
+        if domain == "expired.domain.com":
+            if kwargs.get("allow_expired"):
+                return OTPResult(
+                    code="998877",
+                    service="expired_service",
+                    domain="expired.domain.com",
+                    callback_url=None,
+                    message_id="1001",
+                    subject="Expired OTP",
+                    sender="auth@expired.domain.com",
+                    received_at="2026-09-07T12:00:00",
+                    expires_at="2026-09-07T12:10:00",
+                    is_expired=True,
+                    time_remaining_seconds=0
+                )
+            return None
         return self.mock_otp
 
 class TestServer(unittest.TestCase):
@@ -208,6 +224,26 @@ class TestServer(unittest.TestCase):
         line = req.readline().decode("utf-8")
         self.assertIn(": keepalive", line)
         req.close()
+
+    def test_otp_endpoint_allow_expired_fallback(self):
+        """Test that /api/otp falls back to expired OTP if domain requested and no fresh OTP exists."""
+        url = f"http://127.0.0.1:{self.port}/api/otp?domain=expired.domain.com"
+        req = urllib.request.urlopen(url)
+        self.assertEqual(req.status, 200)
+        data = json.loads(req.read().decode("utf-8"))
+        self.assertTrue(data["success"])
+        self.assertEqual(data["otp"]["code"], "998877")
+        self.assertTrue(data["otp"]["is_expired"])
+
+    def test_otp_endpoint_explicit_allow_expired(self):
+        """Test that /api/otp respects explicit allow_expired=true parameter."""
+        url = f"http://127.0.0.1:{self.port}/api/otp?domain=expired.domain.com&allow_expired=true"
+        req = urllib.request.urlopen(url)
+        self.assertEqual(req.status, 200)
+        data = json.loads(req.read().decode("utf-8"))
+        self.assertTrue(data["success"])
+        self.assertEqual(data["otp"]["code"], "998877")
+        self.assertTrue(data["otp"]["is_expired"])
 
 if __name__ == "__main__":
     unittest.main()
