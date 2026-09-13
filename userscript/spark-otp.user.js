@@ -1152,7 +1152,7 @@
     if (!shouldSubmit) return;
     setTimeout(() => {
       const form = el.closest("form") || document.getElementById("totp-form");
-      const verifyWords = ["verify", "continue", "submit", "confirm", "sign in", "log in", "next", "check", "validate", "验证", "确认", "登录", "認証", "次へ"];
+      const verifyWords = ["verify", "continue", "submit", "confirm", "sign in", "log in", "next", "check", "validate", "验证", "确认", "登录", "認証", "次へ", "進む", "送信", "登録"];
       function isBtnVerify(b) {
         const txt = (b.textContent || b.value || "").trim().toLowerCase();
         return verifyWords.some(w => txt.includes(w));

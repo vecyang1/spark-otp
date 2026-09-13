@@ -18,6 +18,32 @@ COMMON_SUBDOMAINS = {
     "console", "admin", "api", "mail", "account", "accounts", "sso", "id"
 }
 
+SECOND_LEVEL_TLDS = {
+    # Commercial & Corporate
+    "co", "com", "ltd", "plc", "biz", "firm", "corp",
+    # Network, Internet & Infrastructure
+    "net", "ne", "ad", "web", "nic",
+    # Organization
+    "org", "or", "gr", "asn", "ngo",
+    # Academic & Education
+    "edu", "ac", "ed", "sch", "school", "k12", "hs", "ms", "es",
+    # Government & Municipal
+    "gov", "go", "gob", "govt", "lg", "muni", "mil", "mod",
+    # Personal & Identity
+    "me", "id", "idv", "pe", "per", "name",
+    # General, Geographic & Misc
+    "gen", "info", "ind", "res", "re", "cloud",
+}
+
+COMMON_SERVICE_SUBDOMAINS = {
+    "www", "help", "support", "contact", "docs", "doc", "faq", "about", "blog",
+    "news", "cdn", "static", "assets", "img", "media", "mail", "email",
+    "mailer", "mx", "smtp", "api", "status", "legal", "terms", "privacy",
+    "link", "click", "track", "go", "app", "auth", "login", "portal", "secure",
+    "accounts", "account", "signup", "register", "signin", "member", "members",
+    "console", "dash", "dashboard", "sso", "id"
+}
+
 OTP_INTENT_PATTERN = re.compile(
     r"(?i)(?:"
     r"verification\s*code|verify|security\s*code|login\s*code|access\s*code|"
@@ -34,18 +60,60 @@ OTP_INTENT_PATTERN = re.compile(
     r")"
 )
 
-def get_domain_brand(domain: str) -> str:
-    """Extract primary brand name from domain (e.g. 'dash.cloudflare.com' -> 'cloudflare', 'myapp.cloud' -> 'myapp')."""
+EXP_PATTERNS = [
+    (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in))\s*(\d+)\s*hour", 3600),
+    (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in))\s*(\d+)\s*minute", 60),
+    (r"(?i)(?:有效时间|有效期|有效期限)(?:为|：|:)?\s*(\d+)\s*(?:小时|小時|時間)", 3600),
+    (r"(?i)(\d+)\s*(?:个)?(?:小时|小時|時間)(?:之?内)?有效", 3600),
+    (r"(?i)(?:有效时间|有效期|有效期限)(?:为|：|:)?\s*(\d+)\s*分钟", 60),
+    (r"(?i)(\d+)\s*分钟(?:之?内)?有效", 60),
+    (r"(?i)有効(?:期限|時間)(?:は[、\s]*[^\d\n]{0,35}|：|:)?\s*(\d+)\s*分", 60),
+    (r"(?i)有効(?:期限|時間)(?:は[、\s]*[^\d\n]{0,35}|：|:)?\s*(\d+)\s*(?:時間|時間間)", 3600),
+    (r"(?i)(\d+)\s*分(?:间|間)?有效", 60),
+]
+
+def detect_ttl(text: str) -> Optional[int]:
+    """Detect explicit expiration TTL in English, Chinese, Japanese (seconds)."""
+    for pat, mult in EXP_PATTERNS:
+        m = re.search(pat, text)
+        if m:
+            for g in m.groups():
+                if g:
+                    return int(g) * mult
+    return None
+
+def clean_domain(domain: str) -> str:
+    """Strip protocol, port, path, and leading www."""
     d = domain.lower().strip()
     d = re.sub(r"^https?://", "", d)
     d = d.split("/")[0].split(":")[0]
-    d = re.sub(r"^www\.", "", d)
+    return re.sub(r"^www\.", "", d)
+
+def get_root_domain(domain: str) -> str:
+    """
+    Extract authoritative root domain (eTLD+1) from hostname (e.g.
+    'secure.sakura.ad.jp' -> 'sakura.ad.jp',
+    'dash.cloudflare.com' -> 'cloudflare.com',
+    'app.service.co.uk' -> 'service.co.uk').
+    """
+    d = clean_domain(domain)
+    parts = d.split(".")
+    if len(parts) <= 2:
+        return d
+    # Check for ccTLD second level domains like sakura.ad.jp, bbc.co.uk, service.com.cn
+    if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in SECOND_LEVEL_TLDS:
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+def get_domain_brand(domain: str) -> str:
+    """Extract primary brand name from domain (e.g. 'dash.cloudflare.com' -> 'cloudflare', 'secure.sakura.ad.jp' -> 'sakura')."""
+    d = clean_domain(domain)
     parts = d.split(".")
     if len(parts) <= 1:
         return d
 
-    # Check for two-part ccTLDs like co.jp, co.uk, com.cn
-    if len(parts) >= 3 and parts[-2] in {"co", "com", "org", "net", "edu", "gov", "ac"} and len(parts[-1]) == 2:
+    # Check for two-part ccTLDs like ad.jp, ne.jp, co.uk, com.cn, com.au
+    if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in SECOND_LEVEL_TLDS:
         return parts[-3]
 
     return parts[-2]
@@ -105,47 +173,51 @@ def domain_matches(
     if not domain_filter:
         return True
 
-    df = domain_filter.lower().strip()
-    df_clean = re.sub(r"^https?://", "", df).split("/")[0].split(":")[0]
-    df_clean = re.sub(r"^www\.", "", df_clean)
+    df_clean = clean_domain(domain_filter)
     brand = get_domain_brand(df_clean)
+    root_domain = get_root_domain(df_clean)
 
     # 1. If rule explicitly binds an extracted domain from subject (e.g. Cloudflare Access)
     if extracted_domain:
-        ed = extracted_domain.lower().strip()
-        return df == ed or df_clean == ed or df in ed or ed in df
+        ed = clean_domain(extracted_domain)
+        return df_clean == ed or df_clean in ed or ed in df_clean
 
     # 2. Associated domains defined in rule
     if associated_domains:
         if (re.match(r"^(bwh\d*|bawagon|bandwagon)(\.[a-z]{2,})?$", df_clean) or brand in ("bawagon", "bandwagon")) and any(ad in ("bandwagonhost.com", "64clouds.com", "bwh81.net", "bawagon") for ad in associated_domains):
             return True
         for ad in associated_domains:
-            ad = ad.lower()
-            if df_clean == ad or df_clean.endswith("." + ad) or ad.endswith("." + df_clean) or (len(brand) >= 3 and brand in ad):
+            ad_clean = clean_domain(ad)
+            ad_root = get_root_domain(ad_clean)
+            if df_clean == ad_clean or df_clean.endswith("." + ad_clean) or ad_clean.endswith("." + df_clean) or root_domain == ad_root or (len(brand) >= 3 and brand in ad_clean):
                 return True
 
-    # 3. Direct domain substring match
-    if df_clean in subject.lower() or df_clean in sender.lower() or df_clean in thread_text.lower():
+    # 3. Direct visiting domain substring match
+    corpus = (subject + "\n" + sender + "\n" + thread_text).lower()
+    if df_clean in corpus:
         return True
 
-    # 4. Brand match (verifying no conflicting subdomain of the same root domain is mentioned)
+    # 4. Brand match (verifying no conflicting tenant subdomain)
     if len(brand) >= 3:
-        parts = df_clean.split(".")
-        root_domain = ".".join(parts[-2:]) if len(parts) >= 2 else df_clean
-        if len(parts) >= 3 and parts[-2] in {"co", "com", "org", "net", "edu", "gov", "ac"} and len(parts[-1]) == 2:
-            root_domain = ".".join(parts[-3:])
-        
-        conflicting_domains = re.findall(r"([a-z0-9\.-]+\." + re.escape(root_domain) + r")", (subject + "\n" + thread_text).lower())
-        has_conflict = any(cd != df_clean and not cd.startswith("www.") for cd in conflicting_domains)
-        if has_conflict:
-            return False
+        conflicting_domains = set(re.findall(r"([a-z0-9\.-]+\." + re.escape(root_domain) + r")", corpus))
+        # If the visiting domain itself is explicitly present in the email, it is an explicit match, not a conflict
+        if df_clean not in conflicting_domains:
+            # Exclude common infrastructure/service subdomains from being flagged as tenant conflicts
+            non_infra_conflicts = [
+                cd for cd in conflicting_domains
+                if cd != df_clean
+                and not cd.startswith("www.")
+                and cd.split(".")[0] not in COMMON_SERVICE_SUBDOMAINS
+            ]
+            if non_infra_conflicts:
+                return False
 
         brand_clean = re.sub(r"[^a-z0-9]", "", brand)
         sender_clean = re.sub(r"[^a-z0-9]", "", sender.lower())
         subject_clean = re.sub(r"[^a-z0-9]", "", subject.lower())
         text_clean = re.sub(r"[^a-z0-9]", "", thread_text.lower())
 
-        if f"@{brand}." in sender.lower() or f"<{brand}@" in sender.lower() or brand in sender.lower() or brand in subject.lower():
+        if f"@{brand}." in sender.lower() or f"<{brand}@" in sender.lower() or brand in sender.lower() or brand in subject.lower() or root_domain in sender.lower():
             return True
 
         if brand_clean in sender_clean or brand_clean in subject_clean or brand_clean in text_clean:
@@ -197,40 +269,16 @@ def extract_universal_otp(
     if re.search(r"(?i)error\s+code\s*:\s*\d+", thread_text) and not re.search(r"(?i)(?:verification|security|login)\s*code", thread_text):
         return None
 
-    # 2. If domain filter is present, ensure domain or brand matches
+    # 2. If domain filter is present, ensure domain or brand matches via SSOT domain_matches
     if domain_filter:
-        df = domain_filter.lower().strip()
-        df_clean = re.sub(r"^https?://", "", df).split("/")[0].split(":")[0]
-        df_clean = re.sub(r"^www\.", "", df_clean)
-        brand = get_domain_brand(df_clean)
-        matched = False
-        brand_clean = re.sub(r"[^a-z0-9]", "", brand)
-        sender_clean = re.sub(r"[^a-z0-9]", "", sender.lower())
-        subject_clean = re.sub(r"[^a-z0-9]", "", subject.lower())
-        text_clean = re.sub(r"[^a-z0-9]", "", thread_text.lower())
-
-        if df_clean in subject.lower() or df_clean in sender.lower() or df_clean in thread_text.lower():
-            matched = True
-        elif len(brand) >= 3:
-            parts = df_clean.split(".")
-            root_domain = ".".join(parts[-2:]) if len(parts) >= 2 else df_clean
-            if len(parts) >= 3 and parts[-2] in {"co", "com", "org", "net", "edu", "gov", "ac"} and len(parts[-1]) == 2:
-                root_domain = ".".join(parts[-3:])
-            conflicting_domains = re.findall(r"([a-z0-9\.-]+\." + re.escape(root_domain) + r")", (subject + "\n" + thread_text).lower())
-            has_conflict = any(cd != df_clean and not cd.startswith("www.") for cd in conflicting_domains)
-            if not has_conflict:
-                brand_clean = re.sub(r"[^a-z0-9]", "", brand)
-                sender_clean = re.sub(r"[^a-z0-9]", "", sender.lower())
-                subject_clean = re.sub(r"[^a-z0-9]", "", subject.lower())
-                text_clean = re.sub(r"[^a-z0-9]", "", thread_text.lower())
-
-                if f"@{brand}." in sender.lower() or f"<{brand}@" in sender.lower() or brand in sender.lower() or brand in subject.lower():
-                    matched = True
-                elif len(brand_clean) >= 3 and (brand_clean in sender_clean or brand_clean in subject_clean or brand_clean in text_clean):
-                    matched = True
-                elif (re.match(r"^(bwh\d*|bawagon)$", brand) or brand in ("bawagon", "bandwagon")) and any(alias in sender_clean or alias in subject_clean or alias in text_clean for alias in ("bandwagon", "bawagon", "64clouds", "kiwivm")):
-                    matched = True
-        if not matched:
+        if not domain_matches(
+            domain_filter=domain_filter,
+            extracted_domain=None,
+            associated_domains=None,
+            sender=sender,
+            subject=subject,
+            thread_text=thread_text
+        ):
             return None
 
     body_text = get_thread_body(thread_text)
@@ -248,27 +296,7 @@ def extract_universal_otp(
         age_seconds = 0.0
 
     # Detect explicit expiration TTL in English, Chinese, Japanese (hours, minutes)
-    detected_ttl = None
-    exp_patterns = [
-        (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in))\s*(\d+)\s*hour", 3600),
-        (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in))\s*(\d+)\s*minute", 60),
-        (r"(?i)(?:有效时间|有效期|有效期限)(?:为|：|:)?\s*(\d+)\s*(?:小时|小時|時間)", 3600),
-        (r"(?i)(\d+)\s*(?:个)?(?:小时|小時|時間)(?:之?内)?有效", 3600),
-        (r"(?i)(?:有效时间|有效期|有效期限)(?:为|：|:)?\s*(\d+)\s*分钟", 60),
-        (r"(?i)(\d+)\s*分钟(?:之?内)?有效", 60),
-        (r"(?i)有効(?:期限|時間)(?:は|：|:)?\s*(\d+)\s*分", 60),
-        (r"(?i)(\d+)\s*分(?:间|間)?有效", 60),
-    ]
-    for pat, mult in exp_patterns:
-        m = re.search(pat, raw_search_text)
-        if m:
-            for g in m.groups():
-                if g:
-                    detected_ttl = int(g) * mult
-                    break
-            if detected_ttl:
-                break
-
+    detected_ttl = detect_ttl(raw_search_text)
     ttl = detected_ttl if detected_ttl is not None else max_age_seconds
     remaining = int(ttl - age_seconds)
     if remaining <= 0 or age_seconds > max(ttl, max_age_seconds):
@@ -475,26 +503,7 @@ def extract_otp_from_thread(
             if cb_match:
                 callback_url = cb_match.group(1).strip()
 
-        detected_ttl = None
-        for pat, mult in [
-            (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in))\s*(\d+)\s*hour", 3600),
-            (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in))\s*(\d+)\s*minute", 60),
-            (r"(?i)(?:有效时间|有效期|有效期限)(?:为|：|:)?\s*(\d+)\s*(?:小时|小時|時間)", 3600),
-            (r"(?i)(\d+)\s*(?:个)?(?:小时|小時|時間)(?:之?内)?有效", 3600),
-            (r"(?i)(?:有效时间|有效期|有效期限)(?:为|：|:)?\s*(\d+)\s*分钟", 60),
-            (r"(?i)(\d+)\s*分钟(?:之?内)?有效", 60),
-            (r"(?i)有効(?:期限|時間)(?:は|：|:)?\s*(\d+)\s*分", 60),
-            (r"(?i)(\d+)\s*分(?:间|間)?有效", 60),
-        ]:
-            m = re.search(pat, search_text)
-            if m:
-                for g in m.groups():
-                    if g:
-                        detected_ttl = int(g) * mult
-                        break
-                if detected_ttl:
-                    break
-
+        detected_ttl = detect_ttl(search_text)
         ttl = detected_ttl if detected_ttl is not None else rule.default_ttl_seconds
         expires_at_dt = email_dt + timedelta(seconds=ttl)
         remaining = int(ttl - age_seconds)

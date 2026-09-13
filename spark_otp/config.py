@@ -249,6 +249,15 @@ DEFAULT_RULES = [
         filter_query="from:64clouds.com OR from:bandwagonhost.com OR from:it7.net",
     ),
     RuleDefinition(
+        name="sakura_internet",
+        sender_pattern=r"(?i)(?:さくらインターネット|support@sakura\.ad\.jp|noreply@sakura\.ad\.jp|@sakura\.ad\.jp|@sakura\.ne\.jp)",
+        subject_pattern=r"(?i)(?:さくらインターネット|認証コード|会員情報登録)",
+        code_regex=r"(?i)(?:認証コード(?:入力|は|为|：|:|\s)+|code[：:\s]+)([0-9]{6})\b",
+        default_ttl_seconds=1800,
+        associated_domains=["sakura.ad.jp", "sakura.ne.jp"],
+        filter_query="from:sakura.ad.jp OR from:sakura.ne.jp OR さくらインターネット",
+    ),
+    RuleDefinition(
         name="generic_otp",
         sender_pattern=r".*",
         subject_pattern=r"(?i)(?:verification|login|security|access|auth|otp|one-time|verify|confirm|passcode|validation|device).*code|(?:device\s+)?verification\b|验证码|动态码|校验码|安全码|授权码|認証コード|確認コード|ワンタイムパスワード",

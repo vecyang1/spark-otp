@@ -9,6 +9,7 @@ import os
 from datetime import datetime, timedelta
 from spark_otp.spark_client import SparkClient
 from spark_otp.config import config
+from tests.fixtures import REAL_SAKURA_INTERNET_EMAIL
 
 def create_mock_spark_sqlite(db_path: str):
     """Create a minimal SQLite schema mimicking Spark Desktop's messages table."""
@@ -311,6 +312,108 @@ class TestSparkSqliteBackend(unittest.TestCase):
         otp2 = client.get_latest_otp(domain="bandwagonhost.com", since_time=ts_now - 150, now=now)
         self.assertIsNotNone(otp2)
         self.assertEqual(otp2.code, "334455")
+
+    def test_sqlite_truncated_short_body_triggers_fetch_thread(self):
+        """Verify that when shortBody is truncated before the OTP (like Sakura CoreData),
+        domain_matches triggers fetch_thread and successfully extracts the OTP."""
+        now = datetime.now()
+        ts_now = int(now.timestamp())
+
+        # Exact truncated shortBody from Sakura Internet CoreData SQLite
+        truncated_body = (
+            "-------------------------------------------------------- "
+            "本メールにお心あたりのない場合は、他の方が誤ってメールアドレスを "
+            "入力した可能性がございますので、お見捨ておきください。 "
+            "-------------------------------------------------------- "
+            "さくらインターネットの会員登録をお申込みいただき、誠にありがとうございます。 "
+            "メールアドレスの確認ページで、以下6桁の認証コードを入力してください。 "
+        )
+
+        insert_mock_message(
+            self.db_path,
+            pk=722910,
+            sender='さくらインターネット <support@sakura.ad.jp>',
+            recipient='user@example.com',
+            subject='[さくらインターネット]認証コード入力と会員情報登録のお願い',
+            short_body=truncated_body,
+            received_ts=ts_now - 60
+        )
+
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+
+        # Mock fetch_thread to return the full thread text containing the code
+        full_email_text = REAL_SAKURA_INTERNET_EMAIL.format(
+            date_str=now.strftime("%Y-%m-%d %H:%M:%S")
+        )
+        fetch_thread_called = []
+
+        def mock_fetch_thread(msg_id):
+            fetch_thread_called.append(msg_id)
+            return full_email_text if msg_id == "722910" else ""
+
+        client.fetch_thread = mock_fetch_thread
+
+        otp = client.get_latest_otp(domain="secure.sakura.ad.jp", account="user@example.com", now=now)
+        self.assertIsNotNone(otp, "Must extract OTP by falling back to fetch_thread when shortBody is truncated")
+        self.assertEqual(otp.code, "945521")
+        self.assertEqual(otp.service, "sakura_internet")
+        self.assertEqual(otp.message_id, "722910")
+        self.assertIn("722910", fetch_thread_called, "fetch_thread must be invoked when shortBody is truncated")
+
+    def test_sqlite_sakura_with_full_short_body(self):
+        """Verify that when shortBody contains the full text including OTP, it extracts without fetch_thread."""
+        now = datetime.now()
+        ts_now = int(now.timestamp())
+
+        body_with_code = (
+            "さくらインターネットの会員登録をお申込みいただき、誠にありがとうございます。\n"
+            "※このコードの有効期限は、本メールが送信されてから30分間です。\n"
+            "認証コード：945521\n"
+        )
+        insert_mock_message(
+            self.db_path,
+            pk=722911,
+            sender='さくらインターネット <support@sakura.ad.jp>',
+            recipient='user@example.com',
+            subject='[さくらインターネット]認証コード入力と会員情報登録のお願い',
+            short_body=body_with_code,
+            received_ts=ts_now - 60
+        )
+
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+        fetch_thread_called = []
+        client.fetch_thread = lambda msg_id: fetch_thread_called.append(msg_id) or ""
+
+        otp = client.get_latest_otp(domain="secure.sakura.ad.jp", account="user@example.com", now=now)
+        self.assertIsNotNone(otp)
+        self.assertEqual(otp.code, "945521")
+        self.assertEqual(otp.service, "sakura_internet")
+        self.assertEqual(len(fetch_thread_called), 0, "fetch_thread should not be called if shortBody has code")
+
+    def test_sqlite_unrelated_domain_truncated_short_body_does_not_fetch_thread(self):
+        """Adversarial check: Unrelated domain must not trigger fetch_thread for Sakura email."""
+        now = datetime.now()
+        ts_now = int(now.timestamp())
+
+        truncated_body = "メールアドレスの確認ページで、以下6桁の認証コードを入力してください。"
+        insert_mock_message(
+            self.db_path,
+            pk=722912,
+            sender='さくらインターネット <support@sakura.ad.jp>',
+            recipient='user@example.com',
+            subject='[さくらインターネット]認証コード入力と会員情報登録のお願い',
+            short_body=truncated_body,
+            received_ts=ts_now - 60
+        )
+
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+        fetch_thread_called = []
+        client.fetch_thread = lambda msg_id: fetch_thread_called.append(msg_id) or ""
+
+        # Query for an unrelated domain
+        otp = client.get_latest_otp(domain="evil-phishing.com", now=now)
+        self.assertIsNone(otp)
+        self.assertEqual(len(fetch_thread_called), 0, "fetch_thread must NOT be invoked for mismatched domain")
 
 if __name__ == "__main__":
     unittest.main()

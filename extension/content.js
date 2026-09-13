@@ -1341,7 +1341,7 @@
 
   function isVerifyButton(btn) {
     const txt = (btn.textContent || btn.value || "").trim().toLowerCase();
-    const verifyWords = ["verify", "continue", "submit", "confirm", "sign in", "log in", "next", "check", "validate", "验证", "确认", "登录", "認証", "次へ"];
+    const verifyWords = ["verify", "continue", "submit", "confirm", "sign in", "log in", "next", "check", "validate", "验证", "确认", "登录", "認証", "次へ", "進む", "送信", "登録"];
     return verifyWords.some(w => txt.includes(w));
   }
 

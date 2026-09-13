@@ -13,7 +13,16 @@ from datetime import datetime
 from typing import List, Optional
 from .models import EmailSummary, OTPResult
 from .config import config, DEFAULT_RULES
-from .extractor import extract_otp_from_thread, get_domain_brand, OTP_INTENT_PATTERN, parse_email_date, domain_matches
+from .extractor import (
+    extract_otp_from_thread,
+    get_domain_brand,
+    get_root_domain,
+    clean_domain,
+    COMMON_SERVICE_SUBDOMAINS,
+    OTP_INTENT_PATTERN,
+    parse_email_date,
+    domain_matches,
+)
 
 def parse_emails_table_output(raw_output: str) -> List[EmailSummary]:
     """Parse `spark emails` table output into EmailSummary items."""
@@ -219,9 +228,10 @@ class SparkClient:
                 # Only check full .emlx body if the subject or sender relates to the domain or OTP intent
                 intent_match = bool(OTP_INTENT_PATTERN.search(subject))
                 if not intent_match and domain:
-                    d_clean = domain.lower().replace("https://", "").replace("http://", "").split("/")[0]
-                    d_brand = d_clean.split(".")[0]
-                    if d_brand in sender.lower() or d_brand in subject.lower():
+                    d_clean = clean_domain(domain)
+                    d_brand = get_domain_brand(d_clean)
+                    d_root = get_root_domain(d_clean)
+                    if d_brand in sender.lower() or d_brand in subject.lower() or d_root in sender.lower() or d_root in subject.lower():
                         intent_match = True
                 if intent_match:
                     full_body = self._find_emlx_for_message(db_path, pk)
@@ -562,11 +572,11 @@ class SparkClient:
     ) -> Optional[OTPResult]:
         df_clean = ""
         brand = ""
+        root_domain = ""
         if domain:
-            df = domain.lower().strip()
-            df_clean = re.sub(r"^https?://", "", df).split("/")[0].split(":")[0]
-            df_clean = re.sub(r"^www\.", "", df_clean)
+            df_clean = clean_domain(domain)
             brand = get_domain_brand(df_clean)
+            root_domain = get_root_domain(df_clean)
 
         # If a preferred account is specified, prioritize emails from that account
         sorted_emails = emails
@@ -628,7 +638,7 @@ class SparkClient:
                     sender_clean = re.sub(r"[^a-z0-9]", "", sender_lower)
                     subject_clean = re.sub(r"[^a-z0-9]", "", subject_lower)
 
-                    if df_clean in sender_lower or df_clean in subject_lower:
+                    if df_clean in sender_lower or df_clean in subject_lower or root_domain in sender_lower or root_domain in subject_lower:
                         potential_match = True
                     elif len(brand_clean) >= 3 and (brand_clean in sender_clean or brand_clean in subject_clean):
                         potential_match = True
@@ -636,12 +646,8 @@ class SparkClient:
                         potential_match = True
                     elif len(brand) >= 3 and (brand in sender_lower or brand in subject_lower):
                         # Verify no conflicting subdomain
-                        parts = df_clean.split(".")
-                        root_domain = ".".join(parts[-2:]) if len(parts) >= 2 else df_clean
-                        if len(parts) >= 3 and parts[-2] in {"co", "com", "org", "net", "edu", "gov", "ac"} and len(parts[-1]) == 2:
-                            root_domain = ".".join(parts[-3:])
-                        conflicting = re.findall(r"([a-z0-9\.-]+\." + re.escape(root_domain) + r")", subject_lower)
-                        if not any(cd != df_clean and not cd.startswith("www.") for cd in conflicting):
+                        conflicting = set(re.findall(r"([a-z0-9\.-]+\." + re.escape(root_domain) + r")", subject_lower))
+                        if df_clean in conflicting or not any(cd != df_clean and not cd.startswith("www.") and cd.split(".")[0] not in COMMON_SERVICE_SUBDOMAINS for cd in conflicting):
                             potential_match = True
             else:
                 # No domain filter: any rule or OTP intent matches
@@ -700,18 +706,18 @@ class SparkClient:
 
         matching_rule = None
         if domain:
-            df = domain.lower().strip()
-            df_clean = re.sub(r"^https?://", "", df).split("/")[0].split(":")[0]
-            df_clean = re.sub(r"^www\.", "", df_clean)
+            df_clean = clean_domain(domain)
             brand = get_domain_brand(df_clean)
+            root_domain = get_root_domain(df_clean)
             for rule in config.rules:
                 if rule.associated_domains:
                     if (re.match(r"^(bwh\d*|bawagon|bandwagon)(\.[a-z]{2,})?$", df_clean) or brand in ("bawagon", "bandwagon")) and any(ad in ("bandwagonhost.com", "64clouds.com", "bwh81.net", "bawagon") for ad in rule.associated_domains):
                         matching_rule = rule
                         break
                     for ad in rule.associated_domains:
-                        ad = ad.lower()
-                        if df_clean == ad or df_clean.endswith("." + ad) or ad.endswith("." + df_clean) or (len(brand) >= 3 and brand in ad):
+                        ad_clean = clean_domain(ad)
+                        ad_root = get_root_domain(ad_clean)
+                        if df_clean == ad_clean or df_clean.endswith("." + ad_clean) or ad_clean.endswith("." + df_clean) or root_domain == ad_root or (len(brand) >= 3 and brand in ad_clean):
                             matching_rule = rule
                             break
                     if matching_rule:

@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.8] - 2026-09-13
+
+### Fixed
+- **Authoritative Second-Level ccTLD Parsing & Brand Extraction**:
+  - Resolved root domain and brand name misparsing for ccTLD domains (e.g., `secure.sakura.ad.jp` incorrectly extracted brand as `"ad"` and root domain as `"ad.jp"` due to missing `.ad.jp`, `.ne.jp`, etc. in second-level TLD tables).
+  - Implemented single source of truth (SSOT) helpers `clean_domain()`, `get_root_domain()`, and refactored `get_domain_brand()` in `spark_otp/extractor.py`.
+  - Replaced inline ad-hoc `split(".")[0]` ghost logic across `spark_otp/spark_client.py` (`_get_otp_from_apple_mail`, `_search_emails_for_otp`, `get_latest_otp`).
+- **Spark CoreData SQLite Body Truncation Fallback**:
+  - In `spark_otp/spark_client.py`, resolved failure where CoreData's 250-character `shortBody` truncated before the OTP code and failed to invoke `fetch_thread()` due to broken domain brand matching.
+  - Excluded common corporate service subdomains (`help`, `support`, `docs`, `about`, `blog`, etc.) from conflict domain rejection in `domain_matches()` so help links in transactional email footers do not disqualify valid emails.
+
+### Added
+- **Sakura Internet (`sakura.ad.jp`) Service Definition**:
+  - Added first-class `sakura_internet` rule in `spark_otp/config.py` with 1800s (30-minute) TTL and associated domains `sakura.ad.jp`, `sakura.ne.jp`.
+  - Added Japanese TTL pattern support (`※このコードの有効期限は、本メールが送信されてから30分間です。`) in `detect_ttl()`.
+  - Added Japanese submit action keywords (`"進む"`, `"次へ進む"`, `"送信"`, `"登録"`) in `isVerifyButton` / `isBtnVerify` in `extension/content.js` and `userscript/spark-otp.user.js` with 100% SSOT parity check.
+- **Two-Sided Automated Test Suite Expansion (151 passing tests)**:
+  - Added `REAL_SAKURA_INTERNET_EMAIL` fixture in `tests/fixtures.py`.
+  - Added comprehensive tests in `tests/test_extractor.py` (brand parsing, root domain resolution, Sakura rule extraction, universal fallback, associated domain matching, adversarial domain mismatch, expired code rejection).
+  - Added `test_sqlite_truncated_short_body_triggers_fetch_thread`, `test_sqlite_sakura_with_full_short_body`, and `test_sqlite_unrelated_domain_truncated_short_body_does_not_fetch_thread` in `tests/test_sqlite_backend.py`.
+  - Verified live execution against real Spark CoreData SQLite database (Message PK 722910) extracting OTP `945521` with sub-millisecond latency.
+
+## [2026-09-12] - 2026-09-12
+
+### Documentation
+- Document SSOT sync CLI commands, scripts, and updated 142-test coverage (`1c629ee`)
+
 ## [1.3.7] - 2026-09-11
 
 ### Fixed

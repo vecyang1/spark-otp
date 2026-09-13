@@ -3,7 +3,7 @@ TDD Tests for Spark OTP Extractor.
 """
 import unittest
 from datetime import datetime, timedelta
-from spark_otp.extractor import extract_otp_from_thread, parse_email_date, get_domain_brand
+from spark_otp.extractor import extract_otp_from_thread, parse_email_date, get_domain_brand, get_root_domain, clean_domain
 from spark_otp.config import DEFAULT_RULES
 from tests.fixtures import (
     REAL_CLOUDFLARE_FINANCE_EMAIL,
@@ -29,6 +29,7 @@ from tests.fixtures import (
     JAPANESE_ONETIME_PASSWORD_EMAIL,
     CHINESE_DYNAMIC_CODE_EMAIL,
     REAL_BANDWAGON_VERIFY_EMAIL,
+    REAL_SAKURA_INTERNET_EMAIL,
 )
 
 class TestExtractor(unittest.TestCase):
@@ -46,6 +47,24 @@ class TestExtractor(unittest.TestCase):
         self.assertEqual(get_domain_brand("console.aws.amazon.com"), "amazon")
         self.assertEqual(get_domain_brand("finance.acme-cloud.net"), "acme-cloud")
         self.assertEqual(get_domain_brand("https://auth.notion.so/login"), "notion")
+        self.assertEqual(get_domain_brand("secure.sakura.ad.jp"), "sakura")
+        self.assertEqual(get_domain_brand("sakura.ad.jp"), "sakura")
+        self.assertEqual(get_domain_brand("help.sakura.ne.jp"), "sakura")
+        self.assertEqual(get_domain_brand("portal.service.co.uk"), "service")
+        self.assertEqual(get_domain_brand("app.service.com.cn"), "service")
+        self.assertEqual(get_domain_brand("bank.service.com.au"), "service")
+
+    def test_get_root_domain(self):
+        self.assertEqual(get_root_domain("github.com"), "github.com")
+        self.assertEqual(get_root_domain("dashboard.stripe.com"), "stripe.com")
+        self.assertEqual(get_root_domain("console.aws.amazon.com"), "amazon.com")
+        self.assertEqual(get_root_domain("secure.sakura.ad.jp"), "sakura.ad.jp")
+        self.assertEqual(get_root_domain("sakura.ad.jp"), "sakura.ad.jp")
+        self.assertEqual(get_root_domain("help.sakura.ne.jp"), "sakura.ne.jp")
+        self.assertEqual(get_root_domain("portal.service.co.uk"), "service.co.uk")
+        self.assertEqual(get_root_domain("app.service.com.cn"), "service.com.cn")
+        self.assertEqual(get_root_domain("bank.service.com.au"), "service.com.au")
+        self.assertEqual(get_root_domain("sub.service.co.nz"), "service.co.nz")
 
     def test_extract_real_cloudflare_finance_email(self):
         now = datetime(2026, 9, 7, 19, 36)
@@ -703,6 +722,58 @@ Type: Email
         self.assertIsNotNone(result, "Should respect rule max TTL 3600s over custom max_age 1200s")
         self.assertEqual(result.code, "181174")
         self.assertEqual(result.time_remaining_seconds, 2100)
+
+    def test_extract_real_sakura_internet_email(self):
+        # Email received at 16:51, evaluated at 16:53 (2 mins later)
+        now = datetime(2026, 9, 13, 16, 53)
+        raw = REAL_SAKURA_INTERNET_EMAIL.format(date_str="2026-09-13 16:51")
+
+        result = extract_otp_from_thread(raw, domain_filter="secure.sakura.ad.jp", now=now)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.code, "945521")
+        self.assertEqual(result.service, "sakura_internet")
+        self.assertEqual(result.time_remaining_seconds, 1680)
+
+    def test_extract_real_sakura_universal_fallback(self):
+        # Pass rules=[] to verify that universal intelligent fallback also extracts 945521
+        now = datetime(2026, 9, 13, 16, 53)
+        raw = REAL_SAKURA_INTERNET_EMAIL.format(date_str="2026-09-13 16:51")
+
+        result = extract_otp_from_thread(raw, domain_filter="secure.sakura.ad.jp", rules=[], now=now)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.code, "945521")
+        self.assertEqual(result.service, "universal_otp")
+        # Detected TTL from "有効期限は、本メールが送信されてから30分間です。" is 1800s
+        self.assertEqual(result.time_remaining_seconds, 1680)
+
+    def test_extract_sakura_associated_domains(self):
+        now = datetime(2026, 9, 13, 16, 53)
+        raw = REAL_SAKURA_INTERNET_EMAIL.format(date_str="2026-09-13 16:51")
+
+        for d in ["sakura.ad.jp", "secure.sakura.ad.jp", "member.sakura.ne.jp", "sakura.ne.jp"]:
+            result = extract_otp_from_thread(raw, domain_filter=d, now=now)
+            self.assertIsNotNone(result, f"Failed for domain {d}")
+            self.assertEqual(result.code, "945521")
+
+    def test_sakura_domain_filter_rejection(self):
+        now = datetime(2026, 9, 13, 16, 53)
+        raw = REAL_SAKURA_INTERNET_EMAIL.format(date_str="2026-09-13 16:51")
+
+        # Unrelated domain must be rejected
+        result_unrelated = extract_otp_from_thread(raw, domain_filter="example.com", now=now)
+        self.assertIsNone(result_unrelated)
+
+        # Another unrelated .ad.jp domain must also be rejected
+        result_other_ad_jp = extract_otp_from_thread(raw, domain_filter="othercompany.ad.jp", now=now)
+        self.assertIsNone(result_other_ad_jp)
+
+    def test_sakura_expired_rejection(self):
+        # 35 minutes after 16:51 is 17:26 -> expired!
+        now_expired = datetime(2026, 9, 13, 17, 26)
+        raw = REAL_SAKURA_INTERNET_EMAIL.format(date_str="2026-09-13 16:51")
+
+        result = extract_otp_from_thread(raw, domain_filter="secure.sakura.ad.jp", now=now_expired)
+        self.assertIsNone(result, "Sakura code must expire after 30 minutes (1800s)")
 
 if __name__ == "__main__":
     unittest.main()

@@ -45,6 +45,7 @@ ENV/
 # Telemetry & Runtime caches
 *.jsonl
 /tmp/spark-otp*
+graphify-out/
 
 # Private Context & Internal Governance (Sanitization Gate 2)
 VAULT.md

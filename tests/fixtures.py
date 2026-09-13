@@ -337,4 +337,50 @@ Link: https://sparkmailapp.com/dpl/bl?token=QTphbGV4LnR1cm5lckBnbWFpbC5jb207SUQ6
   Bandwagon Host
 """
 
+REAL_SAKURA_INTERNET_EMAIL = """
+Thread: [さくらインターネット]認証コード入力と会員情報登録のお願い
+Messages: 1
+Labels: user@example.com:Important
+Link: https://sparkmailapp.com/dpl/bl?token=sample_sakura_token
+────────────────────────────────────────────────────────────────────────
+
+  ID: 722910
+  Subject: [さくらインターネット]認証コード入力と会員情報登録のお願い
+  From: さくらインターネット <support@sakura.ad.jp>
+  To: user@example.com
+  Date: {date_str}
+  Type: Email
+
+  --------------------------------------------------------
+  本メールにお心あたりのない場合は、他の方が誤ってメールアドレスを
+  入力した可能性がございますので、お見捨ておきください。
+  --------------------------------------------------------
+  
+  さくらインターネットの会員登録をお申込みいただき、誠にありがとうございます。
+  メールアドレスの確認ページで、以下6桁の認証コードを入力してください。
+  
+  ※このコードの有効期限は、本メールが送信されてから30分間です。
+  
+    認証コード：945521
+  
+  
+  認証コード入力後に会員情報の入力へお進みください。
+  
+  会員情報の入力方法につきましては、以下URLをご確認ください。
+  
+   ▼会員登録 (会員IDを取得)したい（STEP2　登録情報の入力）
+   https://help.sakura.ad.jp/purpose_beginner/2545/?article_anchor=js-nav-1
+  
+  
+  認証コードの入力ページを閉じてしまった場合は、以下リンクからもページの表示が可能です。
+  
+   ▼認証コードの入力
+   https://secure.sakura.ad.jp/signup3/member-register/email_verification.html
+  
+  ＜ご注意ください＞
+  ・「メールアドレス」を入力した環境と同じ端末、同じブラウザでアクセスしてください。
+  ・システムエラー等発生した際は、お手数ですが、再度最初からお手続きください。
+  今後ともさくらインターネットをよろしくお願いいたします。
+"""
+
 
