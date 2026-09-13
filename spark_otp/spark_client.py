@@ -137,6 +137,7 @@ class SparkClient:
         exclude_message_ids: Optional[List[str]] = None,
         since_time: Optional[float] = None,
         allow_expired: bool = False,
+        fallback_expired: bool = False,
     ) -> Optional[OTPResult]:
         """
         Direct Apple Mail Envelope Index fast-path (<5ms).
@@ -146,8 +147,9 @@ class SparkClient:
         if not db_path:
             return None
 
+        include_expired = allow_expired or (domain is not None and fallback_expired)
         rule_max_ttl = max((r.default_ttl_seconds for r in config.rules), default=600)
-        effective_max_age = max(max_age, rule_max_ttl, 86400 if allow_expired else 0)
+        effective_max_age = max(max_age, rule_max_ttl, 86400 if include_expired else 0)
         since_timestamp = current_time.timestamp() - effective_max_age
         if since_time is not None and since_time > since_timestamp:
             since_timestamp = since_time
@@ -205,6 +207,8 @@ class SparkClient:
         exclude_codes_set = set(str(c).strip().upper() for c in exclude_codes) if exclude_codes else set()
         exclude_msg_ids_set = set(str(m).strip() for m in exclude_message_ids) if exclude_message_ids else set()
 
+        first_expired_otp: Optional[OTPResult] = None
+
         for pk, sender, s_name, recipient, subject, body, received_ts in rows:
             if exclude_msg_ids_set and str(pk) in exclude_msg_ids_set:
                 continue
@@ -224,46 +228,72 @@ class SparkClient:
                 rules=config.rules,
                 now=current_time,
                 max_age_seconds=max_age,
-                allow_expired=allow_expired,
+                allow_expired=False,
             )
-            if not res:
-                # Only check full .emlx body if the subject, body, or rule relates to the domain or OTP intent
-                intent_match = bool(OTP_INTENT_PATTERN.search(subject) or OTP_INTENT_PATTERN.search(body))
-                matching_rules = [
-                    r for r in config.rules
-                    if re.search(r.sender_pattern, sender) and re.search(r.subject_pattern, subject)
-                ]
-                if matching_rules:
-                    intent_match = True
+            if res:
+                if (not exclude_codes_set or res.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res.message_id not in exclude_msg_ids_set):
+                    return res
+            elif include_expired and first_expired_otp is None:
+                res_exp = extract_otp_from_thread(
+                    thread_text=thread_text,
+                    domain_filter=domain,
+                    rules=config.rules,
+                    now=current_time,
+                    max_age_seconds=max_age,
+                    allow_expired=True,
+                )
+                if res_exp:
+                    if (not exclude_codes_set or res_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_exp.message_id not in exclude_msg_ids_set):
+                        first_expired_otp = res_exp
 
-                domain_ok = not domain
-                if domain:
-                    for r in matching_rules:
-                        if domain_matches(domain, None, r.associated_domains, sender, subject, body):
-                            domain_ok = True
-                            break
-                    if not domain_ok:
-                        domain_ok = domain_matches(domain, None, None, sender, subject, body)
+            # Only check full .emlx body if the subject, body, or rule relates to the domain or OTP intent
+            intent_match = bool(OTP_INTENT_PATTERN.search(subject) or OTP_INTENT_PATTERN.search(body))
+            matching_rules = [
+                r for r in config.rules
+                if re.search(r.sender_pattern, sender) and re.search(r.subject_pattern, subject)
+            ]
+            if matching_rules:
+                intent_match = True
 
-                if intent_match and domain_ok:
-                    full_body = self._find_emlx_for_message(db_path, pk)
-                    if full_body and full_body != body:
-                        full_thread_text = f"ID: {pk}\nSubject: {subject}\nFrom: {sender}\nTo: {recipient}\nDate: {dt_str}\n\n{full_body}\n"
-                        res = extract_otp_from_thread(
+            domain_ok = not domain
+            if domain:
+                for r in matching_rules:
+                    if domain_matches(domain, None, r.associated_domains, sender, subject, body):
+                        domain_ok = True
+                        break
+                if not domain_ok:
+                    domain_ok = domain_matches(domain, None, None, sender, subject, body)
+
+            if intent_match and domain_ok:
+                full_body = self._find_emlx_for_message(db_path, pk)
+                if full_body and full_body != body:
+                    full_thread_text = f"ID: {pk}\nSubject: {subject}\nFrom: {sender}\nTo: {recipient}\nDate: {dt_str}\n\n{full_body}\n"
+                    res_full = extract_otp_from_thread(
+                        thread_text=full_thread_text,
+                        domain_filter=domain,
+                        rules=config.rules,
+                        now=current_time,
+                        max_age_seconds=max_age,
+                        allow_expired=False,
+                    )
+                    if res_full:
+                        if (not exclude_codes_set or res_full.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full.message_id not in exclude_msg_ids_set):
+                            return res_full
+                    elif include_expired and first_expired_otp is None:
+                        res_full_exp = extract_otp_from_thread(
                             thread_text=full_thread_text,
                             domain_filter=domain,
                             rules=config.rules,
                             now=current_time,
                             max_age_seconds=max_age,
-                            allow_expired=allow_expired,
+                            allow_expired=True,
                         )
+                        if res_full_exp:
+                            if (not exclude_codes_set or res_full_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full_exp.message_id not in exclude_msg_ids_set):
+                                first_expired_otp = res_full_exp
 
-            if res:
-                if exclude_codes_set and res.code.strip().upper() in exclude_codes_set:
-                    continue
-                if exclude_msg_ids_set and res.message_id in exclude_msg_ids_set:
-                    continue
-                return res
+        if include_expired and first_expired_otp:
+            return first_expired_otp
 
         return None
 
@@ -347,6 +377,7 @@ class SparkClient:
         exclude_message_ids: Optional[List[str]] = None,
         since_time: Optional[float] = None,
         allow_expired: bool = False,
+        fallback_expired: bool = False,
     ) -> Optional[OTPResult]:
         """
         Direct SQLite fast-path lookup (<5ms).
@@ -357,8 +388,9 @@ class SparkClient:
         if not db_path:
             return None
 
+        include_expired = allow_expired or (domain is not None and fallback_expired)
         rule_max_ttl = max((r.default_ttl_seconds for r in config.rules), default=600)
-        effective_max_age = max(max_age, rule_max_ttl, 86400 if allow_expired else 0)
+        effective_max_age = max(max_age, rule_max_ttl, 86400 if include_expired else 0)
         since_timestamp = current_time.timestamp() - effective_max_age
         if since_time is not None and since_time > since_timestamp:
             since_timestamp = since_time
@@ -374,7 +406,7 @@ class SparkClient:
                     FROM messages
                     WHERE receivedDate >= ? AND receivedDate <= ?
                     ORDER BY receivedDate DESC
-                    LIMIT 80
+                    LIMIT 150
                     """,
                     (since_timestamp, until_timestamp)
                 )
@@ -408,6 +440,8 @@ class SparkClient:
         exclude_codes_set = set(str(c).strip().upper() for c in exclude_codes) if exclude_codes else set()
         exclude_msg_ids_set = set(str(m).strip() for m in exclude_message_ids) if exclude_message_ids else set()
 
+        first_expired_otp: Optional[OTPResult] = None
+
         for pk, sender, recipient, subject, short_body, received_ts, unseen in rows:
             if exclude_msg_ids_set and str(pk) in exclude_msg_ids_set:
                 continue
@@ -427,14 +461,23 @@ class SparkClient:
                 rules=config.rules,
                 now=current_time,
                 max_age_seconds=max_age,
-                allow_expired=allow_expired,
+                allow_expired=False,
             )
             if res:
-                if exclude_codes_set and res.code.strip().upper() in exclude_codes_set:
-                    continue
-                if exclude_msg_ids_set and res.message_id in exclude_msg_ids_set:
-                    continue
-                return res
+                if (not exclude_codes_set or res.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res.message_id not in exclude_msg_ids_set):
+                    return res
+            elif include_expired and first_expired_otp is None:
+                res_exp = extract_otp_from_thread(
+                    thread_text=thread_text,
+                    domain_filter=domain,
+                    rules=config.rules,
+                    now=current_time,
+                    max_age_seconds=max_age,
+                    allow_expired=True,
+                )
+                if res_exp:
+                    if (not exclude_codes_set or res_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_exp.message_id not in exclude_msg_ids_set):
+                        first_expired_otp = res_exp
 
             # If short_body was truncated or did not yield code, check if full thread should be fetched
             has_otp_intent = bool(OTP_INTENT_PATTERN.search(subject) or OTP_INTENT_PATTERN.search(short_body))
@@ -463,14 +506,26 @@ class SparkClient:
                             rules=config.rules,
                             now=current_time,
                             max_age_seconds=max_age,
-                            allow_expired=allow_expired,
+                            allow_expired=False,
                         )
                         if res_full:
-                            if exclude_codes_set and res_full.code.strip().upper() in exclude_codes_set:
-                                continue
-                            if exclude_msg_ids_set and res_full.message_id in exclude_msg_ids_set:
-                                continue
-                            return res_full
+                            if (not exclude_codes_set or res_full.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full.message_id not in exclude_msg_ids_set):
+                                return res_full
+                        elif include_expired and first_expired_otp is None:
+                            res_full_exp = extract_otp_from_thread(
+                                thread_text=full_thread,
+                                domain_filter=domain,
+                                rules=config.rules,
+                                now=current_time,
+                                max_age_seconds=max_age,
+                                allow_expired=True,
+                            )
+                            if res_full_exp:
+                                if (not exclude_codes_set or res_full_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full_exp.message_id not in exclude_msg_ids_set):
+                                    first_expired_otp = res_full_exp
+
+        if include_expired and first_expired_otp:
+            return first_expired_otp
 
         return None
 

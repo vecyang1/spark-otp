@@ -47,6 +47,7 @@ COMMON_SERVICE_SUBDOMAINS = {
 
 OTP_INTENT_PATTERN = re.compile(
     r"(?i)(?:"
+    # English
     r"verification\s*code|verify|security\s*code|login\s*code|access\s*code|"
     r"device\s*verification|device\s*auth|"
     r"one-time\s*password|one-time\s*code|one-time\s*pin|passcode|auth\s*code|authentication\s*code|"
@@ -54,24 +55,99 @@ OTP_INTENT_PATTERN = re.compile(
     r"validation\s*code|validating\s*code|sign-in\s*code|single-use\s*code|"
     r"[a-z0-9\.-]+\s+code\b|"
     r"3d\s*secure|one-time\s*passcode|"
+    # Chinese (Simplified & Traditional)
     r"验证码|动态码|校验码|安全码|授权码|登录码|一次性密码|验证代码|身份验证码|"
+    r"驗證碼|動態碼|校驗碼|安全碼|授權碼|登錄碼|一次性密碼|驗證代碼|身分驗證碼|"
+    # Japanese
     r"認証コード|確認コード|ワンタイムパスワード|セキュリティコード|認証用コード|パスコード|"
-    r"รหัส\s*otp|รหัสยืนยัน|เลขรหัส\s*otp|รหัสผ่านแบบใช้ครั้งเดียว|"
-    r"mã\s*xác\s*thực|mã\s*xác\s*minh|mã\s*otp|mã\s*xác\s*nhận|mã\s*đăng\s*nhập"
+    # Korean
+    r"인증\s*번호|인증\s*코드|확인\s*코드|보안\s*코드|일회용\s*비밀\s*번호|일회용\s*번호|otp\s*번호|"
+    # Spanish & Portuguese
+    r"código\s*de\s*verificación|codigo\s*de\s*verificacion|código\s*de\s*verificação|codigo\s*de\s*verificacao|"
+    r"código\s*de\s*seguridad|código\s*de\s*segurança|codigo\s*de\s*seguranca|"
+    r"código\s*de\s*confirmación|código\s*de\s*confirmação|codigo\s*de\s*confirmacao|"
+    r"código\s*de\s*acceso|código\s*de\s*un\s*solo\s*uso|clave\s*de\s*verificación|clave\s*de\s*confirmación|"
+    r"código\s*de\s*autenticação|senha\s*descartável|senha\s*de\s*uso\s*único|"
+    # French
+    r"code\s*de\s*vérification|code\s*de\s*verification|code\s*de\s*sécurité|code\s*de\s*confirmation|"
+    r"code\s*d['’]accès|code\s*d['’]authentification|mot\s*de\s*passe\s*à\s*usage\s*unique|code\s*à\s*usage\s*unique|"
+    # German
+    r"verifizierungscode|bestätigungscode|bestaetigungscode|sicherheitscode|einmalpasswort|einmalkennwort|authentifizierungscode|einmalcode|"
+    # Russian
+    r"код\s*подтверждения|код\s*верификации|проверочный\s*код|код\s*безопасности|одноразовый\s*пароль|код\s*авторизации|"
+    # Italian
+    r"codice\s*di\s*verifica|codice\s*di\s*sicurezza|codice\s*di\s*conferma|codice\s*monouso|password\s*monouso|"
+    # Vietnamese
+    r"mã\s*xác\s*thực|mã\s*xác\s*minh|mã\s*otp|mã\s*xác\s*nhận|mã\s*đăng\s*nhập|mật\s*khẩu\s*một\s*lần|"
+    # Thai
+    r"รหัส\s*otp|รหัสยืนยัน|เลขรหัส\s*otp|รหัสผ่านแบบใช้ครั้งเดียว|รหัสความปลอดภัย|"
+    # Indonesian / Malay
+    r"kode\s*verifikasi|kode\s*konfirmasi|kode\s*keamanan|kata\s*sandi\s*sekali\s*pakai|kod\s*pengesahan|kod\s*keselamatan|"
+    # Arabic
+    r"رمز\s*التحقق|كود\s*التحقق|رمز\s*التأكيد|كلمة\s*مرور\s*لمرة\s*واحدة|رمز\s*الأمان|"
+    # Hindi
+    r"सत्यापन\s*कोड|प्रमाणीकरण\s*कोड|सुरक्षा\s*कोड|ओटीपी\s*कोड|वन-टाइम\s*पासवर्ड"
     r")"
 )
 
 EXP_PATTERNS = [
+    # English
     (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in)|within)\s*(\d+)\s*hour", 3600),
     (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in)|within)\s*(\d+)\s*minute", 60),
+    # Chinese (Simplified & Traditional)
     (r"(?i)(?:有效时间|有效期|有效期限)(?:为|：|:)?\s*(\d+)\s*(?:小时|小時|時間)", 3600),
     (r"(?i)(\d+)\s*(?:个)?(?:小时|小時|時間)(?:之?内)?有效", 3600),
     (r"(?i)(?:有效时间|有效期|有效期限)(?:为|：|:)?\s*(\d+)\s*分钟", 60),
     (r"(?i)(\d+)\s*分钟(?:之?内)?有效", 60),
+    # Japanese
     (r"(?i)有効(?:期限|時間)(?:は[、\s]*[^\d\n]{0,35}|：|:)?\s*(\d+)\s*分", 60),
     (r"(?i)有効(?:期限|時間)(?:は[、\s]*[^\d\n]{0,35}|：|:)?\s*(\d+)\s*(?:時間|時間間)", 3600),
     (r"(?i)(\d+)\s*分(?:以内|間以内|间以内|間|间)?(?:有效|以内)", 60),
     (r"(?i)(\d+)\s*(?:時間|時間間|小时|小時)(?:以内|間以内|间以内)?(?:有效|以内)", 3600),
+    # Korean
+    (r"(?i)(\d+)\s*분(?:간)?\s*(?:동안)?\s*유효", 60),
+    (r"(?i)(\d+)\s*분\s*이내", 60),
+    (r"(?i)유효\s*시간(?:은|:)?\s*(\d+)\s*분", 60),
+    (r"(?i)(\d+)\s*시간(?:동안)?\s*유효", 3600),
+    # Spanish & Portuguese
+    (r"(?i)(?:válido|valido)\s*(?:por|durante)\s*(\d+)\s*hora", 3600),
+    (r"(?i)(?:válido|valido)\s*(?:por|durante)\s*(\d+)\s*minuto", 60),
+    (r"(?i)(?:expira|caduca)\s*en\s*(\d+)\s*minuto", 60),
+    (r"(?i)(?:expira|caduca)\s*en\s*(\d+)\s*hora", 3600),
+    # French
+    (r"(?i)(?:valable|valide)\s*(?:pendant|durant)\s*(\d+)\s*heure", 3600),
+    (r"(?i)(?:valable|valide)\s*(?:pendant|durant)\s*(\d+)\s*minute", 60),
+    (r"(?i)expire\s*dans\s*(\d+)\s*minute", 60),
+    (r"(?i)expire\s*dans\s*(\d+)\s*heure", 3600),
+    # German
+    (r"(?i)(?:gültig|gueltig)\s*(?:für|fuer)\s*(\d+)\s*stunde", 3600),
+    (r"(?i)(?:gültig|gueltig)\s*(?:für|fuer)\s*(\d+)\s*minute", 60),
+    (r"(?i)läuft\s*in\s*(\d+)\s*minute", 60),
+    # Russian
+    (r"(?i)действителен\s*(?:в\s*течение)?\s*(\d+)\s*час", 3600),
+    (r"(?i)действителен\s*(?:в\s*течение)?\s*(\d+)\s*минут", 60),
+    (r"(?i)истекает\s*через\s*(\d+)\s*минут", 60),
+    # Italian
+    (r"(?i)valido\s*per\s*(\d+)\s*or", 3600),
+    (r"(?i)valido\s*per\s*(\d+)\s*minut", 60),
+    (r"(?i)scade\s*(?:tra|in)\s*(\d+)\s*minut", 60),
+    # Vietnamese
+    (r"(?i)(?:hiệu\s*lực|hết\s*hạn)\s*(?:trong|sau)\s*(\d+)\s*giờ", 3600),
+    (r"(?i)(?:hiệu\s*lực|hết\s*hạn)\s*(?:trong|sau)\s*(\d+)\s*phút", 60),
+    (r"(?i)có\s*hiệu\s*lực\s*(\d+)\s*phút", 60),
+    # Thai
+    (r"(?i)(?:มีอายุ|หมดอายุภายใน|ภายใน)\s*(\d+)\s*ชั่วโมง", 3600),
+    (r"(?i)(?:มีอายุ|หมดอายุภายใน|ภายใน)\s*(\d+)\s*นาที", 60),
+    # Indonesian / Malay
+    (r"(?i)(?:berlaku|sah)\s*(?:selama)?\s*(\d+)\s*jam", 3600),
+    (r"(?i)(?:berlaku|sah)\s*(?:selama)?\s*(\d+)\s*menit", 60),
+    (r"(?i)kedaluwarsa\s*dalam\s*(\d+)\s*menit", 60),
+    # Arabic
+    (r"(?i)(?:صالح\s*لمدة|ينتهي\s*خلال)\s*(\d+)\s*ساعة", 3600),
+    (r"(?i)(?:صالح\s*لمدة|ينتهي\s*خلال)\s*(\d+)\s*دقيقة", 60),
+    # Hindi
+    (r"(?i)(\d+)\s*घंटे\s*के\s*लिए\s*मान्य", 3600),
+    (r"(?i)(\d+)\s*मिनट\s*के\s*लिए\s*मान्य", 60),
 ]
 
 def detect_ttl(text: str) -> Optional[int]:
@@ -310,44 +386,68 @@ def extract_universal_otp(
 
     # 3. Proximity-based code patterns evaluated against normalized & raw text
     patterns = [
-        # Thai OTP (รหัส OTP 867679)
-        r"(?i)(?:รหัส\s*otp|รหัสยืนยัน)\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})\b",
-        # Vietnamese OTP
-        r"(?i)(?:mã\s*xác\s*thực|mã\s*xác\s*minh|mã\s*otp|mã\s*xác\s*nhận|mã\s*đăng\s*nhập)\s*(?:của\s*bạn\s*)?(?:là)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})\b",
+        # Thai OTP (รหัส OTP 867679, รหัสยืนยัน: 867679)
+        r"(?i)(?:รหัส\s*otp|รหัสยืนยัน)\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
+        # Vietnamese OTP (mã xác thực: 867679)
+        r"(?i)(?:mã\s*xác\s*thực|mã\s*xác\s*minh|mã\s*otp|mã\s*xác\s*nhận|mã\s*đăng\s*nhập)\s*(?:của\s*bạn\s*)?(?:là)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
+        # Korean OTP (인증번호: 867679, 인증번호는 867679 입니다)
+        r"(?i)(?:인증\s*번호|인증\s*코드|확인\s*코드|보안\s*코드|일회용\s*비밀\s*번호)\s*(?:는|은|:)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
+        # Spanish & Portuguese OTP (código de verificación: 867679, código de verificação é 867679)
+        r"(?i)(?:código\s*de\s*verificación|codigo\s*de\s*verificacion|código\s*de\s*verificação|codigo\s*de\s*verificacao|código\s*de\s*seguridad|código\s*de\s*segurança|codigo\s*de\s*seguranca|código\s*de\s*confirmación|código\s*de\s*confirmação|codigo\s*de\s*confirmacao|código\s*de\s*autenticação|código\s*de\s*acceso|senha\s*descartável)\s*(?:es|é|:)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
+        # French OTP (code de vérification: 867679)
+        r"(?i)(?:code\s*de\s*vérification|code\s*de\s*verification|code\s*de\s*sécurité|code\s*de\s*confirmation|code\s*d['’]accès)\s*(?:est|:)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
+        # German OTP (Verifizierungscode: 867679, Verifizierungscode lautet 867679)
+        r"(?i)(?:verifizierungscode|bestätigungscode|bestaetigungscode|sicherheitscode|einmalpasswort|einmalcode)\s*(?:ist|lautet|:)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
+        # Russian OTP (код подтверждения: 867679)
+        r"(?i)(?:код\s*подтверждения|код\s*верификации|проверочный\s*код|код\s*безопасности|одноразовый\s*пароль)\s*(?:это|:)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
+        # Italian OTP (codice di verifica: 867679)
+        r"(?i)(?:codice\s*di\s*verifica|codice\s*di\s*sicurezza|codice\s*di\s*conferma|codice\s*monouso)\s*(?:è|:)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
+        # Indonesian / Malay OTP (kode verifikasi: 867679, kode verifikasi Anda adalah 867679)
+        r"(?i)(?:kode\s*verifikasi|kode\s*konfirmasi|kode\s*keamanan|kod\s*pengesahan)\s*(?:anda|kamu)?\s*(?:adalah|:)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
+        # Arabic OTP (رمز التحقق: 867679, رمز التحقق الخاص بك هو 867679)
+        r"(?i)(?:رمز\s*التحقق|كود\s*التحقق|رمز\s*التأكيد|رمز\s*الأمان)\s*(?:الخاص\s*بك|بك)?\s*(?:هو|:)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
+        # Hindi OTP (सत्यापन कोड: 867679)
+        r"(?i)(?:सत्यापन\s*कोड|प्रमाणीकरण\s*कोड|सुरक्षा\s*कोड|ओटीपी\s*कोड)\s*(?:है|:)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
         # 3D Secure / Banking PIN
-        r"(?i)(?:one-time\s*pin[^\n]*is:?|one-time\s*pin\s*is:?|pin\s*is:?)\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})\b",
+        r"(?i)(?:one-time\s*pin[^\n]*is:?|one-time\s*pin\s*is:?|pin\s*is:?)\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
         # Brand specific code (e.g. "Your Dia code is 882228", "TidyCal Code: 182105")
-        r"(?i)\b(?:your|here’s your|here's your)?\s*[a-z0-9\.-]+\s+code\s+(?:is|为|为：|是|是：|は|:|：)\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})\b",
+        r"(?i)\b(?:your|here’s your|here's your)?\s*[a-z0-9\.-]+\s+code\s+(?:is|为|为：|是|是：|は|:|：)\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})(?![0-9a-zA-Z])",
         # Facebook confirmation code (FB-51412)
         r"(?i)\b(FB-[0-9]{5,6})\b",
         # Slack / Alphanumeric hyphenated code (e.g. UZW-XAD)
         r"(?i)\b([A-Za-z0-9]{3}-[A-Za-z0-9]{3})\b",
         # Validation code (SOLIDWORKS, etc.)
-        r"(?i)(?:validation\s*code|validating\s*code)\s*[:#：]?\s*(?:\*\*\s*)?([0-9a-zA-Z]{5,8})\b",
-        # Explicit Chinese/Japanese OTP pattern (验证码是：335265, 验证码为：335265, 验证码：842075)
-        r"(?i)(?:验证码|校验码|动态码|安全码|授权码|認証コード|ワンタイムパスワード)\s*(?:是|为)?[：:]\s*(?:\*\*\s*)?([0-9]{4,8})\b",
+        r"(?i)(?:validation\s*code|validating\s*code)\s*[:#：]?\s*(?:\*\*\s*)?([0-9a-zA-Z]{5,8})(?![0-9a-zA-Z])",
+        # Explicit Chinese/Japanese OTP pattern (验证码是：335265, 验证码为：335265, 验证码：842075, 認証コード: 945521)
+        r"(?i)(?:验证码|校验码|动态码|安全码|授权码|驗證碼|校驗碼|動態碼|安全碼|認証コード|確認コード|ワンタイムパスワード)\s*(?:是|为)?[：:]\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
         # Subject or line start code (e.g. "434490 is your verification code")
         r"(?i)(?:^|[\r\n])\s*(?:\[[^\]]*\]\s*)?([0-9]{4,8})\s+(?:is\s+your|is\s+the|is)\b",
         # Subject email or device verification code (e.g. "Email verification code: 861326", "device verification code: 181174")
-        r"(?i)(?:email\s+|device\s+)?(?:verification|login|security|access|confirmation)\s*code\s*[:#：]\s*([0-9]{4,8})\b",
-        # Standard keyword proximity
+        r"(?i)(?:email\s+|device\s+)?(?:verification|login|security|access|confirmation)\s*code\s*[:#：]\s*([0-9]{4,8})(?!\d)",
+        # Standard keyword proximity (multilingual)
         r"(?i)(?:"
         r"verification\s*code|verify|security\s*code|login\s*code|access\s*code|"
         r"one-time\s*password|one-time\s*code|passcode|auth\s*code|authentication\s*code|"
         r"confirmation\s*code|secret\s*code|pin\s*code|two-factor|2fa|otp\b|"
-        r"验证码|动态码|校验码|安全码|授权码|"
-        r"認証コード|確認コード|ワンタイムパスワード"
-        r")\s*(?:code|password|passcode)?(?:\s+(?:to\s+[a-z\s]{1,25}|is|为|为：|是|是：|は))?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})\b",
+        r"验证码|动态码|校验码|安全码|授权码|驗證碼|動態碼|校驗碼|"
+        r"認証コード|確認コード|ワンタイムパスワード|"
+        r"인증\s*번호|인증\s*코드|확인\s*코드|"
+        r"código\s*de\s*verificación|code\s*de\s*vérification|verifizierungscode|bestätigungscode|"
+        r"код\s*подтверждения|codice\s*di\s*verifica|mã\s*xác\s*thực|รหัส\s*otp|kode\s*verifikasi"
+        r")\s*(?:code|password|passcode)?(?:\s+(?:to\s+[a-z\s]{1,25}|is|为|为：|是|是：|は|es|est|ist|это|è))?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})(?![0-9a-zA-Z])",
         r"(?i)(?:"
         r"verification\s*code|verify|security\s*code|login\s*code|access\s*code|"
         r"one-time\s*password|one-time\s*code|passcode|auth\s*code|authentication\s*code|"
         r"confirmation\s*code|secret\s*code|pin\s*code|two-factor|2fa|otp\b|"
-        r"验证码|动态码|校验码|安全码|授权码|"
-        r"認証コード|確認コード|ワンタイムパスワード"
-        r")\s*(?:is|为|为：|是|是：|は|:|：)\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})\b",
-        r"(?i)(?<!error\s)(?<!status\s)(?<!reference\s)(?<!id\s)(?<!message\s)\b(?:code|passcode|otp|动态码|验证码|安全码|校验码|認証コード|ワンタイムパスワード)\s*(?:is|为|为：|是|是：|は)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})\b",
-        r"(?i)\b([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8})\b\s*(?:is\s+your|is\s+the|为您的|是您的|为|是|がお客様の|です|となります)\s*(?:one-time|one\s*time|verification|security|login|access|confirmation)?\s*(?:code|passcode|验证码|动态码|認証コード|ワンタイムパスワード)?",
-        r"(?i)(?:code|passcode|otp)[:\s]+(?:\*\*\s*)?([0-9a-zA-Z]{5,8})\b",
+        r"验证码|动态码|校验码|安全码|授权码|驗證碼|動態碼|校驗碼|"
+        r"認証コード|確認コード|ワンタイムパスワード|"
+        r"인증\s*번호|인증\s*코드|확인\s*코드|"
+        r"código\s*de\s*verificación|code\s*de\s*vérification|verifizierungscode|bestätigungscode|"
+        r"код\s*подтверждения|codice\s*di\s*verifica|mã\s*xác\s*thực|รหัส\s*otp|kode\s*verifikasi"
+        r")\s*(?:is|为|为：|是|是：|は|es|est|ist|это|è|:|：)\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})(?![0-9a-zA-Z])",
+        r"(?i)(?<!error\s)(?<!status\s)(?<!reference\s)(?<!id\s)(?<!message\s)\b(?:code|passcode|otp|动态码|验证码|安全码|校验码|認証コード|ワンタイムパスワード|인증번호|인증코드)\s*(?:is|为|为：|是|是：|は|es|est|ist|это|è)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})(?![0-9a-zA-Z])",
+        r"(?i)\b([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8})\b\s*(?:is\s+your|is\s+the|为您的|是您的|为|是|がお客様の|です|となります|입니다|es\s+su|est\s+votre|ist\s+Ihr)\s*(?:one-time|one\s*time|verification|security|login|access|confirmation)?\s*(?:code|passcode|验证码|动态码|認証コード|ワンタイムパスワード|인증번호)?",
+        r"(?i)(?:code|passcode|otp)[:\s]+(?:\*\*\s*)?([0-9a-zA-Z]{5,8})(?![0-9a-zA-Z])",
         r"(?m)^\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8})\s*(?:\*\*)?\s*$",
     ]
 

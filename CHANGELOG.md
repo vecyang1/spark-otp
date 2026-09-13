@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-09-13
+
+### Added
+- **Universal Multilingual OTP Coverage (15+ Global Languages)**:
+  - Expanded `OTP_INTENT_PATTERN` in `spark_otp/extractor.py` to cover all major global languages: English, Chinese (Simplified & Traditional), Japanese, Korean, Spanish, French, German, Portuguese, Russian, Italian, Vietnamese, Thai, Indonesian/Malay, Arabic, and Hindi.
+  - Expanded `EXP_PATTERNS` in `spark_otp/extractor.py` to accurately detect expiration TTLs in all supported languages (minutes/hours in Korean, Spanish, French, German, Portuguese, Russian, Italian, Vietnamese, Thai, Indonesian, Arabic, Hindi).
+  - Added language-specific proximity extractors and connectors (e.g., German `lautet`/`ist`, Portuguese `é` and `código de verificação`, Indonesian `Anda`/`kamu`, Arabic `الخاص بك`, Korean `인증번호`/`확인코드`).
+- **Multilingual DOM Input & Button Engine (SSOT Parity)**:
+  - Updated `findOtpInputs` (`hasVerificationAffinity`) in `extension/content.js` and `userscript/spark-otp.user.js` to recognize verification fields labeled in all global languages.
+  - Updated `isVerifyButton` with international positive verification action terms (`확인`, `인증`, `Verificar`, `Bestätigen`, `prüfen`, `Vérifier`, `Подтвердить`, `Xác thực`, `ยืนยัน`, `Verifikasi`, `تأكيد`) and negative action button rejection (`다시 보내기`, `재전송`, `Reenviar`, `Cancelar`, `Erneut senden`, `Abbrechen`, `Renvoyer`, `Annuler`, `Отмена`, `Gửi lại`).
+  - Synchronized via `scripts/sync_engine.py` maintaining 100% SSOT parity between extension and userscript.
+- **Multilingual & Two-Sided Test Suite (163 passing tests)**:
+  - Added `test_multilingual_otp_extraction_and_ttl` covering all 11 non-English language samples with exact code extraction and dynamic TTL calculations.
+  - Added `test_multilingual_adversarial_rejection` testing non-OTP transactional emails (invoices, shipping notices) in German and Spanish.
+  - Added `test_verify_button_global_multilingual_acceptance_and_rejection` executing both `extension/content.js` and `userscript/spark-otp.user.js` in Node.js.
+
+### Fixed
+- **Alphanumeric Code Word Collision**:
+  - Gated alphanumeric candidates in `generic_otp` with digit lookahead `(?=[0-9A-Za-z]*\d)` to ensure regular language words like `lautet` or `valido` are never captured as OTP codes.
+
 ## [1.3.10] - 2026-09-13
 
 ### Fixed
