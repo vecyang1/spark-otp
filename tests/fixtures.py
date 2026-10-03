@@ -340,14 +340,14 @@ Link: https://sparkmailapp.com/dpl/bl?token=QTphbGV4LnR1cm5lckBnbWFpbC5jb207SUQ6
 REAL_SAKURA_INTERNET_EMAIL = """
 Thread: [さくらインターネット]認証コード入力と会員情報登録のお願い
 Messages: 1
-Labels: user@example.com:Important
+Labels: user@invalid.test:Important
 Link: https://sparkmailapp.com/dpl/bl?token=sample_sakura_token
 ────────────────────────────────────────────────────────────────────────
 
   ID: 722910
   Subject: [さくらインターネット]認証コード入力と会員情報登録のお願い
   From: さくらインターネット <support@sakura.ad.jp>
-  To: user@example.com
+  To: user@invalid.test
   Date: {date_str}
   Type: Email
 
