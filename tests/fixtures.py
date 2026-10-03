@@ -261,7 +261,7 @@ Email Account: alex.turner@example.com (Access: read-only)
 
 Email Account: marcus.vance@techcorp.io "marcus.vance@techcorp.io" (Access: read-only)
 
-Email Account: alex.turner@example.com "alex.turner@example.com" (Access: read-only)
+Email Account: dev.team@example.com "dev.team@example.com" (Access: read-only)
 """
 
 ATLASSIAN_VERIFY_EMAIL = """
