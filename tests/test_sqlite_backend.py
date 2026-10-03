@@ -346,7 +346,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
             self.db_path,
             pk=722910,
             sender='さくらインターネット <support@sakura.ad.jp>',
-            recipient='user@example.com',
+            recipient='user@invalid.test',
             subject='[さくらインターネット]認証コード入力と会員情報登録のお願い',
             short_body=truncated_body,
             received_ts=ts_now - 60
@@ -366,7 +366,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
 
         client.fetch_thread = mock_fetch_thread
 
-        otp = client.get_latest_otp(domain="secure.sakura.ad.jp", account="user@example.com", now=now)
+        otp = client.get_latest_otp(domain="secure.sakura.ad.jp", account="user@invalid.test", now=now)
         self.assertIsNotNone(otp, "Must extract OTP by falling back to fetch_thread when shortBody is truncated")
         self.assertEqual(otp.code, "945521")
         self.assertEqual(otp.service, "sakura_internet")
@@ -387,7 +387,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
             self.db_path,
             pk=722911,
             sender='さくらインターネット <support@sakura.ad.jp>',
-            recipient='user@example.com',
+            recipient='user@invalid.test',
             subject='[さくらインターネット]認証コード入力と会員情報登録のお願い',
             short_body=body_with_code,
             received_ts=ts_now - 60
@@ -397,7 +397,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
         fetch_thread_called = []
         client.fetch_thread = lambda msg_id: fetch_thread_called.append(msg_id) or ""
 
-        otp = client.get_latest_otp(domain="secure.sakura.ad.jp", account="user@example.com", now=now)
+        otp = client.get_latest_otp(domain="secure.sakura.ad.jp", account="user@invalid.test", now=now)
         self.assertIsNotNone(otp)
         self.assertEqual(otp.code, "945521")
         self.assertEqual(otp.service, "sakura_internet")
@@ -413,7 +413,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
             self.db_path,
             pk=722912,
             sender='さくらインターネット <support@sakura.ad.jp>',
-            recipient='user@example.com',
+            recipient='user@invalid.test',
             subject='[さくらインターネット]認証コード入力と会員情報登録のお願い',
             short_body=truncated_body,
             received_ts=ts_now - 60
@@ -439,7 +439,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
             self.db_path,
             pk=722913,
             sender='さくらインターネット <support@sakura.ad.jp>',
-            recipient='user@example.com',
+            recipient='user@invalid.test',
             subject='[さくらインターネット]認証コード入力と会員情報登録のお願い',
             short_body=truncated_body,
             received_ts=ts_now - 60
@@ -449,7 +449,7 @@ class TestSparkSqliteBackend(unittest.TestCase):
 ID: 722913
 Subject: [さくらインターネット]認証コード入力と会員情報登録のお願い
 From: さくらインターネット <support@sakura.ad.jp>
-To: user@example.com
+To: user@invalid.test
 Date: {dt_str}
 
 メールアドレスの確認ページで、以下6桁の認証コードを入力してください。
@@ -475,7 +475,7 @@ Date: {dt_str}
             self.db_path,
             pk=722914,
             sender='さくらインターネット <support@sakura.ad.jp>',
-            recipient='user@example.com',
+            recipient='user@invalid.test',
             subject='会員登録完了のお知らせ [icc75482]',
             short_body='この度は、さくらインターネットの会員にご登録をいただき、誠にありがとうございます。',
             received_ts=ts_now - 30
