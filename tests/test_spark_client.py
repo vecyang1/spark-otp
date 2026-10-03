@@ -35,7 +35,7 @@ class TestSparkClient(unittest.TestCase):
         self.assertEqual(len(accounts), 3)
         self.assertEqual(accounts[0], "alex.turner@example.com")
         self.assertEqual(accounts[1], "marcus.vance@techcorp.io")
-        self.assertEqual(accounts[2], "alex.turner@example.com")
+        self.assertEqual(accounts[2], "dev.team@example.com")
 
     def test_parse_accounts_output_empty(self):
         accounts = parse_accounts_output("")
