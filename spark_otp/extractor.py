@@ -3,6 +3,7 @@ Deterministic zero-LLM OTP Extraction Engine.
 Supports universal auth providers, brand/domain matching, and open fallback extraction.
 """
 import re
+import html
 import unicodedata
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
@@ -259,7 +260,17 @@ def domain_matches(
     # 1. If rule explicitly binds an extracted domain from subject (e.g. Cloudflare Access)
     if extracted_domain:
         ed = clean_domain(extracted_domain)
-        return df_clean == ed or df_clean in ed or ed in df_clean
+        if df_clean == ed or df_clean in ed or ed in df_clean:
+            return True
+        # If visiting domain did not match extracted domain directly, check rule's associated domains
+        # (e.g. visiting tenant.cloudflareaccess.com for an access code bound to app.example.com)
+        if associated_domains:
+            for ad in associated_domains:
+                ad_clean = clean_domain(ad)
+                ad_root = get_root_domain(ad_clean)
+                if df_clean == ad_clean or df_clean.endswith("." + ad_clean) or ad_clean.endswith("." + df_clean) or root_domain == ad_root or (len(brand) >= 3 and brand in ad_clean):
+                    return True
+        return False
 
     # 2. Associated domains defined in rule
     if associated_domains:
@@ -609,7 +620,10 @@ def extract_otp_from_thread(
         if rule.callback_regex:
             cb_match = re.search(rule.callback_regex, thread_text)
             if cb_match:
-                callback_url = cb_match.group(1).strip()
+                for g in cb_match.groups():
+                    if g:
+                        callback_url = html.unescape(g.strip())
+                        break
 
         detected_ttl = detect_ttl(search_text)
         ttl = detected_ttl if detected_ttl is not None else rule.default_ttl_seconds

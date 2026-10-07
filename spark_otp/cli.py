@@ -66,6 +66,15 @@ def main():
     sync_parser = subparsers.add_parser("sync", help="Synchronize DOM detection engine between extension and userscript (SSOT)")
     sync_parser.add_argument("--check", action="store_true", help="Check parity without modifying files")
 
+    # Command: diagnose
+    diag_parser = subparsers.add_parser("diagnose", help="Diagnose and explain OTP matching and SQLite reconciliation")
+    diag_parser.add_argument("target", nargs="?", default="", help="Target website URL or domain (e.g. app.example.com)")
+    diag_parser.add_argument("--target", "-t", dest="target_opt", help="Target website URL or domain")
+    diag_parser.add_argument("--domain", "-d", help="Filter by target website domain")
+    diag_parser.add_argument("--account", "-A", help="Filter by specific email account")
+    diag_parser.add_argument("--allow-expired", action="store_true", help="Include expired codes in resolution")
+    diag_parser.add_argument("--json", action="store_true", help="Output full JSON diagnosis")
+
     args = parser.parse_args()
 
     if not args.command or args.command == "get":
@@ -191,6 +200,61 @@ def main():
             cmd.append("--check")
         res = subprocess.run(cmd)
         sys.exit(res.returncode)
+
+    elif args.command == "diagnose":
+        target = getattr(args, "target_opt", None) or args.target or args.domain or ""
+        account = args.account
+        allow_expired = args.allow_expired
+        as_json = args.json
+
+        client = SparkClient()
+        diag = client.diagnose(target=target, account=account, allow_expired=allow_expired)
+
+        if as_json:
+            print(json.dumps(diag, indent=2))
+        else:
+            q = diag["query"]
+            env = diag["environment"]
+            print("\n=======================================================")
+            print("        Spark OTP Reconciliation & Diagnostics         ")
+            print("=======================================================\n")
+            print(f"Target:       {q['target'] or '(none)'} (domain: {q['domain'] or '(any)'})")
+            print(f"Account:      {q['account'] or '(Unified Inbox)'}")
+            sqlite_status = f"Available ({env['sqlite_db']})" if env.get('sqlite_available') else "Unavailable"
+            cache_status = f"Available ({env['cache_sqlite_db']})" if env.get('cache_sqlite_available') else "Unavailable"
+            print(f"SQLite Store: {sqlite_status}")
+            print(f"Cache Store:  {cache_status}")
+            print(f"Accounts:     {env.get('accounts_count', 0)} configured in Spark\n")
+
+            candidates = diag.get("candidates", [])
+            print(f"--- Inspected Candidates ({len(candidates)}) ---")
+            if not candidates:
+                print("  No candidate verification emails found.\n")
+            else:
+                for idx, c in enumerate(candidates, 1):
+                    print(f"[{idx}] ID {c['message_id']} ({c['age_human']}) - Status: {c['status']}")
+                    print(f"    Subject:    {c['subject']}")
+                    print(f"    From:       {c['sender']}")
+                    print(f"    To:         {c['recipient']} ({c['account_match_reason']})")
+                    print(f"    Rule Hit:   {c['rule_matched'] or 'None'}")
+                    print(f"    Domain:     {c['domain_match_reason']}")
+                    if c.get("extracted_code"):
+                        print(f"    Code:       {c['extracted_code']}")
+                    if c.get("callback_url"):
+                        print(f"    Magic Link: {c['callback_url']}")
+                    if c.get("failure_reason"):
+                        print(f"    Note:       {c['failure_reason']}")
+                    print()
+
+            print("-------------------------------------------------------")
+            print(f"Verdict:        {diag['verdict']}")
+            print(f"Recommendation: {diag['recommendation']}")
+            if diag.get("resolved_otp"):
+                otp = diag["resolved_otp"]
+                print(f"\n>> RESOLVED OTP: {otp['code']} ({otp['service']}) <<")
+                if otp.get("callback_url"):
+                    print(f">> MAGIC LINK:   {otp['callback_url']} <<")
+            print("=======================================================\n")
 
 if __name__ == "__main__":
     main()

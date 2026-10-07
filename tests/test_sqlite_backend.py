@@ -489,5 +489,126 @@ Date: {dt_str}
         self.assertIsNone(otp)
         self.assertEqual(len(fetch_thread_called), 0, "fetch_thread must NOT be invoked for non-OTP messages")
 
+    def test_sqlite_diagnose_active_match(self):
+        """Diagnose correctly identifies and resolves valid active OTP candidates."""
+        now = datetime.now()
+        ts_now = int(now.timestamp())
+        insert_mock_message(
+            self.db_path,
+            pk=723001,
+            sender="Bandwagon Host <noreply@64clouds.com>",
+            recipient="user@example.com",
+            subject="Device verification",
+            short_body="Your verification code is 273529. Valid for 1 hour.",
+            received_ts=ts_now - 30
+        )
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+        diag = client.diagnose(target="bandwagonhost.com", now=now)
+
+        self.assertTrue(diag["environment"]["sqlite_available"])
+        self.assertGreaterEqual(diag["candidates_count"], 1)
+        cand = diag["candidates"][0]
+        self.assertEqual(cand["message_id"], "723001")
+        self.assertEqual(cand["status"], "VALID_ACTIVE")
+        self.assertEqual(cand["extracted_code"], "273529")
+        self.assertEqual(cand["rule_matched"], "bandwagon_auth")
+        self.assertTrue(cand["domain_match"])
+        self.assertTrue(diag["verdict"].startswith("SUCCESS"))
+        self.assertIsNotNone(diag["resolved_otp"])
+        self.assertEqual(diag["resolved_otp"]["code"], "273529")
+
+    def test_sqlite_diagnose_expired_explanation(self):
+        """Diagnose explains expired OTP candidates and provides actionable recommendations."""
+        now = datetime.now()
+        ts_now = int(now.timestamp())
+        insert_mock_message(
+            self.db_path,
+            pk=723002,
+            sender="Bandwagon Host <noreply@64clouds.com>",
+            recipient="user@example.com",
+            subject="Device verification",
+            short_body="Your verification code is 273529. Valid for 1 hour.",
+            received_ts=ts_now - 5000  # > 1 hour
+        )
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+        diag = client.diagnose(target="bandwagonhost.com", now=now)
+
+        self.assertGreaterEqual(diag["candidates_count"], 1)
+        cand = diag["candidates"][0]
+        self.assertEqual(cand["status"], "EXPIRED")
+        self.assertTrue(cand["is_expired"])
+        self.assertIsNone(diag["resolved_otp"])
+        self.assertTrue(diag["verdict"].startswith("NO_ACTIVE_OTP"))
+        self.assertIn("--allow-expired", diag["recommendation"])
+
+    def test_sqlite_diagnose_account_mismatch(self):
+        """Diagnose explains account filter mismatch and indicates when resolved via fallback."""
+        now = datetime.now()
+        ts_now = int(now.timestamp())
+        insert_mock_message(
+            self.db_path,
+            pk=723003,
+            sender="Bandwagon Host <noreply@64clouds.com>",
+            recipient="user_alpha@example.com",
+            subject="Device verification",
+            short_body="Your verification code is 273529. Valid for 1 hour.",
+            received_ts=ts_now - 30
+        )
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+        diag = client.diagnose(target="bandwagonhost.com", account="user_beta@example.com", now=now)
+
+        self.assertGreaterEqual(diag["candidates_count"], 1)
+        cand = diag["candidates"][0]
+        self.assertEqual(cand["status"], "ACCOUNT_MISMATCH")
+        self.assertFalse(cand["account_match"])
+        self.assertIsNotNone(diag["resolved_otp"])
+        self.assertEqual(diag["resolved_otp"]["code"], "273529")
+        self.assertTrue(diag["verdict"].startswith("SUCCESS (ACCOUNT FALLBACK)"))
+
+    def test_sqlite_diagnose_account_mismatch_without_resolution(self):
+        """Diagnose outputs ACCOUNT_FILTER_MISMATCH verdict when candidate is expired and not resolved."""
+        now = datetime.now()
+        ts_now = int(now.timestamp())
+        # Candidate is expired, allow_expired=False, so resolved_otp will be None
+        insert_mock_message(
+            self.db_path,
+            pk=723005,
+            sender="Bandwagon Host <noreply@64clouds.com>",
+            recipient="user_alpha@example.com",
+            subject="Device verification",
+            short_body="Your verification code is 273529. Valid for 1 hour.",
+            received_ts=ts_now - 4000
+        )
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+        diag = client.diagnose(target="bandwagonhost.com", account="user_beta@example.com", allow_expired=False, now=now)
+
+        self.assertGreaterEqual(diag["candidates_count"], 1)
+        self.assertIsNone(diag["resolved_otp"])
+        # Both expired and account mismatch occurred
+        self.assertIn(diag["verdict"].split(":")[0], ["NO_ACTIVE_OTP", "ACCOUNT_FILTER_MISMATCH"])
+
+    def test_sqlite_diagnose_domain_mismatch(self):
+        """Diagnose explains domain filter rejection when emails belong to different service."""
+        now = datetime.now()
+        ts_now = int(now.timestamp())
+        insert_mock_message(
+            self.db_path,
+            pk=723004,
+            sender="Bandwagon Host <noreply@64clouds.com>",
+            recipient="user@example.com",
+            subject="Device verification",
+            short_body="Your verification code is 273529. Valid for 1 hour.",
+            received_ts=ts_now - 30
+        )
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+        diag = client.diagnose(target="stripe.com", now=now)
+
+        self.assertGreaterEqual(diag["candidates_count"], 1)
+        cand = diag["candidates"][0]
+        self.assertEqual(cand["status"], "DOMAIN_MISMATCH")
+        self.assertFalse(cand["domain_match"])
+        self.assertIsNone(diag["resolved_otp"])
+
 if __name__ == "__main__":
     unittest.main()
+

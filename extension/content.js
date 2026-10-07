@@ -6,7 +6,7 @@
 
 (function () {
   const DEFAULT_PORT = 9428;
-  const DEFAULT_EMAIL = "alex.turner@example.com";
+  const DEFAULT_EMAIL = "";
 
   let serverPort = DEFAULT_PORT;
   let autoSubmit = true;
@@ -119,6 +119,8 @@
     alert: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`
   };
 
+  // === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===
+
   // Determine target domain cleanly
   function detectTargetDomain() {
     try {
@@ -133,12 +135,38 @@
       }
     } catch (e) {}
 
-    const url = window.location.href;
-    const match = url.match(/(?:login|verify-code)\/([a-zA-Z0-9\.\-]+)/i);
+    const host = (typeof window !== "undefined" && window.location && window.location.hostname ? window.location.hostname : "").replace(/^www\./, "");
+
+    // Cloudflare Access domain sniffing: on *.cloudflareaccess.com or /cdn-cgi/access/, check for target service domain in DOM
+    if (host.endsWith("cloudflareaccess.com") || (typeof window !== "undefined" && window.location && window.location.pathname && window.location.pathname.startsWith("/cdn-cgi/access/"))) {
+      try {
+        if (typeof document !== "undefined") {
+          // 1. Look in document.title
+          const docTitle = document.title || "";
+          const titleDomainMatch = docTitle.match(/\b([a-zA-Z0-9\-]+\.[a-zA-Z0-9\-]+\.[a-zA-Z]{2,})\b/);
+          if (titleDomainMatch && !titleDomainMatch[1].endsWith("cloudflareaccess.com") && !titleDomainMatch[1].endsWith("cloudflare.com")) {
+            return titleDomainMatch[1];
+          }
+
+          // 2. Look in headline/heading/app name elements
+          const headings = document.querySelectorAll("h1, h2, h3, .Headline, [class*='title' i], [class*='app' i], [class*='header' i], a");
+          for (const el of headings) {
+            const txt = (el.textContent || "").trim();
+            const m = txt.match(/\b([a-zA-Z0-9\-]+\.[a-zA-Z0-9\-]+\.[a-zA-Z]{2,})\b/);
+            if (m && !m[1].endsWith("cloudflareaccess.com") && !m[1].endsWith("cloudflare.com")) {
+              return m[1];
+            }
+          }
+        }
+      } catch (e) {}
+    }
+
+    const url = (typeof window !== "undefined" && window.location && window.location.href) ? window.location.href : "";
+    // Only match if token looks like a real domain containing a dot
+    const match = url.match(/(?:login|verify-code)\/([a-zA-Z0-9\-]+\.[a-zA-Z0-9\.\-]+)/i);
     if (match && match[1]) {
       return match[1];
     }
-    const host = window.location.hostname.replace(/^www\./, "");
     return host || "localhost";
   }
 
@@ -362,8 +390,6 @@
     return q;
   }
 
-  // === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===
-
   function isInteractiveElement(el) {
     if (!el || el.disabled || el.readOnly) return false;
     if (el.type === "hidden") return false;
@@ -393,6 +419,45 @@
       }
     }
     return true;
+  }
+
+  function isUnambiguousVerificationInput(el) {
+    if (!el) return false;
+    const maxLenVal = typeof el.getAttribute === "function" ? el.getAttribute("maxlength") : el.maxLength;
+    const sizeVal = typeof el.getAttribute === "function" ? el.getAttribute("size") : el.size;
+    const name = (el.name || "").toLowerCase();
+    const id = (el.id || "").toLowerCase();
+    const className = typeof el.className === "string" ? el.className.toLowerCase() : (typeof el.getAttribute === "function" ? (el.getAttribute("class") || "") : "").toLowerCase();
+
+    const parsedMaxLen = parseInt(maxLenVal, 10);
+    const parsedSize = parseInt(sizeVal, 10);
+    const isShortCodeLen = (isNaN(parsedMaxLen) || (parsedMaxLen > 0 && parsedMaxLen <= 8)) && (isNaN(parsedSize) || (parsedSize > 0 && parsedSize <= 8));
+    const isUnambiguousCodeIdOrName = /^(?:code|pin)$/i.test(name) || /^(?:code|pin)$/i.test(id) || /(?:^|[\W_])(?:code|pin)(?:[\W_]|$)/i.test(name) || /(?:^|[\W_])(?:code|pin)(?:[\W_]|$)/i.test(id) || /(?:^|[\W_]|(?<=[a-z])(?=[A-Z]))(?:code|pin|otp)[-_ ]*input/i.test(className);
+
+    let isInAuthOrVerificationContext = false;
+    try {
+      const formEl = el.form || (el.closest ? el.closest("form") : null);
+      if (formEl) {
+        const formMeta = `${formEl.id || ""} ${typeof formEl.className === "string" ? formEl.className : ""} ${formEl.action || ""}`.toLowerCase();
+        if (/(?:verify|verification|auth|login|otp|two[-_ ]*factor|2fa|totp|security|code|cloudflare|access)/i.test(formMeta)) {
+          isInAuthOrVerificationContext = true;
+        }
+      }
+      if (!isInAuthOrVerificationContext && el.closest) {
+        const containerEl = el.closest("[class*='verify' i], [class*='auth' i], [class*='login' i], [class*='otp' i], [class*='2fa' i], [class*='code' i], [id*='verify' i], [id*='auth' i]");
+        if (containerEl) {
+          isInAuthOrVerificationContext = true;
+        }
+      }
+      if (!isInAuthOrVerificationContext && typeof window !== "undefined" && window.location) {
+        const loc = `${window.location.hostname || ""} ${window.location.pathname || ""} ${window.location.search || ""}`.toLowerCase();
+        if (/(?:cloudflareaccess|cloudflare|access|login|auth|verify|verification)/i.test(loc)) {
+          isInAuthOrVerificationContext = true;
+        }
+      }
+    } catch (e) {}
+
+    return isShortCodeLen && isUnambiguousCodeIdOrName && (isInAuthOrVerificationContext || /(?:code|pin|otp)/i.test(className));
   }
 
   function isDisqualifiedInput(el) {
@@ -494,13 +559,17 @@
       return false;
     }
 
+    // Check for unambiguous short-code input in verification/auth context
+    const isUnambig = (typeof isUnambiguousVerificationInput === "function") ? isUnambiguousVerificationInput(el) : false;
+
     // Explicit Positive OTP markers that override ambiguous keywords (must be specific code/passcode/pin/token)
     const isExplicitOtpMarker = /(?:two[-_ ]*factor|twofa|second[-_ ]*factor|one[-_ ]*time|mfa|totp)[-_ ]*(?:code|passcode|pin\b|token)/i.test(combined)
       || /(?:verification|verify|security|auth|login|device|email|phone|sms)[-_ ]*(?:verification[-_ ]*)?(?:code|passcode|pin\b|token)/i.test(combined)
       || /(?:devicecode|device_code|twofactorauthcode|twofactorcode|twofacode|otpcode|sms_code|email_code)/i.test(combined)
       || /(?:^|[\W_])(?:otp|totp|passcode)(?:[\W_]|$)/i.test(name)
       || /(?:^|[\W_])(?:otp|totp|passcode)(?:[\W_]|$)/i.test(id)
-      || /(?:验证码|校验码|动态码|安全码|授权码|認証コード|確認コード|ワンタイム|mã\s*xác\s*thực|mã\s*xác\s*minh|mã\s*otp|รหัส\s*otp|รหัสยืนยัน)/i.test(combined);
+      || /(?:验证码|校验码|动态码|安全码|授权码|認証コード|確認コード|ワンタイム|mã\s*xác\s*thực|mã\s*xác\s*minh|mã\s*otp|รหัส\s*otp|รหัสยืนยัน)/i.test(combined)
+      || isUnambig;
 
     // Negative semantic patterns: fields that are definitively NOT OTP codes
     // 1. Promo, coupon, discounts, search, captcha, referral, invitation, affiliate, voucher, rewards, redemption
@@ -552,7 +621,7 @@
     }
 
     // 8. KYC & Identity documents
-    const kycPatterns = /(?:tax[-_ ]*id|ein|ssn|social[-_ ]*security|vat[-_ ]*num|vat[-_ ]*id|passport|national[-_ ]*id|id[-_ ]*num|identity[-_ ]*card|driver[-_ ]*licen[sc]e|doc[-_ ]*num|company[-_ ]*reg(?:istration)?|business[-_ ]*reg(?:istration)?|registration[-_ ]*num(?:ber)?|reg[-_ ]*num(?:ber)?|\bcrn\b|company[-_ ]*id|business[-_ ]*id|\btin\b|tax[-_ ]*identification)/i;
+    const kycPatterns = /(?:tax[-_ ]*id|\bein\b|\bssn\b|social[-_ ]*security|vat[-_ ]*num|vat[-_ ]*id|passport|national[-_ ]*id|id[-_ ]*num|identity[-_ ]*card|driver[-_ ]*licen[sc]e|doc[-_ ]*num|company[-_ ]*reg(?:istration)?|business[-_ ]*reg(?:istration)?|registration[-_ ]*num(?:ber)?|reg[-_ ]*num(?:ber)?|\bcrn\b|company[-_ ]*id|business[-_ ]*id|\btin\b|tax[-_ ]*identification)/i;
     if (kycPatterns.test(combined) && !isExplicitOtpMarker) {
       return true;
     }
@@ -658,6 +727,9 @@
       if (el.closest && el.closest('nav, aside, header, footer, [role="navigation"], [role="tablist"], [aria-hidden="true"], [id*="cookie" i], [class*="cookie" i], [id*="consent" i], [class*="consent" i]')) {
         return false;
       }
+      if (typeof isUnambiguousVerificationInput === "function" && isUnambiguousVerificationInput(el)) {
+        return true;
+      }
       const auto = (typeof el.getAttribute === "function" ? el.getAttribute("autocomplete") : el.autocomplete) || "";
       if (auto.toLowerCase() === "one-time-code" || (typeof el.getAttribute === "function" && el.getAttribute("data-input-otp") === "true")) return true;
       const maxLen = typeof el.getAttribute === "function" ? el.getAttribute("maxlength") : el.maxLength;
@@ -669,6 +741,7 @@
       const placeholder = (el.placeholder || "").toLowerCase();
       const aria = (typeof el.getAttribute === "function" ? (el.getAttribute("aria-label") || "") : "").toLowerCase();
       const title = (typeof el.getAttribute === "function" ? (el.getAttribute("title") || "") : "").toLowerCase();
+      const className = typeof el.className === "string" ? el.className.toLowerCase() : (typeof el.getAttribute === "function" ? (el.getAttribute("class") || "") : "").toLowerCase();
 
       let labelText = "";
       try {
@@ -705,8 +778,8 @@
         }
       } catch (e) {}
 
-      const textSample = `${name} ${id} ${placeholder} ${aria} ${title} ${labelText}`;
-      if (/(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|sms[-_ ]*code|email[-_ ]*code|security[-_ ]*code|auth[-_ ]*code|login[-_ ]*code|device[-_ ]*code|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(textSample) || /(?:sent\s*to\s*(?:your\s*)?(?:email|phone|mobile|device)|check\s*your\s*(?:email|phone|inbox|sms)|보낸|전송|enviado|envoyé|gesendet|отправлен)/i.test(textSample)) {
+      const textSample = `${name} ${id} ${placeholder} ${aria} ${title} ${className} ${labelText}`;
+      if (/(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|sms[-_ ]*code|email[-_ ]*code|security[-_ ]*code|auth[-_ ]*code|login[-_ ]*code|device[-_ ]*code|code[-_ ]*input|pin[-_ ]*input|otp[-_ ]*input|codeinput|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(textSample) || /(?:sent\s*to\s*(?:your\s*)?(?:email|phone|mobile|device)|check\s*your\s*(?:email|phone|inbox|sms)|보낸|전송|enviado|envoyé|gesendet|отправлен)/i.test(textSample)) {
         return true;
       }
 
@@ -717,7 +790,7 @@
           const action = (typeof form.getAttribute === "function" ? form.getAttribute("action") : form.action) || "";
           const fId = form.id || "";
           const fCls = typeof form.className === "string" ? form.className : (typeof form.getAttribute === "function" ? form.getAttribute("class") : "") || "";
-          if (/(?:^|[\W_])(?:browser_auth|two[-_ ]*factor[-_ ]*code|totp[-_ ]*code|verify[-_ ]*code|enter[-_ ]*otp)(?:[\W_]|$)/i.test(`${action} ${fId} ${fCls}`)) {
+          if (/(?:^|[\W_])(?:browser_auth|two[-_ ]*factor[-_ ]*code|totp[-_ ]*code|verify[-_ ]*code|enter[-_ ]*otp|cloudflare|access|login|signin)(?:[\W_]|$)/i.test(`${action} ${fId} ${fCls}`)) {
             return true;
           }
         }
@@ -728,8 +801,9 @@
         if (typeof window !== "undefined" && window.location) {
           const path = (window.location.pathname || "").toLowerCase();
           const search = (window.location.search || "").toLowerCase();
+          const host = (window.location.hostname || "").toLowerCase();
           const docTitle = (typeof document !== "undefined" && document.title ? document.title : "").toLowerCase();
-          if (/(?:browser_auth|two[-_ ]*factor[-_ ]*code|totp[-_ ]*code|verify[-_ ]*code|verification[-_ ]*code)/i.test(path + " " + search) || /(?:two[-_ ]*factor|2fa|totp)\s*(?:code|passcode|verification)/i.test(docTitle)) {
+          if (/(?:browser_auth|two[-_ ]*factor[-_ ]*code|totp[-_ ]*code|verify[-_ ]*code|verification[-_ ]*code|cdn-cgi\/access)/i.test(path + " " + search) || /(?:cloudflareaccess\.com)/i.test(host) || /(?:two[-_ ]*factor|2fa|totp)\s*(?:code|passcode|verification)/i.test(docTitle)) {
             return true;
           }
         }
@@ -858,7 +932,10 @@
       'input[data-testid*="otp" i]',
       'input[data-testid*="verification-code" i]',
       'input[data-testid*="verification_code" i]',
-      'input[data-testid*="verify-code" i]'
+      'input[data-testid*="verify-code" i]',
+      'input[class*="CodeInput" i]',
+      'input[class*="code-input" i]',
+      'input[class*="code_input" i]'
     ];
 
     for (const sel of targetedSelectors) {

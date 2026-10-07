@@ -43,6 +43,8 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
             self.handle_telemetry()
         elif path == "/api/logs":
             self.handle_logs(params)
+        elif path == "/api/diagnose":
+            self.handle_diagnose(params)
         elif path == "/api/openapi.json":
             self.handle_openapi()
         elif path == "/api/schema":
@@ -147,6 +149,36 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         logs = telemetry.get_recent_logs(limit=limit)
         self.wfile.write(json.dumps({"success": True, "count": len(logs), "logs": logs}).encode("utf-8"))
+
+    def handle_diagnose(self, params):
+        t0 = time.perf_counter()
+        domain = params.get("domain", params.get("url", params.get("target", [None])))[0]
+        account = params.get("account", [None])[0]
+        allow_expired_param = params.get("allow_expired", [None])[0]
+        allow_expired = allow_expired_param.lower() in ("1", "true", "yes") if allow_expired_param else False
+
+        diag_result = {}
+        if self.client and hasattr(self.client, "diagnose"):
+            diag_result = self.client.diagnose(target=domain or "", account=account, allow_expired=allow_expired)
+        else:
+            diag_result = {
+                "success": False,
+                "error": "Diagnostic engine not available on client",
+                "query": {"domain": domain, "account": account}
+            }
+
+        duration_ms = (time.perf_counter() - t0) * 1000
+        telemetry.record(
+            endpoint="/api/diagnose",
+            duration_ms=duration_ms,
+            status="hit" if diag_result.get("resolved_otp") else "miss",
+        )
+        self.send_response(200)
+        self._set_cors_headers()
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        diag_result["metrics"] = {"duration_ms": round(duration_ms, 2)}
+        self.wfile.write(json.dumps(diag_result, indent=2).encode("utf-8"))
 
     def _safe_get_otp(self, domain, max_age, account, exclude_codes=None, exclude_message_ids=None, since_time=None, allow_expired=False, fallback_expired=False):
         if not self.client:

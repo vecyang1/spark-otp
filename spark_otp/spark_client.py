@@ -11,7 +11,7 @@ import glob
 import email
 from pathlib import Path
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from .models import EmailSummary, OTPResult
 from .config import config, DEFAULT_RULES
 from .extractor import (
@@ -375,6 +375,92 @@ class SparkClient:
                 return p
         return None
 
+    def _find_cache_sqlite_db(self) -> Optional[Path]:
+        """Locate Spark Desktop cache.sqlite database on macOS."""
+        target = self.sqlite_path if self.sqlite_path is not None else getattr(config, "sqlite_db_path", "auto")
+        if target in ("disabled", "off", "0", ""):
+            return None
+        if target and target != "auto":
+            custom_p = Path(os.path.expanduser(target))
+            candidate_cache = custom_p.parent / "cache.sqlite"
+            if candidate_cache.is_file() and os.access(candidate_cache, os.R_OK):
+                return candidate_cache
+
+        msg_db = self._find_sqlite_db()
+        if msg_db:
+            candidate = msg_db.parent / "cache.sqlite"
+            if candidate.is_file() and os.access(candidate, os.R_OK):
+                return candidate
+
+        candidates = [
+            Path(os.path.expanduser("~/Library/Application Support/Spark Mail/core-data/cache.sqlite")),
+            Path(os.path.expanduser("~/Library/Containers/com.readdle.SparkDesktop-setapp/Data/Library/Application Support/Spark Mail/core-data/cache.sqlite")),
+            Path(os.path.expanduser("~/Library/Application Support/Spark Mail Helper/core-data/cache.sqlite")),
+        ]
+        for p in candidates:
+            if p.is_file() and os.access(p, os.R_OK):
+                return p
+        return None
+
+    def _get_spark_sqlite_accounts(self) -> List[str]:
+        """Directly query Spark SQLite messages.sqlite for configured accounts."""
+        db_path = self._find_sqlite_db()
+        if not db_path:
+            return []
+        acc_list: List[str] = []
+        try:
+            uri = f"file:{db_path.resolve()}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT DISTINCT json_extract(additionalInfo, '$.accountAddress') "
+                    "FROM accounts WHERE additionalInfo IS NOT NULL AND json_extract(additionalInfo, '$.accountAddress') IS NOT NULL;"
+                )
+                for (addr,) in cur.fetchall():
+                    if addr and isinstance(addr, str):
+                        clean_addr = addr.strip()
+                        if "@" in clean_addr and clean_addr not in acc_list:
+                            acc_list.append(clean_addr)
+            finally:
+                conn.close()
+        except Exception:
+            pass
+        return sorted(acc_list)
+
+    def _get_html_body_from_cache_sqlite(self, message_id: str) -> Optional[str]:
+        """Directly query cache.sqlite messageBodyHtml table for email HTML body."""
+        try:
+            msg_pk = int(message_id)
+        except (ValueError, TypeError):
+            return None
+
+        cache_db = self._find_cache_sqlite_db()
+        if not cache_db:
+            return None
+
+        try:
+            uri = f"file:{cache_db.resolve()}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT data FROM messageBodyHtml WHERE messagePk = ? AND data IS NOT NULL LIMIT 1;",
+                    (msg_pk,)
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    raw_data = row[0]
+                    if isinstance(raw_data, bytes):
+                        return raw_data.decode("utf-8", errors="ignore")
+                    elif isinstance(raw_data, str):
+                        return raw_data
+            finally:
+                conn.close()
+        except Exception:
+            pass
+        return None
+
     def _get_otp_from_sqlite(
         self,
         domain: Optional[str],
@@ -474,6 +560,20 @@ class SparkClient:
                 allow_expired=False,
             )
             if res:
+                rule_obj = next((r for r in config.rules if r.name == res.service), None)
+                if rule_obj and rule_obj.callback_regex and not res.callback_url:
+                    full_thread = self.fetch_thread(str(pk))
+                    if full_thread:
+                        res_cb = extract_otp_from_thread(
+                            thread_text=full_thread,
+                            domain_filter=domain,
+                            rules=config.rules,
+                            now=current_time,
+                            max_age_seconds=max_age,
+                            allow_expired=False,
+                        )
+                        if res_cb and res_cb.callback_url:
+                            res = res_cb
                 if (not exclude_codes_set or res.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res.message_id not in exclude_msg_ids_set):
                     return res
             elif include_expired and first_expired_otp is None:
@@ -486,6 +586,20 @@ class SparkClient:
                     allow_expired=True,
                 )
                 if res_exp:
+                    rule_obj = next((r for r in config.rules if r.name == res_exp.service), None)
+                    if rule_obj and rule_obj.callback_regex and not res_exp.callback_url:
+                        full_thread = self.fetch_thread(str(pk))
+                        if full_thread:
+                            res_exp_cb = extract_otp_from_thread(
+                                thread_text=full_thread,
+                                domain_filter=domain,
+                                rules=config.rules,
+                                now=current_time,
+                                max_age_seconds=max_age,
+                                allow_expired=True,
+                            )
+                            if res_exp_cb and res_exp_cb.callback_url:
+                                res_exp = res_exp_cb
                     if (not exclude_codes_set or res_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_exp.message_id not in exclude_msg_ids_set):
                         first_expired_otp = res_exp
 
@@ -574,6 +688,9 @@ class SparkClient:
         except Exception:
             pass
 
+        if not accounts:
+            accounts = self._get_spark_sqlite_accounts()
+
         if include_apple_mail and getattr(config, "apple_mail_enabled", True):
             apple_db = self._find_apple_mail_sqlite_db()
             if apple_db:
@@ -653,23 +770,60 @@ class SparkClient:
         msg_key = str(message_id)
         if hasattr(self, "_thread_cache") and msg_key in self._thread_cache:
             return self._thread_cache[msg_key]
+        out = ""
         try:
-            res = subprocess.run(
-                [self.spark_bin, "thread", msg_key],
-                capture_output=True,
-                text=True,
-                timeout=15
-            )
-            if res.returncode != 0:
-                return ""
-            out = res.stdout
-            if out and hasattr(self, "_thread_cache"):
-                if len(self._thread_cache) >= 50:
-                    self._thread_cache.pop(next(iter(self._thread_cache)))
-                self._thread_cache[msg_key] = out
-            return out
+            if shutil.which(self.spark_bin):
+                res = subprocess.run(
+                    [self.spark_bin, "thread", msg_key],
+                    capture_output=True,
+                    text=True,
+                    timeout=15
+                )
+                if res.returncode == 0 and res.stdout:
+                    out = res.stdout
         except Exception:
-            return ""
+            pass
+
+        # Fallback to cache.sqlite messageBodyHtml if CLI is unavailable or failed
+        if not out:
+            try:
+                html_body = self._get_html_body_from_cache_sqlite(msg_key)
+                if html_body:
+                    db_path = self._find_sqlite_db()
+                    sender = ""
+                    recipient = ""
+                    subject = ""
+                    dt_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    if db_path:
+                        try:
+                            uri = f"file:{db_path.resolve()}?mode=ro"
+                            conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+                            try:
+                                cur = conn.cursor()
+                                cur.execute(
+                                    "SELECT messageFrom, messageTo, subject, receivedDate FROM messages WHERE pk = ? LIMIT 1;",
+                                    (int(msg_key),)
+                                )
+                                row = cur.fetchone()
+                                if row:
+                                    sender = row[0] or ""
+                                    recipient = row[1] or ""
+                                    subject = row[2] or ""
+                                    if row[3]:
+                                        dt_str = datetime.fromtimestamp(row[3]).strftime("%Y-%m-%d %H:%M:%S")
+                            finally:
+                                conn.close()
+                        except Exception:
+                            pass
+                    out = f"ID: {msg_key}\nSubject: {subject}\nFrom: {sender}\nTo: {recipient}\nDate: {dt_str}\n\n{html_body}\n"
+            except Exception:
+                pass
+
+        if out and hasattr(self, "_thread_cache"):
+            if len(self._thread_cache) >= 50:
+                self._thread_cache.pop(next(iter(self._thread_cache)))
+            self._thread_cache[msg_key] = out
+        return out
 
     def _search_emails_for_otp(
         self,
@@ -960,3 +1114,252 @@ class SparkClient:
                     return res
 
         return None
+
+    def diagnose(
+        self,
+        target: str,
+        account: Optional[str] = None,
+        allow_expired: bool = False,
+        now: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """
+        Diagnostic-First reconciliation engine.
+        Inspects raw candidates from SQLite (or CLI), evaluates rule matches, explains
+        account filtering and domain filtering, and outputs an auditable verdict.
+        """
+        current_time = now or datetime.now()
+        clean_target = (target or "").strip()
+        domain = clean_domain(clean_target) if clean_target else None
+
+        db_path = self._find_sqlite_db()
+        cache_path = self._find_cache_sqlite_db()
+        accounts = self.get_accounts(include_apple_mail=True)
+
+        candidates: List[Dict[str, Any]] = []
+
+        if db_path:
+            try:
+                uri = f"file:{db_path.resolve()}?mode=ro"
+                conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+                try:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "SELECT pk, accountPk, receivedDate, messageFrom, messageTo, subject, shortBody "
+                        "FROM messages ORDER BY receivedDate DESC, pk DESC LIMIT 20;"
+                    )
+                    recent_rows = cur.fetchall()
+                    target_rows = []
+                    if domain:
+                        cur.execute(
+                            "SELECT pk, accountPk, receivedDate, messageFrom, messageTo, subject, shortBody "
+                            "FROM messages WHERE subject LIKE ? OR shortBody LIKE ? "
+                            "ORDER BY receivedDate DESC, pk DESC LIMIT 10;",
+                            (f"%{domain}%", f"%{domain}%")
+                        )
+                        target_rows = cur.fetchall()
+
+                    seen_pks = set()
+                    rows = []
+                    for r in target_rows + recent_rows:
+                        if r[0] not in seen_pks:
+                            seen_pks.add(r[0])
+                            rows.append(r)
+                    rows.sort(key=lambda r: (r[2] or 0, r[0] or 0), reverse=True)
+                    for pk, acc_pk, rec_date, msg_from, msg_to, subj, short_b in rows:
+                        msg_from = msg_from or ""
+                        msg_to = msg_to or ""
+                        subj = subj or ""
+                        short_b = short_b or ""
+                        rec_dt = datetime.fromtimestamp(rec_date) if rec_date else current_time
+                        age_secs = int((current_time - rec_dt).total_seconds())
+
+                        if age_secs < 60:
+                            age_human = f"{age_secs}s ago"
+                        elif age_secs < 3600:
+                            age_human = f"{age_secs // 60}m {age_secs % 60}s ago"
+                        else:
+                            age_human = f"{age_secs // 3600}h {(age_secs % 3600) // 60}m ago"
+
+                        account_match = True
+                        account_match_reason = "No account filter applied"
+                        if account:
+                            req_acc = account.strip().lower()
+                            msg_to_clean = msg_to.strip().lower()
+                            if req_acc in msg_to_clean or msg_to_clean in req_acc:
+                                account_match = True
+                                account_match_reason = f"Recipient '{msg_to}' matches '{account}'"
+                            else:
+                                account_match = False
+                                account_match_reason = f"Recipient '{msg_to}' does not match '{account}'"
+
+                        matched_rule = None
+                        extracted_domain = None
+                        for r in config.rules:
+                            if re.search(r.sender_pattern, msg_from):
+                                sub_m = re.search(r.subject_pattern, subj)
+                                if sub_m:
+                                    matched_rule = r.name
+                                    if r.domain_group and sub_m.lastindex and sub_m.lastindex >= r.domain_group:
+                                        extracted_domain = sub_m.group(r.domain_group).strip()
+                                    break
+
+                        domain_match = True
+                        domain_match_reason = "No target domain requested"
+                        if domain:
+                            if matched_rule:
+                                r_obj = next((r for r in config.rules if r.name == matched_rule), None)
+                                assoc = r_obj.associated_domains if r_obj else None
+                                is_match = domain_matches(domain, extracted_domain, assoc, msg_from, subj, short_b)
+                                domain_match = is_match
+                                domain_match_reason = f"Rule '{matched_rule}' domain match: {is_match}"
+                            else:
+                                is_match = domain_matches(domain, None, None, msg_from, subj, short_b)
+                                domain_match = is_match
+                                domain_match_reason = f"Generic domain match: {is_match}"
+
+                        dt_str = rec_dt.strftime("%Y-%m-%d %H:%M:%S")
+                        thread_text = f"ID: {pk}\nSubject: {subj}\nFrom: {msg_from}\nTo: {msg_to}\nDate: {dt_str}\n\n{short_b}\n"
+                        otp_cand = extract_otp_from_thread(
+                            thread_text=thread_text,
+                            domain_filter=domain,
+                            rules=config.rules,
+                            now=current_time,
+                            max_age_seconds=86400 * 30,
+                            allow_expired=True,
+                        )
+
+                        if otp_cand:
+                            r_obj = next((r for r in config.rules if r.name == otp_cand.service), None)
+                            if r_obj and r_obj.callback_regex and not otp_cand.callback_url:
+                                full_t = self.fetch_thread(str(pk))
+                                if full_t:
+                                    otp_cand_cb = extract_otp_from_thread(
+                                        thread_text=full_t,
+                                        domain_filter=domain,
+                                        rules=config.rules,
+                                        now=current_time,
+                                        max_age_seconds=86400 * 30,
+                                        allow_expired=True,
+                                    )
+                                    if otp_cand_cb and otp_cand_cb.callback_url:
+                                        otp_cand = otp_cand_cb
+                        elif not otp_cand and (matched_rule or domain_match):
+                            full_t = self.fetch_thread(str(pk))
+                            if full_t:
+                                otp_cand = extract_otp_from_thread(
+                                    thread_text=full_t,
+                                    domain_filter=domain,
+                                    rules=config.rules,
+                                    now=current_time,
+                                    max_age_seconds=86400 * 30,
+                                    allow_expired=True,
+                                )
+
+                        extracted_code = otp_cand.code if otp_cand else None
+                        callback_url = otp_cand.callback_url if otp_cand else None
+                        is_expired = otp_cand.is_expired if otp_cand else (age_secs > 600)
+
+                        has_intent = bool(matched_rule or OTP_INTENT_PATTERN.search(subj) or OTP_INTENT_PATTERN.search(short_b))
+                        if not has_intent:
+                            status = "NON_AUTH_EMAIL"
+                            failure_reason = "No auth/OTP intent or known provider rule matched"
+                        elif domain and not domain_match:
+                            status = "DOMAIN_MISMATCH"
+                            failure_reason = f"Email is for another service/domain (extracted: {extracted_domain})"
+                        elif account and not account_match:
+                            status = "ACCOUNT_MISMATCH"
+                            failure_reason = account_match_reason
+                        elif not extracted_code:
+                            status = "NO_CODE_EXTRACTED"
+                            failure_reason = "Subject matched rule but code could not be extracted from body"
+                        elif is_expired:
+                            status = "EXPIRED"
+                            failure_reason = f"Code expired ({age_human}, exceeds rule TTL)"
+                        else:
+                            status = "VALID_ACTIVE"
+                            failure_reason = None
+
+                        if has_intent or domain_match or (domain and domain in subj.lower()):
+                            candidates.append({
+                                "message_id": str(pk),
+                                "subject": subj,
+                                "sender": msg_from,
+                                "recipient": msg_to,
+                                "received_at": dt_str,
+                                "age_seconds": age_secs,
+                                "age_human": age_human,
+                                "account_match": account_match,
+                                "account_match_reason": account_match_reason,
+                                "rule_matched": matched_rule,
+                                "domain_match": domain_match,
+                                "domain_match_reason": domain_match_reason,
+                                "extracted_code": extracted_code,
+                                "callback_url": callback_url,
+                                "is_expired": is_expired,
+                                "status": status,
+                                "failure_reason": failure_reason,
+                            })
+                finally:
+                    conn.close()
+            except Exception:
+                pass
+
+        resolved_otp = self.get_latest_otp(
+            domain=domain,
+            account=account,
+            allow_expired=allow_expired,
+            now=current_time
+        )
+
+        if resolved_otp:
+            matching_cand = next((c for c in candidates if c["message_id"] == resolved_otp.message_id), None)
+            if matching_cand and not matching_cand["account_match"]:
+                verdict = f"SUCCESS (ACCOUNT FALLBACK): Active code '{resolved_otp.code}' resolved for service '{resolved_otp.service}' via fallback from mailbox '{matching_cand['recipient']}' (requested: '{account}')."
+                recommendation = f"Autofill ready to proceed, but consider switching configured account from '{account}' to '{matching_cand['recipient']}' or Unified Inbox."
+            else:
+                verdict = f"SUCCESS: Active code '{resolved_otp.code}' resolved for service '{resolved_otp.service}' ({resolved_otp.time_remaining_seconds}s left)."
+                recommendation = "Autofill ready to proceed."
+        elif candidates:
+            expired_cands = [c for c in candidates if c["status"] == "EXPIRED"]
+            acc_mismatch = [c for c in candidates if c["status"] == "ACCOUNT_MISMATCH"]
+            dom_mismatch = [c for c in candidates if c["status"] == "DOMAIN_MISMATCH"]
+            if expired_cands:
+                verdict = f"NO_ACTIVE_OTP: Found candidate code(s) but expired (latest {expired_cands[0]['age_human']})."
+                recommendation = "Trigger a new verification code on the target login page or pass --allow-expired."
+            elif acc_mismatch:
+                verdict = f"ACCOUNT_FILTER_MISMATCH: Candidates arrived in mailbox '{acc_mismatch[0]['recipient']}', but query requested '{account}'."
+                recommendation = f"Check email in account '{acc_mismatch[0]['recipient']}' or switch popup account to 'Unified Inbox'."
+            elif dom_mismatch:
+                verdict = f"DOMAIN_MISMATCH: Recent verification emails did not match target domain '{domain}'."
+                recommendation = "Verify target site domain or check if provider sends from an unexpected domain."
+            else:
+                verdict = "NO_ACTIVE_OTP: Candidates inspected but none satisfied all criteria."
+                recommendation = "Trigger a new verification code or check email inbox."
+        else:
+            verdict = "NO_CANDIDATE_EMAILS: No recent verification emails found in local mailbox store."
+            recommendation = "Ensure Spark Desktop is running, synchronized, and that the verification email has arrived."
+
+        return {
+            "query": {
+                "target": clean_target,
+                "domain": domain,
+                "account": account,
+                "allow_expired": allow_expired,
+                "diagnosed_at": current_time.isoformat(),
+            },
+            "environment": {
+                "spark_bin": self.spark_bin,
+                "spark_cli_available": self.is_available(),
+                "sqlite_db": str(db_path) if db_path else None,
+                "sqlite_available": bool(db_path),
+                "cache_sqlite_db": str(cache_path) if cache_path else None,
+                "cache_sqlite_available": bool(cache_path),
+                "configured_accounts": accounts,
+                "accounts_count": len(accounts),
+            },
+            "candidates_count": len(candidates),
+            "candidates": candidates,
+            "resolved_otp": resolved_otp.to_dict() if resolved_otp else None,
+            "verdict": verdict,
+            "recommendation": recommendation,
+        }

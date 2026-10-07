@@ -12,7 +12,7 @@ DEFAULT_RULES = [
         sender_pattern=r"(?i)(?:cloudflare|noreply@notify\.cloudflare\.com)",
         subject_pattern=r"(?i)Cloudflare Access login code for ([\w\.-]+)",
         code_regex=r"(?i)(?:Your login code:\s*|Your Cloudflare Access code.*?\n\s*)([0-9]{6})",
-        callback_regex=r"\[Log in\]\((https://[^\s\)]+cloudflareaccess\.com/cdn-cgi/access/callback[^\s\)]+)\)",
+        callback_regex=r"(?:\[Log in\]\((https://[^\s\)]+cloudflareaccess\.com/cdn-cgi/access/callback[^\s\)]+)\)|(?:href=[\"']|[\"'\s]|^)(https://[^\s\"'<>]+cloudflareaccess\.com/cdn-cgi/access/callback[^\s\"'<>]+))",
         domain_group=1,
         default_ttl_seconds=600,
         associated_domains=["cloudflare.com", "cloudflareaccess.com"],

@@ -1,4 +1,8 @@
 import unittest
+import sqlite3
+import tempfile
+import os
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 from spark_otp.spark_client import parse_emails_table_output, parse_accounts_output, SparkClient
 from spark_otp.models import EmailSummary
@@ -340,6 +344,63 @@ Emails in Unified Inbox (filter: from:64clouds.com OR from:bandwagonhost.com OR 
         self.assertIsNotNone(otp)
         self.assertEqual(otp.code, "948201")
         self.assertEqual(otp.service, "bandwagon_auth")
+
+    def test_spark_sqlite_accounts_direct_read(self):
+        """Verify that _get_spark_sqlite_accounts reads accountAddress from accounts table."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "messages.sqlite"
+            conn = sqlite3.connect(db_path)
+            conn.execute("""
+                CREATE TABLE accounts (
+                    pk INTEGER PRIMARY KEY,
+                    additionalInfo TEXT
+                )
+            """)
+            conn.execute("""
+                INSERT INTO accounts (pk, additionalInfo) VALUES
+                (1, '{"accountAddress": "user1@example.com", "name": "User 1"}'),
+                (2, '{"accountAddress": "user2@example.org", "name": "User 2"}'),
+                (3, '{"name": "No Address"}')
+            """)
+            conn.commit()
+            conn.close()
+
+            client = SparkClient(sqlite_path=str(db_path), spark_bin="/usr/bin/false")
+            accounts = client._get_spark_sqlite_accounts()
+            self.assertEqual(accounts, ["user1@example.com", "user2@example.org"])
+
+    def test_spark_cache_sqlite_html_body_direct_read(self):
+        """Verify that _get_html_body_from_cache_sqlite extracts html body from messageBodyHtml."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = Path(tmpdir) / "cache.sqlite"
+            conn = sqlite3.connect(cache_path)
+            conn.execute("""
+                CREATE TABLE messageBodyHtml (
+                    messagePk INTEGER PRIMARY KEY,
+                    data BLOB
+                )
+            """)
+            html_content = b"<html><body>Your verification code is <b>882211</b></body></html>"
+            conn.execute("INSERT INTO messageBodyHtml (messagePk, data) VALUES (728858, ?)", (html_content,))
+            conn.commit()
+            conn.close()
+
+            client = SparkClient(sqlite_path="disabled", spark_bin="/usr/bin/false")
+            client._find_cache_sqlite_db = lambda: cache_path
+
+            body = client._get_html_body_from_cache_sqlite("728858")
+            self.assertIsNotNone(body)
+            self.assertIn("882211", body)
+
+    def test_spark_client_diagnose_structure(self):
+        """Verify that client.diagnose returns all required keys and audit metadata."""
+        client = SparkClient(sqlite_path="disabled", spark_bin="/usr/bin/false")
+        diag = client.diagnose(target="example.com")
+        self.assertIn("query", diag)
+        self.assertIn("environment", diag)
+        self.assertIn("candidates", diag)
+        self.assertIn("verdict", diag)
+        self.assertIn("recommendation", diag)
 
 if __name__ == "__main__":
     unittest.main()

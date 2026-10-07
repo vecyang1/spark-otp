@@ -1,5 +1,6 @@
 document.addEventListener("DOMContentLoaded", async () => {
   const statusBadge = document.getElementById("status-badge");
+  const latestCard = document.getElementById("latest-card");
   const latestCode = document.getElementById("latest-code");
   const latestDomain = document.getElementById("latest-domain");
   const btnCopy = document.getElementById("btn-copy-latest");
@@ -227,7 +228,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const res = await fetch(`http://127.0.0.1:${port}/api/health`, { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
-        if (data.spark_available) {
+        if (data.spark_available || data.spark_sqlite_available) {
           lastDaemonStatus = "online";
           statusBadge.className = "badge online";
           statusBadge.textContent = t("connected");
@@ -295,7 +296,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     } catch (e) {}
   }
 
-  async function fetchLatestOtp(port) {
+  let pollTimer = null;
+  let pollAttempts = 0;
+  const MAX_POLL_ATTEMPTS = 5;
+
+  async function fetchLatestOtp(port, isRetry = false) {
+    if (!isRetry) {
+      pollAttempts = 0;
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+    }
     try {
       let url = `http://127.0.0.1:${port}/api/otp`;
       if (savedAccount) url += `?account=${encodeURIComponent(savedAccount)}`;
@@ -306,6 +318,11 @@ document.addEventListener("DOMContentLoaded", async () => {
           latestCode.textContent = data.otp.code;
           btnCopy.disabled = false;
           latestDomain.textContent = `${data.otp.domain || data.otp.service} (${data.otp.time_remaining_seconds}${t("left_sec")})`;
+          if (pollTimer) {
+            clearTimeout(pollTimer);
+            pollTimer = null;
+          }
+          return;
         } else {
           latestCode.textContent = "------";
           btnCopy.disabled = true;
@@ -313,8 +330,29 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
       }
     } catch (e) {
-      // ignore
+      latestCode.textContent = "------";
+      btnCopy.disabled = true;
+      latestDomain.textContent = t("no_active_otp");
     }
+
+    // Self-healing short polling: retry up to MAX_POLL_ATTEMPTS if no active OTP was found yet
+    if (pollAttempts < MAX_POLL_ATTEMPTS) {
+      pollAttempts++;
+      pollTimer = setTimeout(() => {
+        fetchLatestOtp(port, true);
+      }, 1500);
+    }
+  }
+
+  if (latestCard) {
+    if (latestCard.style) latestCard.style.cursor = "pointer";
+    latestCard.title = "Click to refresh code";
+    latestCard.addEventListener("click", (e) => {
+      if (e.target !== btnCopy) {
+        const port = inputPort.value || 9428;
+        fetchLatestOtp(port, false);
+      }
+    });
   }
 
   btnCopy.addEventListener("click", () => {
@@ -330,7 +368,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     const port = parseInt(inputPort.value, 10) || 9428;
     const autoSubmit = toggleAutoSubmit.checked;
     const autoEmail = toggleAutoEmail.checked;
-    const defaultEmail = inputEmail.value.trim() || "alex.turner@example.com";
+    const defaultEmail = inputEmail.value.trim();
     const selectedAccountVal = selectAccount.value || "";
     savedAccount = selectedAccountVal;
     const autoDirectJump = toggleAutoJump.checked;

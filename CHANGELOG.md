@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-10-07
+
+### Added
+- **Diagnostic-First Reconciliation Tool (`spark-otp diagnose` and `/api/diagnose`)**:
+  - Implemented `diagnose()` method on `SparkClient` to inspect raw candidates from local Spark stores (`messages.sqlite` and `cache.sqlite`), evaluate provider rules and domain/account filters, and output actionable verdicts and recommendations.
+  - Added CLI subcommand `spark-otp diagnose <target>` supporting `--account`, `--allow-expired`, and `--json` formatting.
+  - Added REST endpoint `GET /api/diagnose` registered in `spark_otp/contracts.py` OpenAPI 3.0 specification with timing telemetry.
+  - Added comprehensive test coverage in `tests/test_cli.py`, `tests/test_server.py`, `tests/test_contracts.py`, and `tests/test_sqlite_backend.py`.
+- **Spark Direct-Read SQLite Fallback Parity**:
+  - Implemented `_get_spark_sqlite_accounts()` to query `messages.sqlite` (`accounts` table `additionalInfo` JSON) directly when Spark CLI fails or is unavailable.
+  - Implemented `_get_html_body_from_cache_sqlite()` to extract raw HTML message bodies from `cache.sqlite` (`messageBodyHtml` table BLOBs).
+  - Added thread synthesis and HTML extraction fallback in `fetch_thread()` when CLI is inaccessible.
+
+### Fixed
+- **Cloudflare Access Input Detection (Affinity & False-Positive Disqualification)**:
+  - Fixed `hasVerificationAffinity(el)` in DOM engine which failed to inspect `className` or call `isUnambiguousVerificationInput(el)`, causing generic selectors (`input#code`, `input[name="code"]`) on Cloudflare Access to be dropped by `findOtpInputs()`.
+  - Added `input[class*="CodeInput" i]` and `input[class*="code-input" i]` to targeted selectors.
+  - Fixed regex word boundary bug in `kycPatterns` (`\bein\b` and `\bssn\b`) where `ein` matched `CodeInput` (c-o-d-ein-p-u-t) on Cloudflare Access login pages.
+  - Added `isUnambiguousVerificationInput` check inside `isExplicitOtpMarker` to prioritize explicit OTP markers before evaluating negative KYC patterns.
+- **SSOT Synchronization Boundary Expansion**:
+  - Expanded SSOT boundary (`// === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===`) to encapsulate `detectTargetDomain()`, storage helpers, auth state persistence, error detection, failure tracking, and API query builder, preventing ghost logic drift between `extension/content.js` and `userscript/spark-otp.user.js`.
+  - Fixed `detectTargetDomain()` regex matching path tokens (e.g. `/cdn-cgi/access/login/abcdef123` returning `abcdef123`) by requiring a domain dot and adding active DOM/title sniffing for the protected application domain.
+- **Extractor Domain Matching & Tenant Subdomain Resolution**:
+  - Fixed `domain_matches` short-circuit in `spark_otp/extractor.py:261` where `extracted_domain` (e.g. `app.example.com`) caused visiting tenant domain (`tenant.cloudflareaccess.com`) to immediately return `False`, degrading to `generic_otp` and dropping the magic link `callback_url`. Now falls back to `associated_domains` (`cloudflareaccess.com`).
+- **Global CLI Availability Invariant (`~/.local/bin/spark-otp`)**:
+  - Added standalone executable wrapper `bin/spark-otp` and created symlink in `~/.local/bin/spark-otp` ensuring zero "command not found" errors when executed from `$HOME` or any working directory.
+  - Added `--target` (`-t`) alias to `spark-otp diagnose` subparser.
+- **Zero-Hardcoding & Real Account Configuration**:
+  - Eliminated hardcoded placeholder `alex.turner@example.com` across `popup.html`, `popup.js`, and `content.js`.
+  - Set default email to empty string, allowing the user's configured Spark accounts or target page context to drive account selection.
+- **Popup UI Freeze & Dynamic Refresh**:
+  - Added self-healing short-polling retry loop to `fetchLatestOtp` in `extension/popup/popup.js` when no code is immediately present.
+  - Added click-to-refresh handler on the latest OTP card (`#latest-card`) with defensive `style` existence checks.
+  - Wired `spark_sqlite_available` awareness into popup status indicator.
+- **Cloudflare Access HTML Magic Link & Rule Extraction**:
+  - Updated `cloudflare_access` rule `callback_regex` in `spark_otp/config.py` to match both markdown links and raw HTML `href` URLs.
+  - Added `html.unescape()` in `spark_otp/extractor.py` to clean HTML entities in callback URLs.
+
+## [2026-10-04] - 2026-10-04
+
+### Fixes
+- Virtualize test emails to RFC mock domains (`5755fab`)
+
+### Documentation
+- Add .env.example and mark OpenAPI contract mock annotations (`8338132`)
+
+### Maintenance
+- Align mock account fixture with client deduplication contract (`9fe2446`)
+
 ## [1.4.2] - 2026-09-13
 
 ### Fixed

@@ -56,7 +56,10 @@ class TestDomDetection(unittest.TestCase):
             { el: { type: "text", name: "passport_number", id: "passport", placeholder: "Passport #", getAttribute: (k) => null }, expectedDisqualified: true, label: "passport_number" },
             { el: { type: "text", name: "tax_id", id: "ein", placeholder: "Tax ID / EIN", getAttribute: (k) => null }, expectedDisqualified: true, label: "tax_id" },
             { el: { type: "text", name: "device_name", id: "device_alias", placeholder: "My MacBook", getAttribute: (k) => null }, expectedDisqualified: true, label: "device_name" },
-            { el: { type: "text", name: "desc", id: "desc", placeholder: "Brief description", getAttribute: (k) => k === "maxlength" ? "100" : null }, expectedDisqualified: true, label: "maxlength_over_20" }
+            { el: { type: "text", name: "desc", id: "desc", placeholder: "Brief description", getAttribute: (k) => k === "maxlength" ? "100" : null }, expectedDisqualified: true, label: "maxlength_over_20" },
+            { el: { type: "text", name: "code", id: "code", className: "StandardInput-is-block StandardInput CodeInput", placeholder: "", getAttribute: (k) => k === "maxlength" ? "6" : null }, expectedDisqualified: false, label: "cloudflare_access_code_input" },
+            { el: { type: "text", name: "ein", id: "ein_number", placeholder: "Enter EIN", getAttribute: (k) => null }, expectedDisqualified: true, label: "real_ein_kyc" },
+            { el: { type: "text", name: "ssn", id: "ssn_number", placeholder: "Enter SSN", getAttribute: (k) => null }, expectedDisqualified: true, label: "real_ssn_kyc" }
         ];
 
         const results = testCases.map(tc => {
@@ -1058,6 +1061,7 @@ class TestDomDetection(unittest.TestCase):
                 value: '',
                 checked: false,
                 disabled: false,
+                style: {},
                 listeners: {},
                 attrs,
                 addEventListener: function(event, fn) {
@@ -1077,11 +1081,12 @@ class TestDomDetection(unittest.TestCase):
         }
 
         const ids = [
-            'status-badge', 'latest-code', 'latest-domain', 'btn-copy-latest',
+            'status-badge', 'latest-card', 'latest-code', 'latest-domain', 'btn-copy-latest',
             'toggle-auto-submit', 'toggle-auto-email', 'toggle-auto-jump',
             'select-account', 'select-lang', 'input-email', 'input-port',
             'btn-save', 'btn-refresh', 'save-msg', 'metric-latency',
-            'metric-hitrate', 'metric-requests'
+            'metric-hitrate', 'metric-requests', 'input-new-disabled-domain',
+            'btn-add-disabled-domain', 'disabled-domains-list'
         ];
         ids.forEach(id => { elements[id] = makeElement('div', id); });
 
@@ -1567,6 +1572,223 @@ class TestDomDetection(unittest.TestCase):
         self.assertEqual(data["user"]["authenticCount"], 1, "Userscript must detect authentic 2FA code field")
         self.assertTrue(data["user"]["authenticMatches"], "Userscript must return authentic 2FA input")
 
+    def test_e2e_cloudflare_access_dom_flow(self):
+        """End-to-end verification of Cloudflare Access DOM detection, domain sniffing, filling and submission."""
+        js_code = """
+        const fs = require('fs');
+        const contentJs = fs.readFileSync('extension/content.js', 'utf8');
+        const userJs = fs.readFileSync('userscript/spark-otp.user.js', 'utf8');
+
+        function runCloudflareTest(sourceCode, isUserScript) {
+            let clickedSubmit = false;
+            let submittedCode = "";
+
+            const inputEl = {
+                tagName: "INPUT",
+                type: "text",
+                name: "code",
+                id: "code",
+                className: "StandardInput-is-block StandardInput CodeInput",
+                value: "",
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                focus() {},
+                getAttribute(k) {
+                    if (k === "maxlength") return "6";
+                    if (k === "name") return "code";
+                    if (k === "id") return "code";
+                    if (k === "type") return "text";
+                    if (k === "class") return "StandardInput-is-block StandardInput CodeInput";
+                    return null;
+                },
+                getBoundingClientRect() { return { width: 120, height: 35, top: 180, left: 150 }; },
+                dispatchEvent(e) {
+                    if (e.type === "input" && e.data) {
+                        this.value = e.data;
+                    }
+                },
+                closest(sel) {
+                    if (sel.includes("form")) return formEl;
+                    return null;
+                }
+            };
+
+            const submitBtnEl = {
+                tagName: "BUTTON",
+                type: "submit",
+                textContent: "Sign in",
+                disabled: false,
+                offsetParent: {},
+                getAttribute(k) { return k === "type" ? "submit" : null; },
+                click() {
+                    clickedSubmit = true;
+                    submittedCode = inputEl.value;
+                }
+            };
+
+            const formEl = {
+                tagName: "FORM",
+                id: "login-form",
+                className: "StandardForm",
+                action: "/cdn-cgi/access/login/abcdef123",
+                querySelector(sel) {
+                    if (sel.includes('button[type="submit"]') || sel.includes('input[type="submit"]')) return submitBtnEl;
+                    return null;
+                },
+                querySelectorAll(sel) {
+                    if (sel.includes('button') || sel.includes('submit')) return [submitBtnEl];
+                    return [];
+                },
+                submit() {
+                    clickedSubmit = true;
+                    submittedCode = inputEl.value;
+                }
+            };
+
+            inputEl.form = formEl;
+
+            const headlineEl = {
+                tagName: "H1",
+                className: "Headline",
+                textContent: "Log in to app.example.com",
+                children: []
+            };
+
+            const mockDoc = {
+                title: "Cloudflare Access - Log in to app.example.com",
+                body: { innerText: headlineEl.textContent, textContent: headlineEl.textContent },
+                location: {
+                    href: "https://tenant.cloudflareaccess.com/cdn-cgi/access/login/abcdef123",
+                    hostname: "tenant.cloudflareaccess.com",
+                    pathname: "/cdn-cgi/access/login/abcdef123"
+                },
+                getElementById(id) {
+                    if (id === "code") return inputEl;
+                    return null;
+                },
+                querySelector(sel) {
+                    if (sel.includes("code") || sel.includes("CodeInput")) return inputEl;
+                    return null;
+                },
+                querySelectorAll(sel) {
+                    if (sel.includes("CodeInput") || sel === "input#code" || sel.includes('name="code"')) {
+                        return [inputEl];
+                    }
+                    if (sel.includes("h1") || sel.includes("Headline")) {
+                        return [headlineEl];
+                    }
+                    return [];
+                }
+            };
+
+            global.window = {
+                location: mockDoc.location,
+                sessionStorage: {
+                    getItem: () => null,
+                    setItem: () => {},
+                    removeItem: () => {}
+                },
+                HTMLInputElement: { prototype: {} },
+                getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" }),
+                setTimeout: (fn, delay) => fn(),
+                clearTimeout: () => {}
+            };
+            global.document = mockDoc;
+            global.setTimeout = (fn, delay) => fn();
+            global.clearTimeout = () => {};
+            global.Event = class Event { constructor(type) { this.type = type; } };
+            global.InputEvent = class InputEvent extends global.Event {};
+            global.KeyboardEvent = class KeyboardEvent extends global.Event {};
+            global.ClipboardEvent = class ClipboardEvent extends global.Event {};
+            global.DataTransfer = class DataTransfer { setData() {} };
+
+            // Extract required functions from source
+            function extractFunc(name) {
+                const reg = new RegExp("function " + name + "\\\\s*\\\\([^\\\\)]*\\\\)\\\\s*\\\\{");
+                const m = sourceCode.match(reg);
+                if (!m) throw new Error("Could not find " + name);
+                let depth = 0;
+                let start = m.index;
+                for (let i = start; i < sourceCode.length; i++) {
+                    if (sourceCode[i] === "{") depth++;
+                    else if (sourceCode[i] === "}") {
+                        depth--;
+                        if (depth === 0) return sourceCode.slice(start, i + 1);
+                    }
+                }
+                throw new Error("Unclosed " + name);
+            }
+
+            eval(extractFunc("isInteractiveElement"));
+            eval(extractFunc("isUnambiguousVerificationInput"));
+            eval(extractFunc("isDisqualifiedInput"));
+            eval(extractFunc("sortInputsByVisualOrder"));
+            eval(extractFunc("detectTargetDomain"));
+            eval(extractFunc("isVerifyButton"));
+            eval(extractFunc("triggerSubmit"));
+            if (isUserScript) {
+                eval(extractFunc("setInputValue"));
+            } else {
+                eval(extractFunc("setInputValueWithReactSupport"));
+            }
+            eval(extractFunc("getStorageItem"));
+            eval(extractFunc("setStorageItem"));
+            eval(extractFunc("getAuthState"));
+            eval(extractFunc("saveAuthState"));
+            eval(extractFunc("recordCodeSubmitted"));
+            eval(extractFunc("recordCodeFailed"));
+            eval(extractFunc("detectPageError"));
+            eval(extractFunc("isCodeRejected"));
+            eval(extractFunc("fillAndSubmit"));
+            eval(extractFunc("findOtpInputs"));
+
+            const isDisq = isDisqualifiedInput(inputEl);
+            const foundInputs = findOtpInputs();
+            const detectedDomainWithTitle = detectTargetDomain();
+
+            // Test without target domain in title/DOM
+            mockDoc.title = "Cloudflare Access";
+            headlineEl.textContent = "";
+            const detectedDomainFallback = detectTargetDomain();
+
+            // Test fill and auto-submit
+            inputEl.value = "";
+            const fillResult = fillAndSubmit("653986", true, "728858", Date.now());
+
+            return {
+                isDisqualified: isDisq,
+                foundCount: foundInputs.length,
+                foundInputId: foundInputs.length > 0 ? foundInputs[0].id : null,
+                detectedDomainWithTitle,
+                detectedDomainFallback,
+                fillResult,
+                submittedCode,
+                clickedSubmit
+            };
+        }
+
+        const extRes = runCloudflareTest(contentJs, false);
+        const userRes = runCloudflareTest(userJs, true);
+
+        console.log(JSON.stringify({ ext: extRes, user: userRes }));
+        """
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        for mode in ["ext", "user"]:
+            res = data[mode]
+            self.assertFalse(res["isDisqualified"], f"{mode}: Cloudflare Access code input must not be disqualified as KYC")
+            self.assertEqual(res["foundCount"], 1, f"{mode}: Cloudflare Access code input must be detected by findOtpInputs")
+            self.assertEqual(res["foundInputId"], "code", f"{mode}: Detected element must have id 'code'")
+            self.assertEqual(res["detectedDomainWithTitle"], "app.example.com", f"{mode}: Must sniff target domain from page")
+            self.assertEqual(res["detectedDomainFallback"], "tenant.cloudflareaccess.com", f"{mode}: Must fallback to hostname, not path token")
+            self.assertTrue(res["fillResult"], f"{mode}: fillAndSubmit must return true")
+            self.assertEqual(res["submittedCode"], "653986", f"{mode}: Code must be filled into input")
+            self.assertTrue(res["clickedSubmit"], f"{mode}: Submit button must be clicked")
+
 if __name__ == "__main__":
     unittest.main()
+
 

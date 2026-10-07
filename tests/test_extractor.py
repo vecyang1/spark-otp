@@ -80,6 +80,26 @@ class TestExtractor(unittest.TestCase):
         self.assertFalse(result.is_expired)
         self.assertGreater(result.time_remaining_seconds, 500)
 
+    def test_extract_real_cloudflare_with_tenant_domain_fallback(self):
+        """When visiting tenant.cloudflareaccess.com or cloudflareaccess.com, domain_matches
+        must match via associated_domains even if extracted_domain in subject was finance.acme-cloud.net."""
+        now = datetime(2026, 9, 7, 19, 36)
+        date_str = "2026-09-07 19:35"
+        raw = REAL_CLOUDFLARE_FINANCE_EMAIL.format(date_str=date_str)
+
+        # When browsing tenant subdomain tenant.cloudflareaccess.com
+        result = extract_otp_from_thread(raw, domain_filter="tenant.cloudflareaccess.com", now=now)
+        self.assertIsNotNone(result)
+        self.assertEqual(result.code, "266134")
+        self.assertEqual(result.service, "cloudflare_access")
+        self.assertIn("acme-corp.cloudflareaccess.com", result.callback_url)
+
+        # When browsing base cloudflareaccess.com
+        result2 = extract_otp_from_thread(raw, domain_filter="cloudflareaccess.com", now=now)
+        self.assertIsNotNone(result2)
+        self.assertEqual(result2.code, "266134")
+        self.assertEqual(result2.service, "cloudflare_access")
+
     def test_domain_filter_rejection(self):
         now = datetime(2026, 9, 7, 19, 36)
         date_str = "2026-09-07 19:35"

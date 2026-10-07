@@ -64,6 +64,11 @@ class TestContracts(unittest.TestCase):
         self.assertIn("/api/telemetry", OPENAPI_SPEC["paths"])
         self.assertIn("/api/schema", OPENAPI_SPEC["paths"])
         self.assertIn("/api/openapi.json", OPENAPI_SPEC["paths"])
+        self.assertIn("/api/diagnose", OPENAPI_SPEC["paths"])
+        diag_param_names = [p["name"] for p in OPENAPI_SPEC["paths"]["/api/diagnose"]["get"]["parameters"]]
+        self.assertIn("domain", diag_param_names)
+        self.assertIn("account", diag_param_names)
+        self.assertIn("allow_expired", diag_param_names)
 
     def test_schema_endpoint(self):
         """GET /api/schema returns all component schemas."""

@@ -224,6 +224,39 @@ OPENAPI_SPEC: Dict[str, Any] = {
                     }
                 }
             }
+        },
+        "/api/diagnose": {
+            "get": {
+                "summary": "Reconciliation and diagnostic trace for a target domain or URL",
+                "parameters": [
+                    {
+                        "name": "domain",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                        "description": "Target website domain or URL"
+                    },
+                    {
+                        "name": "account",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                        "description": "Filter by recipient account email"
+                    },
+                    {
+                        "name": "allow_expired",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "boolean"},
+                        "description": "Include expired OTP codes in diagnostic resolution"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Diagnostic and reconciliation trace result"
+                    }
+                }
+            }
         }
     },
     "components": {

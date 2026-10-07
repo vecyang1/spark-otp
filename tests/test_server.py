@@ -57,8 +57,39 @@ class MockSparkClient:
                     is_expired=True,
                     time_remaining_seconds=0
                 )
-            return None
         return self.mock_otp
+
+    def diagnose(self, target="", account=None, allow_expired=False):
+        return {
+            "query": {
+                "target": target,
+                "domain": target,
+                "account": account,
+                "allow_expired": allow_expired,
+                "diagnosed_at": "2026-10-07T12:00:00"
+            },
+            "environment": {
+                "spark_bin": "/usr/local/bin/spark",
+                "spark_cli_available": True,
+                "sqlite_available": True,
+                "cache_sqlite_available": True,
+                "accounts_count": 2
+            },
+            "candidates_count": 1,
+            "candidates": [
+                {
+                    "message_id": "999",
+                    "subject": "Verification code",
+                    "sender": "auth@test.domain.com",
+                    "recipient": account or "alex.turner@example.com",
+                    "status": "VALID_ACTIVE",
+                    "extracted_code": "123456"
+                }
+            ],
+            "resolved_otp": self.mock_otp.to_dict(),
+            "verdict": "SUCCESS: Active code resolved",
+            "recommendation": "Autofill ready to proceed."
+        }
 
 class TestServer(unittest.TestCase):
     @classmethod
@@ -258,6 +289,52 @@ class TestServer(unittest.TestCase):
         self.assertEqual(payload["code"], "998877")
         self.assertTrue(payload["is_expired"])
         req.close()
+
+    def test_diagnose_endpoint_success(self):
+        """Test that /api/diagnose returns 200 with complete audit trail and metrics."""
+        url = f"http://127.0.0.1:{self.port}/api/diagnose?domain=test.domain.com"
+        req = urllib.request.urlopen(url)
+        self.assertEqual(req.status, 200)
+        self.assertEqual(req.headers.get("Content-Type"), "application/json")
+        self.assertEqual(req.headers.get("Access-Control-Allow-Origin"), "*")
+        data = json.loads(req.read().decode("utf-8"))
+
+        self.assertIn("query", data)
+        self.assertEqual(data["query"]["domain"], "test.domain.com")
+        self.assertIn("environment", data)
+        self.assertTrue(data["environment"]["sqlite_available"])
+        self.assertIn("candidates", data)
+        self.assertEqual(data["candidates_count"], 1)
+        self.assertIn("verdict", data)
+        self.assertIn("metrics", data)
+        self.assertIn("duration_ms", data["metrics"])
+        self.assertIsNotNone(data["resolved_otp"])
+        self.assertEqual(data["resolved_otp"]["code"], "123456")
+
+    def test_diagnose_endpoint_parameters(self):
+        """Test that /api/diagnose handles query params (target, account, allow_expired)."""
+        url = f"http://127.0.0.1:{self.port}/api/diagnose?target=test.domain.com&account=alex.turner@example.com&allow_expired=true"
+        req = urllib.request.urlopen(url)
+        self.assertEqual(req.status, 200)
+        data = json.loads(req.read().decode("utf-8"))
+
+        self.assertEqual(data["query"]["target"], "test.domain.com")
+        self.assertEqual(data["query"]["account"], "alex.turner@example.com")
+        self.assertTrue(data["query"]["allow_expired"])
+
+    def test_diagnose_endpoint_client_without_diagnose(self):
+        """Test fallback error response when client lacks diagnose capability."""
+        orig_diag = MockSparkClient.diagnose
+        del MockSparkClient.diagnose
+        try:
+            url = f"http://127.0.0.1:{self.port}/api/diagnose?domain=test.domain.com"
+            req = urllib.request.urlopen(url)
+            self.assertEqual(req.status, 200)
+            data = json.loads(req.read().decode("utf-8"))
+            self.assertFalse(data["success"])
+            self.assertIn("error", data)
+        finally:
+            MockSparkClient.diagnose = orig_diag
 
 if __name__ == "__main__":
     unittest.main()
