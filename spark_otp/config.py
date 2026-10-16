@@ -258,6 +258,16 @@ DEFAULT_RULES = [
         filter_query="from:sakura.ad.jp OR from:sakura.ne.jp OR さくらインターネット",
     ),
     RuleDefinition(
+        name="lisahost_auth",
+        sender_pattern=r"(?i)(?:丽萨主机|lisahost|@mail\.lisahost\.com|@lisahost\.com)",
+        subject_pattern=r"(?i)(?:密码重置|重置密码|验证码|安全码|登录验证|验证|password\s*reset|verification)",
+        code_regex=r"(?i)(?:(?:验证码|安全码|动态码|code)(?:是|为|is)?[：:\s]*([0-9]{4,8})\b|/password/reset/use/key/([a-f0-9]{64}))",
+        callback_regex=r'(https?://(?:[\w\.-]+\.)?lisahost\.com/[^\s\)\]"\'<>]*password/reset/use/key/[a-f0-9]{64})',
+        default_ttl_seconds=7200,
+        associated_domains=["lisahost.com", "mail.lisahost.com"],
+        filter_query="from:lisahost.com OR from:mail.lisahost.com OR 丽萨主机",
+    ),
+    RuleDefinition(
         name="generic_otp",
         sender_pattern=r".*",
         subject_pattern=r"(?i)(?:verification|login|security|access|auth|otp|one-time|verify|confirm|passcode|validation|device).*code|(?:device\s+)?verification\b|验证码|动态码|校验码|安全码|授权码|驗證碼|動態碼|校驗碼|安全碼|認証コード|確認コード|ワンタイムパスワード|인증\s*번호|인증\s*코드|확인\s*코드|código\s*de\s*verificación|code\s*de\s*vérification|verifizierungscode|bestätigungscode|código\s*de\s*confirmação|код\s*подтверждения|codice\s*di\s*verifica|mã\s*xác\s*thực|รหัส\s*otp|kode\s*verifikasi|رمز\s*التحقق|सत्यापन\s*कोड",
