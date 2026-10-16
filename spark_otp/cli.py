@@ -68,7 +68,7 @@ def main():
 
     # Command: diagnose
     diag_parser = subparsers.add_parser("diagnose", help="Diagnose and explain OTP matching and SQLite reconciliation")
-    diag_parser.add_argument("target", nargs="?", default="", help="Target website URL or domain (e.g. app.example.com)")
+    diag_parser.add_argument("target", nargs="?", default="", help="Target website URL or domain")
     diag_parser.add_argument("--target", "-t", dest="target_opt", help="Target website URL or domain")
     diag_parser.add_argument("--domain", "-d", help="Filter by target website domain")
     diag_parser.add_argument("--account", "-A", help="Filter by specific email account")
