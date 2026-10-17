@@ -1652,6 +1652,8 @@
         });
       }
     }
+  }
+
   function startListening() {
     if (isListening) return;
     const domain = detectTargetDomain();

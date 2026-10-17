@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] - 2026-10-17
+
+### Fixed
+- **Extension Content Script Syntax Error (`Uncaught SyntaxError: Unexpected token ')'`)**:
+  - Closed unescaped brace on `renderPill()` in `extension/content.js` (line 1654), resolving closure encapsulation collision that prevented `startListening()` and `init()` from executing on web pages and triggered Chrome developer extension syntax crash.
+  - Verified with AST static syntax analysis (`node --check`) and full 178 unit tests passing.
+
 ## [1.5.1] - 2026-10-16
 
 ### Added
