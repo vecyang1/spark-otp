@@ -14,7 +14,7 @@
 [![Chrome Extension](https://img.shields.io/badge/Chrome_Extension-MV3-brightgreen.svg)](extension/)
 [![Userscript](https://img.shields.io/badge/Userscript-Tampermonkey-orange.svg)](userscript/)
 [![Architecture](https://img.shields.io/badge/Architecture-Zero--LLM_Deterministic-success.svg)](docs/architecture.md)
-[![Tests](https://img.shields.io/badge/Tests-142%20passed-success.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-182%20passed-success.svg)](tests/)
 
 **Universal zero-LLM email verification code (OTP / 2FA) auto-detection, extraction, and autofill engine powered by local macOS Spark Desktop & Apple Mail.**
 
@@ -232,7 +232,7 @@ The local daemon exposes a high-performance REST and SSE API on port `9428`:
 Spark OTP includes a rigorous two-sided test suite covering positive paths, edge cases, adversarial challenges, and multi-threaded concurrency:
 
 ```bash
-# Run the full automated test suite (142 tests):
+# Run the full automated test suite (182 tests):
 python3 -m unittest discover -s tests -p "test_*.py" -v
 
 # Or using pytest:

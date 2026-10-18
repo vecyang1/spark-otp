@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.3] - 2026-10-18
+
+### Fixed
+- **Root Manifest & Userscript Version Synchronization**:
+  - Aligned repository root `manifest.json` from stale `1.3.7` to `1.5.3` and standardized extension display name to `Spark OTP Autofill`, resolving version divergence when loading repository root into Chrome developer mode.
+  - Aligned `userscript/spark-otp.user.js` metadata `@version` to `1.5.3`.
+  - Updated `README.md` test metrics badge to reflect full passing suite (182 tests).
+  - Validated end-to-end DOM floating pill injection, live ticking timer, and daemon bridge connectivity in headless browser automation via ego-browser.
+
 ## [1.5.2] - 2026-10-17
 
 ### Fixed
