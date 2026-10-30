@@ -167,7 +167,7 @@ Emails in alex.turner@example.com
 Emails in Unified Inbox
 
   ID      Account                 From                            Date              Subject                                             Flags
-  720181  alex.turner@example.com   XinChaoVi Operations <hello@x…  {fresh_time}  [TidyCal Code: 182105] Verify your device on Tidy…  unread
+  720181  alex.turner@example.com   Acme Operations <hello@x…  {fresh_time}  [TidyCal Code: 182105] Verify your device on Tidy…  unread
   720198  alex.turner@example.com   Cloudflare <noreply@notify.cl…  {fresh_time}  Cloudflare Access login code for status.acme-cloud.net… unread
   719983  alex.turner@example.com   Surfshark <no-reply@account.s…  {fresh_time}  Your Surfshark 2FA code is 871330                   unread
 """
