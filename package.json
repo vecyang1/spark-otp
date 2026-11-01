@@ -1,6 +1,6 @@
 {
   "name": "spark-otp",
-  "version": "1.5.3",
+  "version": "1.6.0",
   "description": "Universal zero-LLM email OTP & 2FA extraction and autofill engine powered by local Spark Desktop",
   "main": "extension/content.js",
   "scripts": {

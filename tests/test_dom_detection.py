@@ -25,11 +25,12 @@ class TestDomDetection(unittest.TestCase):
 
         const testCases = [
             { el: { type: "text", name: "email_code", id: "otp", placeholder: "Code sent to email", getAttribute: (k) => null }, expectedDisqualified: false, label: "email_code" },
-            { el: { type: "text", name: "phone_verification_code", id: "phone_otp", placeholder: "SMS code", getAttribute: (k) => null }, expectedDisqualified: false, label: "phone_verification_code" },
+            { el: { type: "text", name: "phone_verification_code", id: "phone_otp", placeholder: "SMS code", getAttribute: (k) => null }, expectedDisqualified: true, label: "phone_verification_code_blocked_in_email_only_mode" },
             { el: { type: "password", name: "otp", id: "sec_code", placeholder: "6-digit code", getAttribute: (k) => null }, expectedDisqualified: false, label: "password_masked_otp" },
             { el: { type: "password", name: "digit1", id: "d1", placeholder: "", getAttribute: (k) => k === "maxlength" ? "1" : null }, expectedDisqualified: false, label: "segmented_password_box" },
             { el: { type: "text", name: "code", id: "code", placeholder: "Verification code", getAttribute: (k) => null }, expectedDisqualified: false, label: "simple_code" },
-            { el: { type: "text", name: "val_input", id: "v_input", placeholder: "请输入短信验证码", getAttribute: (k) => null }, expectedDisqualified: false, label: "chinese_sms_verification_code" },
+            { el: { type: "text", name: "val_input", id: "v_input", placeholder: "请输入短信验证码", getAttribute: (k) => null }, expectedDisqualified: true, label: "chinese_sms_verification_code_blocked_in_email_only_mode" },
+            { el: { type: "text", name: "val_input", id: "v_input", placeholder: "请输入邮箱验证码", getAttribute: (k) => null }, expectedDisqualified: false, label: "chinese_email_verification_code" },
             { el: { type: "text", name: "token", id: "tok", placeholder: "認証コードを入力", getAttribute: (k) => null }, expectedDisqualified: false, label: "japanese_auth_code" },
             { el: { type: "text", name: "sec", id: "sec", placeholder: "Nhập mã xác thực", getAttribute: (k) => null }, expectedDisqualified: false, label: "vietnamese_otp" },
             { el: { type: "text", name: "thai_inp", id: "t_inp", placeholder: "กรอกรหัส OTP", getAttribute: (k) => null }, expectedDisqualified: false, label: "thai_otp" },
@@ -1787,6 +1788,213 @@ class TestDomDetection(unittest.TestCase):
             self.assertTrue(res["fillResult"], f"{mode}: fillAndSubmit must return true")
             self.assertEqual(res["submittedCode"], "653986", f"{mode}: Code must be filled into input")
             self.assertTrue(res["clickedSubmit"], f"{mode}: Submit button must be clicked")
+
+    def test_card_checkout_and_authenticator_app_disqualification_and_diagnostics(self):
+        """
+        Verify that Credit/Debit Card Checkout forms (e.g., LinkedIn Checkout 'Security code*' / CVV)
+        and Authenticator App (TOTP / Google Authenticator / 1Password / Passkey) prompts are strictly
+        disqualified across both extension/content.js and userscript/spark-otp.user.js, while genuine
+        Email OTP pages (even with a secondary 'Use authenticator app instead' switcher button) qualify.
+        """
+        js_code = """
+        const fs = require('fs');
+        const vm = require('vm');
+        const contentJs = fs.readFileSync('extension/content.js', 'utf8');
+        const userJs = fs.readFileSync('userscript/spark-otp.user.js', 'utf8');
+
+        function extractSsot(src) {
+            const sMarker = '// === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===';
+            const eMarker = '// === END CORE DOM DETECTION ENGINE (SSOT) ===';
+            const s = src.indexOf(sMarker);
+            const e = src.indexOf(eMarker);
+            if (s === -1 || e === -1) throw new Error('SSOT markers missing');
+            return src.slice(s + sMarker.length, e);
+        }
+
+        function runSuite(src) {
+            const ssot = extractSsot(src);
+            const ctx = {
+                window: {
+                    location: { hostname: 'example.com', pathname: '/login', href: 'https://example.com/login' },
+                    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' })
+                },
+                document: {
+                    title: 'Login',
+                    body: { innerText: '' },
+                    querySelector: () => null,
+                    querySelectorAll: () => []
+                },
+                CSS: { escape: (s) => s },
+                NodeFilter: { SHOW_ELEMENT: 1 }
+            };
+            vm.createContext(ctx);
+            vm.runInContext(ssot, ctx);
+
+            // 1. LinkedIn Self-Serve Checkout "Security code*" (exact bug from user screenshot)
+            const linkedinCardDiag = ctx.diagnoseSyntheticSample({
+                labelText: 'Security code*',
+                placeholder: '',
+                maxLength: 4,
+                formText: 'Select your payment method Secure Checkout Credit/Debit card First name* Last name* Card number* Expiration date* Security code* Country United States Postal code*',
+                url: 'https://payment.www.linkedin.com/self-serve-checkout/purchase-multi-seats/'
+            });
+
+            // 2. Generic 3-digit CVV with label "Security code"
+            const genericCvv3Diag = ctx.diagnoseSyntheticSample({
+                labelText: 'Security code',
+                placeholder: '123',
+                maxLength: 3,
+                formText: 'Enter card details'
+            });
+
+            // 3. Authenticator App TOTP with autocomplete="one-time-code"
+            const totpAppDiag = ctx.diagnoseSyntheticSample({
+                labelText: 'Verification code',
+                placeholder: '6-digit code',
+                autocomplete: 'one-time-code',
+                maxLength: 6,
+                formText: 'Two-factor authentication: Open your authenticator app (such as Google Authenticator or 1Password) and enter the 6-digit verification code.'
+            });
+
+            // 4. Segmented 6-box maxlength=1 inside an Authenticator App modal
+            const totpSegmentedEl = {
+                tagName: 'INPUT',
+                type: 'text',
+                name: 'digit-1',
+                id: 'totp-digit-1',
+                placeholder: '',
+                disabled: false,
+                readOnly: false,
+                getAttribute: (k) => k === 'maxlength' ? '1' : (k === 'data-input-otp' ? 'true' : null),
+                closest: (sel) => sel.includes('nav') ? null : ({
+                    innerText: 'Two-Factor Authentication\\nEnter the 6-digit code from your authenticator app',
+                    textContent: 'Two-Factor Authentication\\nEnter the 6-digit code from your authenticator app',
+                    querySelectorAll: () => []
+                }),
+                parentElement: null
+            };
+            const totpSegmentedDiag = ctx.diagnoseDomInput(totpSegmentedEl);
+
+            // 5. Email OTP page that has a secondary switcher button "Use authenticator app instead"
+            const switcherBtn = {
+                textContent: 'Use authenticator app instead'
+            };
+            const emailContainer = {
+                innerText: 'Check your email\\nWe sent a 6-digit verification code to alex.turner@example.com\\nUse authenticator app instead',
+                textContent: 'Check your email\\nWe sent a 6-digit verification code to alex.turner@example.com\\nUse authenticator app instead',
+                querySelectorAll: (sel) => sel.includes('a, button') ? [switcherBtn] : []
+            };
+            const emailWithSwitcherEl = {
+                tagName: 'INPUT',
+                type: 'text',
+                name: 'verification_code',
+                id: 'email_otp',
+                placeholder: 'Enter 6-digit code',
+                disabled: false,
+                readOnly: false,
+                getAttribute: (k) => k === 'maxlength' ? '6' : (k === 'autocomplete' ? 'one-time-code' : null),
+                closest: (sel) => (sel.includes('nav') || sel === 'label') ? null : emailContainer,
+                parentElement: emailContainer
+            };
+            const emailWithSwitcherDiag = ctx.diagnoseDomInput(emailWithSwitcherEl);
+
+            // 6. SMS-only verification blocked when emailOnlyMode=true, allowed when emailOnlyMode=false
+            const smsBlockedDiag = ctx.diagnoseSyntheticSample({
+                labelText: 'SMS verification code',
+                placeholder: 'Enter SMS code',
+                maxLength: 6,
+                formText: 'We sent a text message to your phone number.',
+                emailOnlyMode: true
+            });
+            const smsAllowedDiag = ctx.diagnoseSyntheticSample({
+                labelText: 'SMS verification code',
+                placeholder: 'Enter SMS code',
+                maxLength: 6,
+                formText: 'We sent a text message to your phone number.',
+                emailOnlyMode: false
+            });
+
+            // 7. Custom blocked field keyword
+            const customKeywordDiag = ctx.diagnoseSyntheticSample({
+                labelText: 'Vault PIN Code',
+                placeholder: 'Enter code',
+                maxLength: 6,
+                customBlockedTerms: ['vault pin']
+            });
+
+            return {
+                linkedinCardDiag,
+                genericCvv3Diag,
+                totpAppDiag,
+                totpSegmentedDiag,
+                emailWithSwitcherDiag,
+                smsBlockedDiag,
+                smsAllowedDiag,
+                customKeywordDiag
+            };
+        }
+
+        console.log(JSON.stringify({
+            ext: runSuite(contentJs),
+            user: runSuite(userJs)
+        }));
+        """
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        for target in ("ext", "user"):
+            r = data[target]
+            self.assertTrue(r["linkedinCardDiag"]["disqualified"], f"{target}: LinkedIn checkout Security code* must be disqualified")
+            self.assertEqual(r["linkedinCardDiag"]["channel"], "card_payment_blocked")
+
+            self.assertTrue(r["genericCvv3Diag"]["disqualified"], f"{target}: 3-digit Security code CVV must be disqualified")
+            self.assertEqual(r["genericCvv3Diag"]["channel"], "card_payment_blocked")
+
+            self.assertTrue(r["totpAppDiag"]["disqualified"], f"{target}: Authenticator app TOTP must be disqualified")
+            self.assertEqual(r["totpAppDiag"]["channel"], "authenticator_app_blocked")
+
+            self.assertTrue(r["totpSegmentedDiag"]["disqualified"], f"{target}: Segmented 6-box TOTP inside authenticator modal must be disqualified")
+            self.assertEqual(r["totpSegmentedDiag"]["channel"], "authenticator_app_blocked")
+
+            self.assertFalse(r["emailWithSwitcherDiag"]["disqualified"], f"{target}: Email OTP with 'Use authenticator app instead' button must NOT be disqualified")
+            self.assertTrue(r["emailWithSwitcherDiag"]["qualified"], f"{target}: Email OTP with switcher button must qualify")
+            self.assertEqual(r["emailWithSwitcherDiag"]["channel"], "email_otp")
+
+            self.assertTrue(r["smsBlockedDiag"]["disqualified"], f"{target}: SMS-only code must be blocked when emailOnlyMode=true")
+            self.assertEqual(r["smsBlockedDiag"]["channel"], "sms_only_blocked")
+            self.assertFalse(r["smsAllowedDiag"]["disqualified"], f"{target}: SMS-only code must be allowed when emailOnlyMode=false")
+
+            self.assertTrue(r["customKeywordDiag"]["disqualified"], f"{target}: Custom blocked term must disqualify matching field")
+            self.assertEqual(r["customKeywordDiag"]["rule_id"], "custom_blocked_term")
+
+    def test_python_client_diagnose_dom_sample_ssot(self):
+        """Verify SparkClient.diagnose_dom_sample executes the real JS SSOT engine."""
+        from spark_otp.spark_client import SparkClient
+        client = SparkClient()
+
+        card_res = client.diagnose_dom_sample({
+            "labelText": "Security code*",
+            "formText": "Credit/Debit card Card number* Expiration date* Security code*",
+            "url": "https://payment.www.linkedin.com/self-serve-checkout/"
+        })
+        self.assertTrue(card_res.get("disqualified"))
+        self.assertEqual(card_res.get("channel"), "card_payment_blocked")
+
+        totp_res = client.diagnose_dom_sample({
+            "labelText": "Verification code",
+            "formText": "Enter the 6-digit code from your authenticator app (Google Authenticator)"
+        })
+        self.assertTrue(totp_res.get("disqualified"))
+        self.assertEqual(totp_res.get("channel"), "authenticator_app_blocked")
+
+        email_res = client.diagnose_dom_sample({
+            "labelText": "Email verification code",
+            "formText": "Enter the 6-digit verification code sent to alex.turner@example.com"
+        })
+        self.assertFalse(email_res.get("disqualified"))
+        self.assertTrue(email_res.get("qualified"))
+        self.assertEqual(email_res.get("channel"), "email_otp")
 
 if __name__ == "__main__":
     unittest.main()

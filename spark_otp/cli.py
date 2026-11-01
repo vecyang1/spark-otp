@@ -67,11 +67,12 @@ def main():
     sync_parser.add_argument("--check", action="store_true", help="Check parity without modifying files")
 
     # Command: diagnose
-    diag_parser = subparsers.add_parser("diagnose", help="Diagnose and explain OTP matching and SQLite reconciliation")
+    diag_parser = subparsers.add_parser("diagnose", help="Diagnose and explain OTP matching, SQLite reconciliation, and DOM field gating")
     diag_parser.add_argument("target", nargs="?", default="", help="Target website URL or domain")
     diag_parser.add_argument("--target", "-t", dest="target_opt", help="Target website URL or domain")
     diag_parser.add_argument("--domain", "-d", help="Filter by target website domain")
     diag_parser.add_argument("--account", "-A", help="Filter by specific email account")
+    diag_parser.add_argument("--dom-sample", help="JSON or text sample of a DOM input/form to evaluate against the SSOT DOM detection engine")
     diag_parser.add_argument("--allow-expired", action="store_true", help="Include expired codes in resolution")
     diag_parser.add_argument("--json", action="store_true", help="Output full JSON diagnosis")
 
@@ -204,11 +205,12 @@ def main():
     elif args.command == "diagnose":
         target = getattr(args, "target_opt", None) or args.target or args.domain or ""
         account = args.account
+        dom_sample = getattr(args, "dom_sample", None)
         allow_expired = args.allow_expired
         as_json = args.json
 
         client = SparkClient()
-        diag = client.diagnose(target=target, account=account, allow_expired=allow_expired)
+        diag = client.diagnose(target=target, account=account, allow_expired=allow_expired, dom_sample=dom_sample)
 
         if as_json:
             print(json.dumps(diag, indent=2))
@@ -225,6 +227,15 @@ def main():
             print(f"SQLite Store: {sqlite_status}")
             print(f"Cache Store:  {cache_status}")
             print(f"Accounts:     {env.get('accounts_count', 0)} configured in Spark\n")
+
+            if diag.get("dom_sample_diagnosis"):
+                dd = diag["dom_sample_diagnosis"]
+                print("--- DOM Sample Gate Diagnosis (SSOT Engine) ---")
+                print(f"    Qualified:  {dd.get('qualified')}")
+                print(f"    Blocked:    {dd.get('disqualified')}")
+                print(f"    Channel:    {dd.get('channel')}")
+                print(f"    Rule Hit:   {dd.get('rule_id')}")
+                print(f"    Reason:     {dd.get('reason')}\n")
 
             candidates = diag.get("candidates", [])
             print(f"--- Inspected Candidates ({len(candidates)}) ---")

@@ -14,7 +14,7 @@
 [![Chrome Extension](https://img.shields.io/badge/Chrome_Extension-MV3-brightgreen.svg)](extension/)
 [![Userscript](https://img.shields.io/badge/Userscript-Tampermonkey-orange.svg)](userscript/)
 [![Architecture](https://img.shields.io/badge/Architecture-Zero--LLM_Deterministic-success.svg)](docs/architecture.md)
-[![Tests](https://img.shields.io/badge/Tests-182%20passed-success.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-180%20passed-success.svg)](tests/)
 
 **Universal zero-LLM email verification code (OTP / 2FA) auto-detection, extraction, and autofill engine powered by local macOS Spark Desktop & Apple Mail.**
 

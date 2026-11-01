@@ -45,7 +45,47 @@
       </div>
     </div>
 
+    <div class="card inspector-card" id="page-inspector-card">
+      <div class="card-header-row">
+        <div class="card-label" style="margin-bottom:0;" data-i18n="page_inspector_title">Page Detection Inspector</div>
+        <button id="btn-inspect-page" class="btn-xs" data-i18n="inspect_page">Inspect</button>
+      </div>
+      <div class="inspector-status-row">
+        <span id="inspector-domain" class="inspector-domain">--</span>
+        <span id="inspector-channel-badge" class="badge checking" data-i18n="channel_none">No OTP Field</span>
+      </div>
+      <div id="inspector-verdict" class="inspector-verdict" data-i18n="inspector_waiting">Inspecting active tab DOM...</div>
+      <div class="inspector-actions-row">
+        <button id="btn-block-current-site" class="btn-xs btn-xs-danger" data-i18n="block_current_site">Block Current Site</button>
+      </div>
+    </div>
+
+    <div class="card sandbox-card" id="rule-sandbox-card">
+      <div class="card-label" data-i18n="rule_sandbox_title">Rule &amp; Input Diagnostic Tester</div>
+      <div class="preset-chips">
+        <button type="button" class="chip-btn" id="btn-preset-card" data-i18n="preset_card_cvv">Card CVV</button>
+        <button type="button" class="chip-btn" id="btn-preset-totp" data-i18n="preset_auth_app">Authenticator App</button>
+        <button type="button" class="chip-btn" id="btn-preset-sms" data-i18n="preset_sms">SMS Code</button>
+        <button type="button" class="chip-btn" id="btn-preset-email" data-i18n="preset_email_otp">Email OTP</button>
+      </div>
+      <div class="sandbox-inputs">
+        <input type="text" id="sandbox-sample-label" class="input-sm" placeholder="Field label / name (e.g. Security code*)">
+        <div class="domain-input-wrap" style="margin-bottom:0;">
+          <input type="text" id="sandbox-sample-context" class="input-sm" placeholder="Context (e.g. Credit/Debit card, Authenticator)">
+          <button type="button" id="btn-run-sandbox" class="btn-sm" data-i18n="test_sample_btn">Test</button>
+        </div>
+      </div>
+      <div id="sandbox-result-box" class="sandbox-result" data-i18n="sandbox_hint">Click a preset or enter a field sample to verify rule behavior.</div>
+    </div>
+
     <div class="section-title" data-i18n="automation_settings">Automation Settings</div>
+    <div class="form-group">
+      <label class="toggle-wrap">
+        <input type="checkbox" id="toggle-email-only" checked>
+        <span class="toggle-label" data-i18n="strict_email_only">Strict Email-Only Mode (Block Card, TOTP &amp; SMS)</span>
+      </label>
+    </div>
+
     <div class="form-group">
       <label class="toggle-wrap">
         <input type="checkbox" id="toggle-auto-submit" checked>
@@ -100,6 +140,15 @@
         <button id="btn-add-disabled-domain" class="btn-sm" data-i18n="add_domain">Add</button>
       </div>
       <div id="disabled-domains-list" class="tags-container"></div>
+    </div>
+
+    <div class="card" id="blocked-terms-card">
+      <div class="card-label" data-i18n="custom_blocked_terms_label">Custom Blocked Field Keywords</div>
+      <div class="domain-input-wrap">
+        <input type="text" id="input-new-blocked-term" placeholder="e.g. hardware-key, card-pin" class="input-sm">
+        <button id="btn-add-blocked-term" class="btn-sm" data-i18n="add_blocked_term">Add</button>
+      </div>
+      <div id="blocked-terms-list" class="tags-container"></div>
     </div>
 
     <div class="actions">

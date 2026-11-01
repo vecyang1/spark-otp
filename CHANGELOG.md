@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-11-01] - 2026-11-01
+
+### Maintenance
+- Use generic sender display name in fixture (`8fd1879`)
+
+## [1.6.0] - 2026-10-31
+
+### Added
+- **UI Observability & Diagnostic-First Popup Controls ("能读、能试、能调")**:
+  - **Page Detection Inspector ("能读")**: Live DOM inspection panel in `extension/popup/popup.html` & `popup.js` querying the active tab (`SPARK_OTP_DIAGNOSE_PAGE`) to display the detected channel (`email_otp`, `card_payment_blocked`, `authenticator_app_blocked`, `sms_only_blocked`, `site_disabled`, or `none`), active rule ID, and rejection/acceptance reason.
+  - **Rule & Input Diagnostic Tester ("能试")**: Interactive sandbox in the Extension Popup (`SPARK_OTP_TEST_SAMPLE`), CLI (`spark-otp diagnose --dom-sample '<json>'`), and HTTP daemon (`GET /api/diagnose?dom_sample=<json>`) executing the authoritative SSOT `diagnoseSyntheticSample()` / `diagnoseDomInput()` engine with 1-click presets (`Card CVV`, `Authenticator App`, `SMS Code`, `Email OTP`).
+  - **Strict Email-Only Mode & Custom Blocked Field Keywords ("能调")**: Added `emailOnlyMode` (default `true`) toggle, `customBlockedTerms` keyword chip list, and 1-click `Block Current Site` button synced via `chrome.storage.sync`.
+
+### Fixed
+- **Credit/Debit Card Checkout & Authenticator App False-Positive Suppression**:
+  - Implemented **Priority Gate A (Card & Payment Disqualification)** before any `maxlength="1"` or `autocomplete="one-time-code"` check: blocks `cc-*` autocomplete attributes, `cvv`/`cvc`/`csc`/`card security code` fields, 3-digit CVV inputs, payment gateway iframes (`payment.www.linkedin.com`, `/self-serve-checkout/`, Stripe, Adyen, Braintree, etc.), and forms containing sibling card number / expiration date fields (`Security code*` on LinkedIn Checkout).
+  - Implemented **Priority Gate B (Authenticator App / TOTP / Passkey Disqualification)**: blocks Google Authenticator, Microsoft Authenticator, Authy, 1Password, Bitwarden, Passkey, WebAuthn, YubiKey, recovery codes, and TOTP prompts (even when inputs use `autocomplete="one-time-code"`, `data-input-otp="true"`, or 6-box `maxlength="1"` segmented inputs), while stripping secondary switcher button text (e.g., `"Use authenticator app instead"`) so genuine Email OTP pages with alternative-method links still work seamlessly.
+  - Implemented **Priority Gate C (Strict Email-Only Mode)**: blocks SMS-only / phone-only verification fields when `emailOnlyMode` is enabled.
+  - Added SPA `MutationObserver` self-healing in `checkPage()` to immediately hide the floating pill and stop background SSE/polling if an OTP input disappears or transitions into a disqualified card/TOTP step.
+
 ## [1.5.3] - 2026-10-18
 
 ### Fixed

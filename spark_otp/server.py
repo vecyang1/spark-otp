@@ -154,12 +154,32 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
         t0 = time.perf_counter()
         domain = params.get("domain", params.get("url", params.get("target", [None])))[0]
         account = params.get("account", [None])[0]
+        dom_sample = params.get("dom_sample", [None])[0]
         allow_expired_param = params.get("allow_expired", [None])[0]
         allow_expired = allow_expired_param.lower() in ("1", "true", "yes") if allow_expired_param else False
 
         diag_result = {}
         if self.client and hasattr(self.client, "diagnose"):
-            diag_result = self.client.diagnose(target=domain or "", account=account, allow_expired=allow_expired)
+            try:
+                if dom_sample is not None:
+                    diag_result = self.client.diagnose(
+                        target=domain or "",
+                        account=account,
+                        allow_expired=allow_expired,
+                        dom_sample=dom_sample,
+                    )
+                else:
+                    diag_result = self.client.diagnose(
+                        target=domain or "",
+                        account=account,
+                        allow_expired=allow_expired,
+                    )
+            except TypeError:
+                diag_result = self.client.diagnose(
+                    target=domain or "",
+                    account=account,
+                    allow_expired=allow_expired,
+                )
         else:
             diag_result = {
                 "success": False,

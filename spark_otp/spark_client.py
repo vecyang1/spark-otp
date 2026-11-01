@@ -1115,21 +1115,123 @@ class SparkClient:
 
         return None
 
+    def diagnose_dom_sample(self, sample: Any) -> Dict[str, Any]:
+        """
+        Evaluate a synthetic DOM input/form sample using the real SSOT JS engine
+        (`diagnoseSyntheticSample` in `extension/content.js`) via Node.js.
+        Guarantees zero duplicate simulated logic between CLI/HTTP and Chrome Extension.
+        """
+        import json
+        if isinstance(sample, str):
+            try:
+                sample_obj = json.loads(sample)
+            except Exception:
+                sample_obj = {"labelText": sample, "placeholder": sample}
+        elif isinstance(sample, dict):
+            sample_obj = sample
+        else:
+            sample_obj = {}
+
+        content_js = Path(__file__).resolve().parent.parent / "extension" / "content.js"
+        if not content_js.exists():
+            return {"error": f"content.js not found at {content_js}"}
+
+        js_runner = r"""
+const fs = require("fs");
+const vm = require("vm");
+const contentPath = process.env.SPARK_CONTENT_JS;
+const sampleJson = process.env.SPARK_SAMPLE_JSON;
+const code = fs.readFileSync(contentPath, "utf8");
+const startMarker = "// === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===";
+const endMarker = "// === END CORE DOM DETECTION ENGINE (SSOT) ===";
+const sIdx = code.indexOf(startMarker);
+const eIdx = code.indexOf(endMarker);
+const ssot = code.slice(sIdx + startMarker.length, eIdx);
+const sample = JSON.parse(sampleJson);
+const parsedUrl = sample.url || "";
+let host = "";
+let path = "";
+try {
+  if (parsedUrl) {
+    const u = new URL(parsedUrl);
+    host = u.hostname;
+    path = u.pathname;
+  }
+} catch (e) {}
+const ctx = {
+  window: {
+    location: { hostname: host, pathname: path, href: parsedUrl },
+    getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" })
+  },
+  document: {
+    title: sample.title || "",
+    body: { innerText: sample.pageText || sample.formText || "" },
+    querySelector: () => null,
+    querySelectorAll: () => []
+  },
+  CSS: { escape: (s) => s },
+  NodeFilter: { SHOW_ELEMENT: 1 },
+  URL: URL
+};
+vm.createContext(ctx);
+vm.runInContext(ssot, ctx);
+const res = ctx.diagnoseSyntheticSample(sample);
+process.stdout.write(JSON.stringify(res));
+"""
+        try:
+            env = dict(os.environ)
+            env["SPARK_CONTENT_JS"] = str(content_js)
+            env["SPARK_SAMPLE_JSON"] = json.dumps(sample_obj)
+            res = subprocess.run(
+                ["node", "-e", js_runner],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                env=env,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                return json.loads(res.stdout.strip())
+            return {"error": res.stderr.strip() or "Failed to evaluate DOM sample"}
+        except Exception as e:
+            return {"error": str(e)}
+
     def diagnose(
         self,
-        target: str,
+        target: str = "",
         account: Optional[str] = None,
         allow_expired: bool = False,
         now: Optional[datetime] = None,
+        dom_sample: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Diagnostic-First reconciliation engine.
         Inspects raw candidates from SQLite (or CLI), evaluates rule matches, explains
         account filtering and domain filtering, and outputs an auditable verdict.
+        Also evaluates DOM input/context samples against the SSOT DOM detection engine when provided.
         """
         current_time = now or datetime.now()
         clean_target = (target or "").strip()
         domain = clean_domain(clean_target) if clean_target else None
+        dom_diag = self.diagnose_dom_sample(dom_sample) if dom_sample is not None else None
+        if dom_diag is not None and not clean_target and not account:
+            return {
+                "query": {
+                    "target": "",
+                    "domain": None,
+                    "account": None,
+                    "allow_expired": allow_expired,
+                    "diagnosed_at": current_time.isoformat(),
+                },
+                "environment": {
+                    "spark_bin": self.spark_bin,
+                },
+                "dom_sample_diagnosis": dom_diag,
+                "candidates_count": 0,
+                "candidates": [],
+                "resolved_otp": None,
+                "verdict": f"DOM_SAMPLE_EVALUATED: {dom_diag.get('channel')} ({dom_diag.get('rule_id')})",
+                "recommendation": dom_diag.get("reason", ""),
+            }
 
         db_path = self._find_sqlite_db()
         cache_path = self._find_cache_sqlite_db()
@@ -1357,6 +1459,7 @@ class SparkClient:
                 "configured_accounts": accounts,
                 "accounts_count": len(accounts),
             },
+            "dom_sample_diagnosis": dom_diag,
             "candidates_count": len(candidates),
             "candidates": candidates,
             "resolved_otp": resolved_otp.to_dict() if resolved_otp else None,

@@ -121,6 +121,30 @@
 
   // === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===
 
+  let emailOnlyMode = true;
+  let customBlockedTerms = [];
+
+  function setDomDetectionConfig(cfg = {}) {
+    if (cfg && typeof cfg === "object") {
+      if (typeof cfg.emailOnlyMode === "boolean") {
+        emailOnlyMode = cfg.emailOnlyMode;
+      }
+      if (Array.isArray(cfg.customBlockedTerms)) {
+        customBlockedTerms = cfg.customBlockedTerms
+          .map(t => String(t || "").trim())
+          .filter(Boolean);
+      }
+    }
+    return { emailOnlyMode, customBlockedTerms };
+  }
+
+  function getDomDetectionConfig() {
+    return {
+      emailOnlyMode: typeof emailOnlyMode === "boolean" ? emailOnlyMode : true,
+      customBlockedTerms: Array.isArray(customBlockedTerms) ? customBlockedTerms.slice() : []
+    };
+  }
+
   // Determine target domain cleanly
   function detectTargetDomain() {
     try {
@@ -461,30 +485,58 @@
   }
 
   function isDisqualifiedInput(el) {
-    if (!el) return true;
+    const options = (arguments.length > 1 && arguments[1] && typeof arguments[1] === "object") ? arguments[1] : {};
+    const wantDiag = Boolean(options.returnDiagnostic);
+    const effectiveEmailOnly = typeof options.emailOnlyMode === "boolean"
+      ? options.emailOnlyMode
+      : (typeof emailOnlyMode === "boolean" ? emailOnlyMode : true);
+    const effectiveBlockedTerms = Array.isArray(options.customBlockedTerms)
+      ? options.customBlockedTerms
+      : (typeof customBlockedTerms !== "undefined" && Array.isArray(customBlockedTerms) ? customBlockedTerms : []);
+
+    let name = "";
+    let id = "";
+    let placeholder = "";
+    let aria = "";
+    let labelText = (options.label || "").toLowerCase().trim();
+
+    const finish = (disqualified, rule_id, reason, channel) => {
+      if (!wantDiag) return Boolean(disqualified);
+      return {
+        disqualified: Boolean(disqualified),
+        qualified: !disqualified,
+        rule_id: rule_id || (disqualified ? "disqualified" : "qualified_email_otp"),
+        reason: reason || "",
+        channel: channel || (disqualified ? "blocked" : "email_otp"),
+        label: labelText || placeholder || aria || name || id || "input",
+        input_summary: `${(el && el.tagName ? el.tagName : "INPUT").toLowerCase()}[name="${name}" id="${id}" placeholder="${placeholder}"]`
+      };
+    };
+
+    if (!el) return finish(true, "null_element", "Element is null or undefined", "none");
     const type = (el.type || "").toLowerCase();
     if (["hidden", "checkbox", "radio", "file", "submit", "button", "reset", "image", "date", "time", "datetime-local", "month", "week", "color", "range", "url", "search"].includes(type)) {
-      return true;
+      return finish(true, "non_otp_input_type", `Input type '${type}' is not a verification code field`, "none");
     }
     if (typeof el.getAttribute === "function") {
       const role = (el.getAttribute("role") || "").toLowerCase();
       if (["button", "tab", "menuitem", "link", "checkbox", "radio", "progressbar", "navigation"].includes(role)) {
-        return true;
+        return finish(true, "non_otp_aria_role", `ARIA role '${role}' is not an input field`, "none");
       }
     }
 
-    const name = (el.name || "").toLowerCase();
-    const id = (el.id || "").toLowerCase();
-    const placeholder = (el.placeholder || "").toLowerCase();
-    const aria = (typeof el.getAttribute === "function" ? (el.getAttribute("aria-label") || "") : "").toLowerCase();
+    name = (el.name || "").toLowerCase();
+    id = (el.id || "").toLowerCase();
+    placeholder = (el.placeholder || "").toLowerCase();
+    aria = (typeof el.getAttribute === "function" ? (el.getAttribute("aria-label") || "") : "").toLowerCase();
     const auto = (typeof el.getAttribute === "function" ? (el.getAttribute("autocomplete") || "") : (el.autocomplete || "")).toLowerCase();
     const testId = (typeof el.getAttribute === "function" ? (el.getAttribute("data-testid") || "") : "").toLowerCase();
+    const titleAttr = (typeof el.getAttribute === "function" ? (el.getAttribute("title") || "") : (el.title || "")).toLowerCase();
     const className = typeof el.className === "string" ? el.className.toLowerCase() : (typeof el.getAttribute === "function" ? (el.getAttribute("class") || "") : "").toLowerCase();
 
     // Check associated label text
-    let labelText = "";
     try {
-      if (typeof document !== "undefined") {
+      if (!labelText && typeof document !== "undefined") {
         if (el.id) {
           const lbl = document.querySelector(`label[for="${el.id}"]`);
           if (lbl) labelText = (lbl.textContent || "").toLowerCase().trim();
@@ -517,20 +569,20 @@
       }
     } catch (e) {}
 
-    const combined = `${name} ${id} ${placeholder} ${aria} ${testId} ${auto} ${className} ${labelText}`;
+    const combined = `${name} ${id} ${placeholder} ${aria} ${testId} ${auto} ${titleAttr} ${className} ${labelText}`;
 
     // Wizard / Stepper / Navigation / Section / Toggle elements (e.g. step-2fa, nav-2fa, tab-2fa, sidebar-2fa)
     const stepperRegex = /(?:^|[\W_])(?:step|stepper|nav|navbar|sidebar|tab|tabs|section|menu|wizard|progress|stage|status|toggle|switch|enable|disable|breadcrumb)(?:[\W_]|$)/i;
     if (stepperRegex.test(name) || stepperRegex.test(id) || stepperRegex.test(testId) || stepperRegex.test(className)) {
       if (!/(?:code|passcode|pin\b|token)/i.test(combined)) {
-        return true;
+        return finish(true, "navigation_or_stepper", "Stepper, tab, or navigation control", "none");
       }
     }
 
     // Disqualify elements inside navigation, sidebar, header, footer, tabs, or cookie/consent banners
     if (el.closest) {
       if (el.closest('nav, aside, header, footer, [role="navigation"], [role="tablist"], [role="tab"], [aria-hidden="true"], [id*="cookie" i], [class*="cookie" i], [id*="consent" i], [class*="consent" i]')) {
-        return true;
+        return finish(true, "structural_chrome_container", "Inside navigation, header, footer, or consent banner", "none");
       }
     }
 
@@ -538,155 +590,304 @@
     if (typeof el.value === "string" && el.value.trim().length > 0) {
       const v = el.value.trim();
       if (/^https?:\/\/|^www\./i.test(v) || v.includes("://") || v.includes("perso.na") || v.length > 12) {
-        return true;
+        return finish(true, "existing_non_otp_value", "Existing value is a URL or long text (>12 chars)", "none");
       }
     }
 
-    // 0. Card Verification Values (CVV/CVC) and card security codes are NEVER OTPs
-    if (/(?:^|[\W_])(?:cvv\d?|cvc\d?|cid|card[-_ ]*security[-_ ]*code|security[-_ ]*code[-_ ]*on[-_ ]*(?:the\s*)?back)(?:[\W_]|$)/i.test(combined)) {
-      return true;
-    }
-
-    // Segmented 1-char input is virtually always an OTP/PIN box
     const maxLenVal = typeof el.getAttribute === "function" ? el.getAttribute("maxlength") : el.maxLength;
     const sizeVal = typeof el.getAttribute === "function" ? el.getAttribute("size") : el.size;
-    if (String(maxLenVal) === "1" || String(sizeVal) === "1") {
-      return false;
+    const maxLenAttr = parseInt(maxLenVal, 10);
+    const sizeAttr = parseInt(sizeVal, 10);
+
+    // Location & surrounding container context inspection
+    let locHost = (options.hostname || "").toLowerCase();
+    let locPath = (options.pathname || "").toLowerCase();
+    try {
+      if (typeof window !== "undefined" && window.location) {
+        if (!locHost) locHost = (window.location.hostname || "").toLowerCase();
+        if (!locPath) locPath = (window.location.pathname || "").toLowerCase();
+      }
+    } catch (e) {}
+
+    const isCloudflareAccess = /(?:cloudflareaccess\.com)/i.test(locHost) || /\/cdn-cgi\/access\//i.test(locPath);
+
+    let containerPrimaryText = (options.contextText || "").toLowerCase();
+    let hasSiblingCardFields = false;
+    let formMetaText = "";
+
+    try {
+      const formEl = el.form || (el.closest ? el.closest("form") : null);
+      if (formEl) {
+        const fAction = (typeof formEl.getAttribute === "function" ? formEl.getAttribute("action") : formEl.action) || "";
+        const fId = formEl.id || "";
+        const fName = formEl.name || "";
+        const fCls = typeof formEl.className === "string" ? formEl.className : (typeof formEl.getAttribute === "function" ? formEl.getAttribute("class") : "") || "";
+        formMetaText = `${fAction} ${fId} ${fName} ${fCls}`.toLowerCase();
+      }
+
+      const outerScopeEl = (el.closest && el.closest('form, fieldset, [role="dialog"], [role="region"], .modal, .card, .checkout, main, section')) || formEl;
+      const scopeEl = outerScopeEl
+        || (el.closest && el.closest('[class*="payment" i], [class*="checkout" i], [class*="billing" i], [class*="auth" i], [class*="verify" i], [class*="login" i], [class*="mfa" i], [class*="2fa" i]'))
+        || el.parentElement
+        || (typeof document !== "undefined" ? document.body : null);
+
+      if (scopeEl) {
+        if (typeof scopeEl.querySelectorAll === "function") {
+          const siblingNodes = scopeEl.querySelectorAll("input, select, label, legend, h1, h2, h3, h4, [class*='label' i], [class*='title' i], [class*='header' i]");
+          let cardSignals = 0;
+          for (const node of siblingNodes) {
+            if (node === el) continue;
+            const nAuto = (typeof node.getAttribute === "function" ? (node.getAttribute("autocomplete") || "") : (node.autocomplete || "")).toLowerCase();
+            const nName = (node.name || "").toLowerCase();
+            const nId = (node.id || "").toLowerCase();
+            const nPh = (node.placeholder || "").toLowerCase();
+            const nAria = (typeof node.getAttribute === "function" ? (node.getAttribute("aria-label") || "") : "").toLowerCase();
+            const nTxt = (node.tagName !== "INPUT" && node.tagName !== "SELECT" ? (node.textContent || "") : "").toLowerCase();
+            const nMeta = `${nAuto} ${nName} ${nId} ${nPh} ${nAria} ${nTxt}`;
+            if (/(?:^|[\s_-])cc-(?:number|exp|exp-month|exp-year|name|type|csc)(?:$|[\s_-])/i.test(nAuto)
+                || /(?:credit\s*\/?\s*debit\s*card|credit\s+or\s+debit\s+card|select\s+your\s+payment\s+method|saved\s+payment\s+methods|card\s*number|cardholder|name\s+on\s+card|expiration\s*date|expiry\s*date|mm\s*\/\s*yy|信用卡|借记卡|银行卡号)/i.test(nMeta)) {
+              cardSignals++;
+            }
+          }
+          if (cardSignals >= 1) {
+            hasSiblingCardFields = true;
+          }
+        }
+
+        let rawScope = (scopeEl.textContent || "").slice(0, 1600).toLowerCase();
+        if (typeof scopeEl.querySelectorAll === "function") {
+          const switchers = scopeEl.querySelectorAll('a, button, [role="button"], [role="link"], nav, footer, [class*="switch" i], [class*="alternate" i], [class*="another-way" i], [class*="try-another" i]');
+          for (const sw of switchers) {
+            const swTxt = (sw.textContent || "").trim().toLowerCase();
+            if (swTxt && swTxt.length > 0 && swTxt.length < 200) {
+              rawScope = rawScope.split(swTxt).join(" ");
+            }
+          }
+        }
+        if (rawScope.trim()) {
+          containerPrimaryText = `${containerPrimaryText} ${rawScope}`.trim();
+        }
+      }
+    } catch (e) {}
+
+    if (/(?:credit\s*\/?\s*debit\s*card|credit\s+or\s+debit\s+card|select\s+your\s+payment\s+method|saved\s+payment\s+methods|card\s*number[\s\S]{0,120}(?:expiration|expiry|mm\s*\/\s*yy))/i.test(containerPrimaryText)) {
+      hasSiblingCardFields = true;
     }
 
-    // Standard one-time-code / data-input-otp
+    // Custom user-configured blocked keywords ("能调")
+    if (effectiveBlockedTerms && effectiveBlockedTerms.length > 0) {
+      for (const rawTerm of effectiveBlockedTerms) {
+        const term = String(rawTerm || "").trim().toLowerCase();
+        if (term && (combined.includes(term) || containerPrimaryText.includes(term))) {
+          return finish(true, "custom_blocked_term", `Blocked by custom keyword '${rawTerm}'`, "custom_blocked");
+        }
+      }
+    }
+
+    const hasExplicitEmailContext = isCloudflareAccess
+      || /(?:email[-_ ]*(?:verification[-_ ]*)?(?:code|otp|pin|token)|code[-_ ]*sent[-_ ]*to[-_ ]*email|邮箱验证码|邮件验证码)/i.test(combined)
+      || /(?:sent\s+(?:a\s+)?(?:\d+[- ]*(?:digit|char)\s+)?(?:verification\s+|security\s+|login\s+|device\s+|auth\s+|one[-_ ]*time\s+)?(?:code|passcode|pin|otp|email)\s+to|(?:verification|security)\s+code\s+sent\s+to|check\s+your\s+email|sent\s+(?:it\s+)?to\s+your\s+email|we\s+(?:just\s+|have\s+)?emailed\s+you|email\s+with\s+a\s+(?:verification\s+)?code|发送(?:至|到).*?邮箱|已向.*?发送.*?验证码|邮箱中的验证码|メールに.*?送信)/i.test(containerPrimaryText);
+
+    // =========================================================================
+    // PRIORITY GATE A: Credit / Debit Card & Payment Checkout Disqualification
+    // =========================================================================
+    // A1. W3C autocomplete="cc-*" or explicit CVV/CVC/CSC/Card attributes
+    if (/(?:^|[\s_-])cc-(?:csc|number|exp|exp-month|exp-year|name|given-name|additional-name|family-name|type)(?:$|[\s_-])/i.test(auto)
+        || /(?:^|[\W_])(?:cvv\d?|cvc\d?|cid|csc|card[-_ ]*csc|card[-_ ]*cvv|card[-_ ]*cvc|card[-_ ]*security[-_ ]*code|security[-_ ]*code[-_ ]*on[-_ ]*(?:the\s*)?(?:back|front)|back[-_ ]*of[-_ ]*(?:your[-_ ]*)?card|3[-_ ]*digit[-_ ]*security[-_ ]*code|4[-_ ]*digit[-_ ]*security[-_ ]*code|card[-_ ]*verification[-_ ]*value|card[-_ ]*pin)(?:[\W_]|$)/i.test(combined)
+        || /(?:credit[-_ ]*card|debit[-_ ]*card|card[-_ ]*num(?:ber)?|cardnumber|name[-_ ]*on[-_ ]*card|cardholder|card[-_ ]*holder|expir(?:y|ation)[-_ ]*(?:date|month|year)?|mm\s*\/\s*yy|iban|routing[-_ ]*num(?:ber)?|bank[-_ ]*account[-_ ]*num)/i.test(combined)) {
+      return finish(true, "card_payment_field", "Credit/Debit card or CVV/CVC/CSC payment field detected", "card_payment_blocked");
+    }
+
+    // A2. 3-digit maxlength/size or "123" CVV placeholder (Email OTPs are 4-10 chars, never 3-digit CVV)
+    if (maxLenAttr === 3 || sizeAttr === 3 || (placeholder === "123" && /(?:security|cvv|cvc|csc|card|安全码)/i.test(combined + " " + containerPrimaryText))) {
+      return finish(true, "card_cvv_3digit", "3-digit length or CVV placeholder indicates Credit/Debit card security code", "card_payment_blocked");
+    }
+
+    // A3. Payment gateway iframe host, checkout URL path, or enclosing form with sibling card fields
+    const isPaymentGatewayFrame = /(?:^|\.)(?:payment\.www\.linkedin\.com|payment\.linkedin\.com|js\.stripe\.com|hooks\.stripe\.com|checkout\.stripe\.com|m\.stripe\.network|checkoutshopper[-a-z0-9]*\.adyen\.com|adyen\.com|assets\.braintreegateway\.com|braintreegateway\.com|pci-connect\.squareup\.com|checkout\.shopify\.com|pay\.google\.com|paypalobjects\.com|recurly\.com|chargebee\.com|paddle\.com)$/i.test(locHost)
+      || /(?:\/self-serve-checkout\/|\/payment-method|\/credit-card|\/card-fields|\/hosted-fields|\/checkout\/payment)/i.test(locPath);
+
+    if ((isPaymentGatewayFrame || hasSiblingCardFields || /(?:payment|checkout|credit[-_ ]*card|billing[-_ ]*card)/i.test(formMetaText)) && !hasExplicitEmailContext) {
+      return finish(true, "card_payment_context", "Input is inside a Credit/Debit card or payment checkout form/iframe", "card_payment_blocked");
+    }
+
+    // =========================================================================
+    // PRIORITY GATE B: Authenticator App (TOTP) / Hardware Key / Passkey Gate
+    // =========================================================================
+    // B1. Explicit Authenticator App / Hardware Key / Recovery Code attributes on input/label
+    if (/(?:authenticator[-_ ]*(?:app|code)?|google[-_ ]*authenticator|microsoft[-_ ]*authenticator|authy|1password|bitwarden|duo[-_ ]*mobile|passkey|webauthn|security[-_ ]*key|yubikey|hardware[-_ ]*(?:key|token)|recovery[-_ ]*code|backup[-_ ]*code|app[-_ ]*generated[-_ ]*code|two[-_ ]*factor[-_ ]*app|2fa[-_ ]*app|mfa[-_ ]*app|otp[-_ ]*app|app[-_ ]*otp|app[-_ ]*totp|身份验证器|验证器应用|谷歌验证器|动态口令卡|动态口令应用|恢复代码|备用安全码|認証システム|認証アプリ)/i.test(combined)) {
+      return finish(true, "authenticator_app_field", "Authenticator app / TOTP / security key field or label detected", "authenticator_app_blocked");
+    }
+
+    // B2. TOTP attribute on input/label/form (except Cloudflare Access legacy #totp-form or explicit email prompt)
+    if (/(?:^|[\W_]|(?<=[a-z])(?=[A-Z]))(?:totp|time[-_ ]*based[-_ ]*otp)(?:[\W_]|$|(?=[A-Z]))/i.test(combined) && !hasExplicitEmailContext) {
+      return finish(true, "authenticator_totp_field", "TOTP (Time-based Authenticator App) input detected", "authenticator_app_blocked");
+    }
+
+    // B3. Enclosing modal/form primary instructions prompt for Authenticator App / TOTP / Hardware Key
+    if (/(?:authenticator\s+app|authentication\s+app|two[-_ ]*factor\s+auth(?:entication)?\s+app|2fa\s+app|google\s+authenticator|microsoft\s+authenticator|open\s+your\s+authenticator|code\s+from\s+your\s+authenticator|generated\s+by\s+your\s+(?:authenticator|authentication|2fa|security)\s+app|enter\s+the\s+(?:\d+[- ]*digit\s+)?code\s+from\s+your\s+(?:app|authenticator)|use\s+your\s+authenticator\s+app\s+to\s+generate|hardware\s+security\s+key|insert\s+your\s+security\s+key|enter\s+a\s+(?:recovery|backup)\s+code|身份验证器|请打开.*?验证器|输入验证器中的|谷歌身份验证器|認証アプリ)/i.test(containerPrimaryText) && !hasExplicitEmailContext) {
+      return finish(true, "authenticator_app_context", "Modal or form prompts for an Authenticator App / TOTP code", "authenticator_app_blocked");
+    }
+
+    // =========================================================================
+    // PRIORITY GATE C: Strict Email-Only Mode — Block SMS / Phone-Only OTPs
+    // =========================================================================
+    if (effectiveEmailOnly) {
+      if (/(?:sms[-_ ]*(?:verification[-_ ]*)?(?:code|otp|pin|token)|phone[-_ ]*(?:verification[-_ ]*)?(?:code|otp|pin|token)|mobile[-_ ]*(?:verification[-_ ]*)?(?:code|otp|pin)|whatsapp[-_ ]*(?:code|otp)|text[-_ ]*message[-_ ]*code|短信验证码|手机验证码|短信校验码|手机校验码|SMS認証|SMS確認コード)/i.test(combined)
+          && !/(?:email|邮箱|邮件|メール)/i.test(combined)) {
+        return finish(true, "sms_only_field", "SMS/Phone verification field blocked by Strict Email-Only Mode", "sms_only_blocked");
+      }
+      if (/(?:sent\s+(?:a\s+)?(?:\d+[- ]*digit\s+)?(?:verification\s+|security\s+)?code\s+(?:via\s+sms|by\s+sms|to\s+your\s+phone|to\s+your\s+mobile)|we\s+texted\s+(?:a\s+code|you)|text\s+message\s+sent\s+to|enter\s+the\s+code\s+sent\s+to\s+your\s+(?:phone|mobile)|已将短信验证码发送至|短信验证码已发送)/i.test(containerPrimaryText)
+          && !hasExplicitEmailContext) {
+        return finish(true, "sms_only_context", "SMS/Phone-only verification prompt blocked by Strict Email-Only Mode", "sms_only_blocked");
+      }
+    }
+
+    // =========================================================================
+    // PRIORITY GATE D: Negative Semantic Patterns (Promo, Search, Zip, URLs)
+    // =========================================================================
+    // 1. Promo, coupon, discounts, search, captcha, referral, invitation, affiliate, voucher, rewards, redemption
+    const promoAndSearch = /(?:promo|coupon|discount|voucher|referral|affiliate|invite|invitation|gift[-_ ]*(?:card|code|cert)|reward[-_ ]*code|bonus[-_ ]*code|redeem|redemption|claim[-_ ]*code|search|captcha|turnstile|recaptcha|hcaptcha|query|keyword)/i;
+    if (promoAndSearch.test(combined)) {
+      return finish(true, "promo_or_search_field", "Promo, coupon, captcha, or search input", "none");
+    }
+
+    // 2. Non-auth codes: country code, area code, postal/zip code, currency, tax, tracking, source, order, booking, tickets, etc.
+    const nonAuthCodes = /(?:postal|zip[-_ ]*code|country[-_ ]*code|area[-_ ]*code|currency[-_ ]*code|tax[-_ ]*code|sort[-_ ]*code|bank[-_ ]*code|branch[-_ ]*code|tracking[-_ ]*(?:code|num(?:ber)?)|source[-_ ]*code|product[-_ ]*code|item[-_ ]*code|sku|barcode|qr[-_ ]*code|reference[-_ ]*code|airport[-_ ]*code|language[-_ ]*code|swift[-_ ]*code|bic[-_ ]*code|billing[-_ ]*code|order[-_ ]*(?:code|num(?:ber)?|id)|shipment[-_ ]*(?:code|id)|booking[-_ ]*code|ticket[-_ ]*(?:code|num(?:ber)?|id)|pnr)/i;
+    if (nonAuthCodes.test(combined)) {
+      return finish(true, "non_auth_code_field", "Non-authentication code (postal, zip, country, tracking, SKU, or order code)", "none");
+    }
+
+    // 3. Web, URLs, links, handoff, persona links, copy links
+    const webUrls = /(?:website|web[-_ ]*url|domain|homepage|site[-_ ]*url|company[-_ ]*url|company[-_ ]*website|\burl\b|repo|github|handoff|persona|switch[-_ ]*device|continue[-_ ]*on|send[-_ ]*email|\blink\b|copy[-_ ]*link|share[-_ ]*link)/i;
+    if (webUrls.test(combined) || /^https?:\/\/|^www\./i.test(placeholder) || (el.value && (/^https?:\/\/|^www\./i.test(el.value.trim()) || webUrls.test(el.value)))) {
+      return finish(true, "web_url_or_handoff", "Website, URL, or device handoff link input", "none");
+    }
+
+    // Segmented 1-char input (already passed Card, Authenticator App, SMS, and Promo/Zip gates above)
+    if (String(maxLenVal) === "1" || String(sizeVal) === "1") {
+      return finish(false, "segmented_single_char_box", "Segmented 1-character verification code box in valid email/auth context", "email_otp");
+    }
+
+    // Standard one-time-code / data-input-otp (already passed Card, Authenticator App, and SMS gates above)
     if (auto === "one-time-code" || (typeof el.getAttribute === "function" && el.getAttribute("data-input-otp") === "true")) {
-      return false;
+      return finish(false, "standard_one_time_code_attr", "Standard autocomplete=one-time-code or data-input-otp in valid email/auth context", "email_otp");
     }
 
     // Check for unambiguous short-code input in verification/auth context
     const isUnambig = (typeof isUnambiguousVerificationInput === "function") ? isUnambiguousVerificationInput(el) : false;
 
     // Explicit Positive OTP markers that override ambiguous keywords (must be specific code/passcode/pin/token)
-    const isExplicitOtpMarker = /(?:two[-_ ]*factor|twofa|second[-_ ]*factor|one[-_ ]*time|mfa|totp)[-_ ]*(?:code|passcode|pin\b|token)/i.test(combined)
-      || /(?:verification|verify|security|auth|login|device|email|phone|sms)[-_ ]*(?:verification[-_ ]*)?(?:code|passcode|pin\b|token)/i.test(combined)
-      || /(?:devicecode|device_code|twofactorauthcode|twofactorcode|twofacode|otpcode|sms_code|email_code)/i.test(combined)
-      || /(?:^|[\W_])(?:otp|totp|passcode)(?:[\W_]|$)/i.test(name)
-      || /(?:^|[\W_])(?:otp|totp|passcode)(?:[\W_]|$)/i.test(id)
-      || /(?:验证码|校验码|动态码|安全码|授权码|認証コード|確認コード|ワンタイム|mã\s*xác\s*thực|mã\s*xác\s*minh|mã\s*otp|รหัส\s*otp|รหัสยืนยัน)/i.test(combined)
+    const isExplicitOtpMarker = /(?:two[-_ ]*factor|twofa|second[-_ ]*factor|one[-_ ]*time|mfa)[-_ ]*(?:code|passcode|pin\b|token)/i.test(combined)
+      || /(?:verification|verify|auth|login|device|email)[-_ ]*(?:verification[-_ ]*)?(?:code|passcode|pin\b|token)/i.test(combined)
+      || (!effectiveEmailOnly && /(?:phone|sms)[-_ ]*(?:verification[-_ ]*)?(?:code|passcode|pin\b|token)/i.test(combined))
+      || /(?:devicecode|device_code|twofactorauthcode|twofactorcode|twofacode|otpcode|email_code)/i.test(combined)
+      || (!effectiveEmailOnly && /(?:sms_code)/i.test(combined))
+      || /(?:^|[\W_])(?:otp|passcode)(?:[\W_]|$)/i.test(name)
+      || /(?:^|[\W_])(?:otp|passcode)(?:[\W_]|$)/i.test(id)
+      || /(?:验证码|校验码|动态码|授权码|認証コード|確認コード|ワンタイム|mã\s*xác\s*thực|mã\s*xác\s*minh|mã\s*otp|รหัส\s*otp|รหัสยืนยัน)/i.test(combined)
       || isUnambig;
 
-    // Negative semantic patterns: fields that are definitively NOT OTP codes
-    // 1. Promo, coupon, discounts, search, captcha, referral, invitation, affiliate, voucher, rewards, redemption
-    const promoAndSearch = /(?:promo|coupon|discount|voucher|referral|affiliate|invite|invitation|gift[-_ ]*(?:card|code|cert)|reward[-_ ]*code|bonus[-_ ]*code|redeem|redemption|claim[-_ ]*code|search|captcha|turnstile|recaptcha|hcaptcha|query|keyword)/i;
-    if (promoAndSearch.test(combined)) {
-      return true;
-    }
-
-    // 2. Non-auth codes: country code, area code, postal/zip code, currency, tax, tracking, source, order, booking, tickets, etc.
-    const nonAuthCodes = /(?:postal|zip[-_ ]*code|country[-_ ]*code|area[-_ ]*code|currency[-_ ]*code|tax[-_ ]*code|sort[-_ ]*code|bank[-_ ]*code|branch[-_ ]*code|tracking[-_ ]*(?:code|num(?:ber)?)|source[-_ ]*code|product[-_ ]*code|item[-_ ]*code|sku|barcode|qr[-_ ]*code|reference[-_ ]*code|airport[-_ ]*code|language[-_ ]*code|swift[-_ ]*code|bic[-_ ]*code|billing[-_ ]*code|order[-_ ]*(?:code|num(?:ber)?|id)|shipment[-_ ]*(?:code|id)|booking[-_ ]*code|ticket[-_ ]*(?:code|num(?:ber)?|id)|pnr)/i;
-    if (nonAuthCodes.test(combined)) {
-      return true;
-    }
-
-    // 3. Software license & developer tokens/keys
+    // 4. Software license & developer tokens/keys
     const licenseAndTokens = /(?:license[-_ ]*(?:key|code)|product[-_ ]*key|serial[-_ ]*(?:num(?:ber)?|key|code)|api[-_ ]*(?:token|key|secret)|secret[-_ ]*key|access[-_ ]*token|bearer[-_ ]*token|private[-_ ]*key|public[-_ ]*key)/i;
     if (licenseAndTokens.test(combined) && !isExplicitOtpMarker) {
-      return true;
-    }
-
-    // 4. Web, URLs, links, handoff, persona links, copy links (e.g. Kraken company website, Persona verification link)
-    const webUrls = /(?:website|web[-_ ]*url|domain|homepage|site[-_ ]*url|company[-_ ]*url|company[-_ ]*website|\burl\b|repo|github|handoff|persona|switch[-_ ]*device|continue[-_ ]*on|send[-_ ]*email|\blink\b|copy[-_ ]*link|share[-_ ]*link)/i;
-    if (webUrls.test(combined) || /^https?:\/\/|^www\./i.test(placeholder) || (el.value && (/^https?:\/\/|^www\./i.test(el.value.trim()) || webUrls.test(el.value)))) {
-      return true;
+      return finish(true, "license_or_api_token", "Software license or API key/token input", "none");
     }
 
     // 4b. QR codes, cameras, photo uploads, document scanning (KYC handoff)
     const mediaAndHandoff = /(?:camera|webcam|photo|selfie|qr[-_ ]*(?:code)?|scan|barcode|upload|document|id[-_ ]*doc|passport[-_ ]*photo|driver[-_ ]*license[-_ ]*photo|identity[-_ ]*check)/i;
     if (mediaAndHandoff.test(combined) && !isExplicitOtpMarker) {
-      return true;
+      return finish(true, "media_or_kyc_handoff", "QR scan, camera, or document upload field", "none");
     }
 
     // 5. Business, company, occupation, organization info
     const businessPatterns = /(?:company[-_ ]*name|business[-_ ]*name|business[-_ ]*activity|company[-_ ]*description|organization|organisation|industry|occupation|job[-_ ]*title|employer|department|workspace|team[-_ ]*name|legal[-_ ]*name|trading[-_ ]*name|brand[-_ ]*name|incorporation|beneficial[-_ ]*owner|shareholder|director|revenue|turnover|source[-_ ]*of[-_ ]*(?:funds|wealth))/i;
     if (businessPatterns.test(combined) && !isExplicitOtpMarker) {
-      return true;
+      return finish(true, "business_profile_field", "Business or organization profile field", "none");
     }
 
     // 6. Personal names & user identities
     const namePatterns = /(?:first[-_ ]*name|last[-_ ]*name|full[-_ ]*name|surname|family[-_ ]*name|given[-_ ]*name|middle[-_ ]*name|username|user[-_ ]*id|login[-_ ]*id|user[-_ ]*login|user[-_ ]*name|nickname|display[-_ ]*name|profile[-_ ]*name|handle|screen[-_ ]*name|real[-_ ]*name)/i;
     if (namePatterns.test(combined) && !isExplicitOtpMarker) {
-      return true;
+      return finish(true, "personal_name_or_username", "Personal name or username field", "none");
     }
 
     // 7. Address & geography
     const addressPatterns = /(?:street|address|city|state|province|region|apt|apartment|suite|building|floor|zip\b|postal\b)/i;
     if (addressPatterns.test(combined) && !isExplicitOtpMarker) {
-      return true;
+      return finish(true, "address_or_geography", "Street address, city, or postal field", "none");
     }
 
     // 8. KYC & Identity documents
     const kycPatterns = /(?:tax[-_ ]*id|\bein\b|\bssn\b|social[-_ ]*security|vat[-_ ]*num|vat[-_ ]*id|passport|national[-_ ]*id|id[-_ ]*num|identity[-_ ]*card|driver[-_ ]*licen[sc]e|doc[-_ ]*num|company[-_ ]*reg(?:istration)?|business[-_ ]*reg(?:istration)?|registration[-_ ]*num(?:ber)?|reg[-_ ]*num(?:ber)?|\bcrn\b|company[-_ ]*id|business[-_ ]*id|\btin\b|tax[-_ ]*identification)/i;
     if (kycPatterns.test(combined) && !isExplicitOtpMarker) {
-      return true;
+      return finish(true, "kyc_identity_document", "KYC, tax ID, SSN, EIN, or identity document field", "none");
     }
 
     // 9. Crypto wallet & blockchain addresses
     const cryptoPatterns = /(?:wallet[-_ ]*address|deposit[-_ ]*address|withdraw(?:al)?[-_ ]*address|crypto[-_ ]*address|destination[-_ ]*address|txid|tx[-_ ]*hash)/i;
     if (cryptoPatterns.test(combined) && !isExplicitOtpMarker) {
-      return true;
+      return finish(true, "crypto_wallet_address", "Crypto wallet or transaction hash field", "none");
     }
 
-    // 10. Payment & financial cards
+    // 10. Payment & financial amounts/accounts
     const paymentPatterns = /(?:credit[-_ ]*card|card[-_ ]*num|debit[-_ ]*card|expir(?:y|ation)|routing[-_ ]*num|iban|account[-_ ]*num|bank[-_ ]*name|bank[-_ ]*account|amount|price|balance)/i;
     if (paymentPatterns.test(combined) && !isExplicitOtpMarker) {
-      return true;
+      return finish(true, "payment_or_financial_field", "Financial account, balance, or payment field", "card_payment_blocked");
     }
 
     // 11. Long descriptions, notes, comments, channels
     const descriptionPatterns = /(?:description|details|summary|bio|about|notes?|comments?|messages?|feedback|review|reason|inquiry|channel)/i;
     if (descriptionPatterns.test(combined) && !isExplicitOtpMarker) {
-      return true;
+      return finish(true, "free_text_description", "Description, comment, or notes field", "none");
     }
 
     // 12. Device non-code attributes (e.g. device_name, device_id, device_model)
     const deviceNonCode = /(?:device[-_ ]*name|device[-_ ]*alias|device[-_ ]*id|device[-_ ]*model|device[-_ ]*type)/i;
     if (deviceNonCode.test(combined) && !isExplicitOtpMarker) {
-      return true;
+      return finish(true, "device_metadata_field", "Device name or metadata field", "none");
     }
 
     // 13. Telecom / phone numbers (e.g. phone_number, mobile) unless it is phone_code / sms_code
     if (/(?:phone[-_ ]*num(?:ber)?|mobile[-_ ]*num(?:ber)?|telephone|fax)/i.test(combined)) {
-      return true;
+      return finish(true, "phone_number_field", "Telephone or mobile number field", "none");
     }
     if ((/(?:^|[\W_])(?:phone|mobile)(?:[\W_]|$)/i.test(name) || /(?:^|[\W_])(?:phone|mobile)(?:[\W_]|$)/i.test(id)) && !isExplicitOtpMarker) {
-      return true;
+      return finish(true, "phone_attribute_field", "Phone or mobile attribute field", "none");
     }
 
     // If it matched an explicit OTP marker, it qualifies!
     if (isExplicitOtpMarker) {
-      return false;
+      return finish(false, "explicit_email_otp_marker", "Matched explicit Email/Login OTP verification code marker", "email_otp");
     }
 
     // Length sanity: typical OTP codes are 4-10 characters. Inputs with maxlength > 20 are general text
-    const maxLenAttr = parseInt(typeof el.getAttribute === "function" ? el.getAttribute("maxlength") : el.maxLength, 10);
     if (!isNaN(maxLenAttr) && maxLenAttr > 20) {
-      return true;
+      return finish(true, "maxlength_exceeds_otp_limit", `maxlength=${maxLenAttr} exceeds OTP limit (20)`, "none");
     }
 
     // Plain passwords and emails (not matching isExplicitOtpMarker above) are disqualified
     if (type === "password" || type === "email") {
-      return true;
+      return finish(true, "plain_password_or_email_type", `Input type='${type}' without OTP marker`, "none");
     }
 
     if (/(?:^|[\W_])(?:email)(?:[\W_]|$)/i.test(name) || /(?:^|[\W_])(?:email)(?:[\W_]|$)/i.test(id)) {
-      return true;
+      return finish(true, "email_address_field", "Email address input field", "none");
     }
 
     // Generic code or pin attribute matching: only qualify if not disqualified above AND maxlength reasonable
     if (/(?:^|[\W_])(?:code|pin)(?:[\W_]|$)/i.test(name) || /(?:^|[\W_])(?:code|pin)(?:[\W_]|$)/i.test(id) || id === "code") {
       if (!isNaN(maxLenAttr) && maxLenAttr > 12) {
-        return true;
+        return finish(true, "generic_code_maxlength_too_long", `Generic code field maxlength=${maxLenAttr} > 12`, "none");
       }
-      return false;
+      return finish(false, "generic_code_or_pin_field", "Generic code/pin input in valid non-payment, non-authenticator context", "email_otp");
     }
 
-    return false;
+    return finish(false, "candidate_passed_disqualification", "Passed negative disqualification gates", "email_otp");
+  }
+
+  function diagnoseDomInput(el, options = {}) {
+    return isDisqualifiedInput(el, Object.assign({}, options, { returnDiagnostic: true }));
   }
 
   function isDisqualified(el) {
@@ -813,13 +1014,15 @@
     }
 
     // 1. Standard autocomplete="one-time-code"
-    const standard = Array.from(document.querySelectorAll('input[autocomplete="one-time-code"]')).filter(isInteractiveElement);
+    const standard = Array.from(document.querySelectorAll('input[autocomplete="one-time-code"]'))
+      .filter(isInteractiveElement)
+      .filter(el => !isDisqualifiedInput(el));
     if (standard.length === 1) return standard;
     if (standard.length > 1) return sortInputsByVisualOrder(standard);
 
     // 2. React / modern OTP library wrappers (shadcn/ui input-otp, react-otp-input)
     const reactOtp = document.querySelector('input[data-input-otp="true"]');
-    if (reactOtp && !reactOtp.disabled && isInteractiveElement(reactOtp)) return [reactOtp];
+    if (reactOtp && !reactOtp.disabled && isInteractiveElement(reactOtp) && !isDisqualifiedInput(reactOtp)) return [reactOtp];
 
     // 3. Multi-box segmented inputs (4, 6, 8 inputs with maxlength="1")
     const singleChar = Array.from(document.querySelectorAll(
@@ -946,7 +1149,7 @@
           const val = (sel.includes('name*') ? el.name : el.id) || "";
           if (/(?:step|nav|tab|section|menu|wizard|sidebar|status|toggle|indicator|breadcrumb)/i.test(val)) return false;
           if (sel.includes('*="otp"') || sel.includes('*="2fa"') || sel.includes('*="twofactor"') || sel.includes('*="two-factor"')) {
-            return /(?:^|[\W_]|(?<=[a-z])(?=[A-Z]))(?:otp|totp|2fa|two[-_ ]*factor)(?:[\W_]|$|(?=[A-Z]))/i.test(val);
+            return /(?:^|[\W_]|(?<=[a-z])(?=[A-Z]))(?:otp|2fa|two[-_ ]*factor)(?:[\W_]|$|(?=[A-Z]))/i.test(val);
           }
           return true;
         });
@@ -1016,13 +1219,13 @@
       }
     }
 
-    // 6. Dedicated 2FA / OTP Form Context (e.g. WHMCS browser_auth.php, TOTP/2FA modal dialogs)
+    // 6. Dedicated 2FA / OTP Form Context (e.g. WHMCS browser_auth.php, email 2FA modal dialogs)
     const allForms = Array.from(document.querySelectorAll("form"));
     const dedicatedAuthForms = allForms.filter(form => {
       const action = (typeof form.getAttribute === "function" ? form.getAttribute("action") : form.action) || "";
       const id = form.id || "";
       const cls = typeof form.className === "string" ? form.className : (typeof form.getAttribute === "function" ? form.getAttribute("class") : "") || "";
-      return /(?:^|[\W_])(?:browser_auth|two[-_ ]*factor[-_ ]*code|totp[-_ ]*code|verify[-_ ]*code|enter[-_ ]*otp)(?:[\W_]|$)/i.test(`${action} ${id} ${cls}`);
+      return /(?:^|[\W_])(?:browser_auth|two[-_ ]*factor[-_ ]*code|verify[-_ ]*code|enter[-_ ]*otp)(?:[\W_]|$)/i.test(`${action} ${id} ${cls}`);
     });
     for (const form of dedicatedAuthForms) {
       const inputs = Array.from(form.querySelectorAll('input[type="text"], input[type="tel"], input[type="number"], input:not([type])'))
@@ -1041,7 +1244,7 @@
     // 7. contenteditable OTP components
     const editables = Array.from(document.querySelectorAll(
       '[contenteditable="true"][id*="otp" i], [contenteditable="true"][class*="otp" i], [contenteditable="true"][data-testid*="otp" i]'
-    )).filter(el => el.offsetParent !== null && isInteractiveElement(el));
+    )).filter(el => el.offsetParent !== null && isInteractiveElement(el) && !isDisqualifiedInput(el));
     if (editables.length > 0) return [editables[0]];
 
     return [];
@@ -1445,6 +1648,133 @@
         else form.submit();
       }
     }, 250);
+  }
+
+  function diagnoseSyntheticSample(sample = {}) {
+    const s = sample && typeof sample === "object" ? sample : {};
+    const maxLenRaw = s.maxlength !== undefined ? s.maxlength : s.maxLength;
+    const attrs = {
+      type: s.type || "text",
+      name: s.name || "",
+      id: s.id || "",
+      placeholder: s.placeholder || "",
+      autocomplete: s.autocomplete || "",
+      maxlength: maxLenRaw ? String(maxLenRaw) : null,
+      size: s.size ? String(s.size) : null,
+      "aria-label": s.ariaLabel || "",
+      "data-testid": s.testId || "",
+      "data-input-otp": s.dataInputOtp ? "true" : null,
+      class: s.className || ""
+    };
+    const mockEl = {
+      tagName: "INPUT",
+      type: attrs.type,
+      name: attrs.name,
+      id: attrs.id,
+      placeholder: attrs.placeholder,
+      autocomplete: attrs.autocomplete,
+      className: attrs.class,
+      value: s.value || "",
+      disabled: false,
+      readOnly: false,
+      getAttribute(k) {
+        return Object.prototype.hasOwnProperty.call(attrs, k) ? attrs[k] : null;
+      }
+    };
+    let host = s.hostname || "";
+    let path = s.pathname || "";
+    if (s.url && (!host || !path)) {
+      try {
+        const u = new URL(s.url);
+        if (!host) host = u.hostname;
+        if (!path) path = u.pathname;
+      } catch (e) {}
+    }
+    const ctxText = [s.contextText, s.formText, s.headingText, s.pageText].filter(Boolean).join(" ").trim();
+    return diagnoseDomInput(mockEl, {
+      label: s.label || s.labelText || "",
+      contextText: ctxText,
+      hostname: host,
+      pathname: path,
+      emailOnlyMode: typeof s.emailOnlyMode === "boolean" ? s.emailOnlyMode : undefined,
+      customBlockedTerms: Array.isArray(s.customBlockedTerms) ? s.customBlockedTerms : undefined
+    });
+  }
+
+  function diagnosePageDom() {
+    const domain = detectTargetDomain();
+    const frameHost = (typeof window !== "undefined" && window.location && window.location.hostname) ? window.location.hostname : domain;
+    const isIframe = (typeof window !== "undefined" && window.top && window.self !== window.top);
+    const domainDisabled = typeof isDomainDisabled === "function" ? isDomainDisabled(domain) : false;
+    const detectedEmail = findEmailOnPage();
+    const otpInputs = findOtpInputs();
+
+    const allInputs = (typeof document !== "undefined" && document.querySelectorAll)
+      ? Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"])'))
+      : [];
+
+    const candidateDiagnostics = [];
+    let primaryBlockedChannel = null;
+    let primaryBlockedRule = null;
+    let primaryBlockedReason = null;
+
+    for (const inp of allInputs.slice(0, 20)) {
+      if (typeof isInteractiveElement === "function" && !isInteractiveElement(inp)) continue;
+      const diag = diagnoseDomInput(inp);
+      const isSelectedOtp = otpInputs.includes(inp);
+      candidateDiagnostics.push({
+        label: diag.label,
+        input_summary: diag.input_summary,
+        qualified: isSelectedOtp,
+        disqualified: diag.disqualified,
+        channel: isSelectedOtp ? "email_otp" : diag.channel,
+        rule_id: isSelectedOtp ? diag.rule_id : (diag.disqualified ? diag.rule_id : "not_matched_by_selectors"),
+        reason: isSelectedOtp ? diag.reason : (diag.disqualified ? diag.reason : "Input not disqualified, but lacks OTP selector affinity")
+      });
+      if (diag.disqualified && ["card_payment_blocked", "authenticator_app_blocked", "sms_only_blocked", "custom_blocked"].includes(diag.channel)) {
+        if (!primaryBlockedChannel) {
+          primaryBlockedChannel = diag.channel;
+          primaryBlockedRule = diag.rule_id;
+          primaryBlockedReason = diag.reason;
+        }
+      }
+    }
+
+    let pageChannel = "none";
+    let pageVerdict = "No verification input active on page";
+    let pageRuleId = "no_otp_inputs";
+
+    if (domainDisabled) {
+      pageChannel = "site_disabled";
+      pageRuleId = "domain_disabled_by_user";
+      pageVerdict = `Auto-detection is disabled on ${domain}`;
+    } else if (otpInputs.length > 0) {
+      pageChannel = "email_otp";
+      const firstDiag = diagnoseDomInput(otpInputs[0]);
+      pageRuleId = firstDiag.rule_id || "qualified_email_otp";
+      pageVerdict = `Active Email OTP field (${otpInputs.length} input${otpInputs.length > 1 ? "s" : ""}) — ${firstDiag.reason || "Ready to autofill"}`;
+    } else if (primaryBlockedChannel) {
+      pageChannel = primaryBlockedChannel;
+      pageRuleId = primaryBlockedRule;
+      pageVerdict = primaryBlockedReason;
+    }
+
+    return {
+      domain,
+      frame_host: frameHost,
+      is_iframe: Boolean(isIframe),
+      domain_disabled: Boolean(domainDisabled),
+      email_only_mode: typeof emailOnlyMode === "boolean" ? emailOnlyMode : true,
+      custom_blocked_terms: typeof customBlockedTerms !== "undefined" && Array.isArray(customBlockedTerms) ? customBlockedTerms : [],
+      detected_email: detectedEmail || null,
+      otp_input_count: otpInputs.length,
+      detected_channel: pageChannel,
+      page_channel: pageChannel,
+      page_rule_id: pageRuleId,
+      verdict: pageVerdict,
+      page_verdict: pageVerdict,
+      candidates: candidateDiagnostics
+    };
   }
 
   // === END CORE DOM DETECTION ENGINE (SSOT) ===
@@ -1897,26 +2227,41 @@
       } else {
         renderPill("email_ready", { email: defaultEmail });
       }
-    } else {
-      // Dynamic SPA monitoring: observe DOM additions for OTP fields
-      const observer = new MutationObserver(() => {
+    }
+
+    // Dynamic SPA monitoring: observe DOM changes for OTP fields appearing or disappearing
+    let mutationTimer = null;
+    const observer = new MutationObserver((mutations) => {
+      // Ignore mutations inside our own floating pill
+      if (mutations.every(m => m.target && m.target.closest && m.target.closest("#spark-otp-pill-container"))) {
+        return;
+      }
+      if (mutationTimer) clearTimeout(mutationTimer);
+      mutationTimer = setTimeout(() => {
         if (isDomainDisabled(domain) || getStorageItem("spark_otp_dismissed_" + domain) === "1") {
-          observer.disconnect();
+          if (isListening) {
+            stopListening();
+            renderPill("hidden");
+          }
           return;
         }
         const foundOtp = findOtpInputs();
-        if (foundOtp.length > 0) {
-          observer.disconnect();
+        if (foundOtp.length > 0 && !isListening && !activeCode) {
           startListening();
+        } else if (foundOtp.length === 0 && isListening) {
+          stopListening();
+          renderPill("hidden");
         }
-      });
+      }, 120);
+    });
+    if (document.body || document.documentElement) {
       observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
     }
   }
 
   function init() {
     if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.sync) {
-      chrome.storage.sync.get(["serverPort", "autoSubmit", "autoEmail", "defaultEmail", "selectedAccount", "autoDirectJump", "language", "disabledDomains"], (res) => {
+      chrome.storage.sync.get(["serverPort", "autoSubmit", "autoEmail", "defaultEmail", "selectedAccount", "autoDirectJump", "language", "disabledDomains", "emailOnlyMode", "customBlockedTerms"], (res) => {
         if (res.serverPort) serverPort = res.serverPort;
         if (typeof res.autoSubmit !== "undefined") autoSubmit = res.autoSubmit;
         if (typeof res.autoEmail !== "undefined") autoEmail = res.autoEmail;
@@ -1925,18 +2270,31 @@
         if (typeof res.autoDirectJump !== "undefined") autoDirectJump = res.autoDirectJump;
         if (res.language) currentLang = res.language;
         if (res.disabledDomains && Array.isArray(res.disabledDomains)) disabledDomains = res.disabledDomains;
+        setDomDetectionConfig({
+          emailOnlyMode: typeof res.emailOnlyMode === "boolean" ? res.emailOnlyMode : true,
+          customBlockedTerms: Array.isArray(res.customBlockedTerms) ? res.customBlockedTerms : []
+        });
         checkPage();
       });
 
       chrome.storage.onChanged.addListener((changes, area) => {
         if (area === "sync" || area === "local") {
           let needsRestart = false;
+          let policyChanged = false;
           if (changes.disabledDomains) {
             disabledDomains = changes.disabledDomains.newValue || [];
             if (isDomainDisabled(detectTargetDomain()) && isListening) {
               stopListening();
               renderPill("hidden");
             }
+          }
+          if (changes.emailOnlyMode) {
+            setDomDetectionConfig({ emailOnlyMode: typeof changes.emailOnlyMode.newValue === "boolean" ? changes.emailOnlyMode.newValue : true });
+            policyChanged = true;
+          }
+          if (changes.customBlockedTerms) {
+            setDomDetectionConfig({ customBlockedTerms: Array.isArray(changes.customBlockedTerms.newValue) ? changes.customBlockedTerms.newValue : [] });
+            policyChanged = true;
           }
           if (changes.language && changes.language.newValue) {
             currentLang = changes.language.newValue;
@@ -1955,6 +2313,16 @@
           if (changes.defaultEmail) defaultEmail = changes.defaultEmail.newValue;
           if (changes.autoDirectJump) autoDirectJump = changes.autoDirectJump.newValue;
 
+          if (policyChanged) {
+            const currentOtp = findOtpInputs();
+            if (currentOtp.length === 0 && isListening) {
+              stopListening();
+              renderPill("hidden");
+            } else if (currentOtp.length > 0 && !isListening && !activeCode) {
+              startListening();
+            }
+          }
+
           if (needsRestart && isListening) {
             stopListening();
             startListening();
@@ -1963,6 +2331,36 @@
       });
     } else {
       checkPage();
+    }
+
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+        if (!msg || typeof msg !== "object") return false;
+        if (msg.type === "SPARK_OTP_DIAGNOSE_PAGE") {
+          const report = diagnosePageDom();
+          const isIframe = (typeof window !== "undefined" && window.top && window.self !== window.top);
+          if (isIframe) {
+            if (report.otp_input_count > 0 || (report.candidates && report.candidates.length > 0)) {
+              sendResponse({ ok: true, report });
+            }
+            return false;
+          }
+          if (report.otp_input_count > 0 || (report.candidates && report.candidates.length > 0)) {
+            sendResponse({ ok: true, report });
+            return false;
+          }
+          setTimeout(() => {
+            sendResponse({ ok: true, report });
+          }, 45);
+          return true;
+        }
+        if (msg.type === "SPARK_OTP_TEST_SAMPLE") {
+          const result = diagnoseSyntheticSample(msg.sample || {});
+          sendResponse({ ok: true, result });
+          return false;
+        }
+        return false;
+      });
     }
 
     // Immediate user feedback upon clicking / tabbing into an actual OTP input field
