@@ -1051,6 +1051,54 @@ Su pedido con número de referencia 549120 ha salido del almacén.
         res_track = extract_otp_from_thread(raw_track, now=now)
         self.assertIsNone(res_track)
 
+    def test_self_hosted_subdomain_and_phonetic_brand_reconciliation(self):
+        """
+        Verify self-hosted apps on custom subdomains (e.g. multika.example.com)
+        whose emails arrive from a third-party SMTP relay domain (e.g. notification@relay.example.org)
+        with phonetic spelling variation ('Multica' vs 'multika') and multiline standalone code blocks.
+        """
+        now = datetime(2026, 4, 15, 2, 23)
+        raw = """
+ID: 736525
+Subject: [Multica] Verification Code
+From: Multica <notification@relay.example.org>
+To: alex.turner@example.com
+Date: 2026-04-15 02:21
+Type: Email
+
+Multica
+
+Your verification code
+
+291240
+
+This code expires in 10 minutes. If you didn't request this, you can safely ignore this email.
+"""
+        # 1. Subdomain phonetic match: multika.example.com <-> Multica
+        res = extract_otp_from_thread(raw, domain_filter="multika.example.com", now=now)
+        self.assertIsNotNone(res)
+        self.assertEqual(res.code, "291240")
+        self.assertEqual(res.service, "multica_auth")
+
+        # 2. Custom vanity domain with page brand_hint ("Sign in to Multica")
+        res_hint = extract_otp_from_thread(
+            raw,
+            domain_filter="issues.internal-portal.org",
+            brand_hint="Multika Login | Sign in to Multica",
+            now=now
+        )
+        self.assertIsNotNone(res_hint)
+        self.assertEqual(res_hint.code, "291240")
+
+        # 3. Adversarial check: unrelated domain without matching subdomain or brand hint must NOT match
+        res_unrelated = extract_otp_from_thread(
+            raw,
+            domain_filter="stripe.com",
+            brand_hint="Stripe Dashboard Sign In",
+            now=now
+        )
+        self.assertIsNone(res_unrelated)
+
 if __name__ == "__main__":
     unittest.main()
 

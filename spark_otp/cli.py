@@ -20,6 +20,7 @@ def main():
     get_parser = subparsers.add_parser("get", help="Get the latest OTP code")
     get_parser.add_argument("--domain", "-d", help="Filter by target website domain (e.g. dashboard.stripe.com)")
     get_parser.add_argument("--account", "-A", help="Filter by specific email account (e.g. alex.turner@example.com)")
+    get_parser.add_argument("--hint", help="Optional page brand/title hint for custom self-hosted domains")
     get_parser.add_argument("--max-age", "-a", type=int, default=600, help="Max code age in seconds (default: 600)")
     get_parser.add_argument("--allow-expired", action="store_true", help="Allow returning expired OTP codes")
     get_parser.add_argument("--no-fallback-expired", action="store_false", dest="fallback_expired", default=True, help="Disable fallback to expired OTP when domain is queried")
@@ -34,6 +35,7 @@ def main():
     watch_parser = subparsers.add_parser("watch", help="Watch for incoming OTP codes in terminal")
     watch_parser.add_argument("--domain", "-d", help="Filter by target website domain")
     watch_parser.add_argument("--account", "-A", help="Filter by specific email account")
+    watch_parser.add_argument("--hint", help="Optional page brand/title hint for custom self-hosted domains")
     watch_parser.add_argument("--interval", "-i", type=float, default=2.0, help="Check interval in seconds")
     watch_parser.add_argument("--allow-expired", action="store_true", help="Allow returning expired OTP codes")
     watch_parser.add_argument("--exit-on-match", "-1", action="store_true", help="Exit immediately upon first match")
@@ -72,6 +74,7 @@ def main():
     diag_parser.add_argument("--target", "-t", dest="target_opt", help="Target website URL or domain")
     diag_parser.add_argument("--domain", "-d", help="Filter by target website domain")
     diag_parser.add_argument("--account", "-A", help="Filter by specific email account")
+    diag_parser.add_argument("--hint", help="Optional page brand/title hint for custom self-hosted domains")
     diag_parser.add_argument("--dom-sample", help="JSON or text sample of a DOM input/form to evaluate against the SSOT DOM detection engine")
     diag_parser.add_argument("--allow-expired", action="store_true", help="Include expired codes in resolution")
     diag_parser.add_argument("--json", action="store_true", help="Output full JSON diagnosis")
@@ -81,6 +84,7 @@ def main():
     if not args.command or args.command == "get":
         domain = getattr(args, "domain", None)
         account = getattr(args, "account", None)
+        brand_hint = getattr(args, "hint", None)
         max_age = getattr(args, "max_age", 600)
         as_json = getattr(args, "json", False)
         allow_expired = getattr(args, "allow_expired", False)
@@ -97,6 +101,7 @@ def main():
             account=account,
             allow_expired=allow_expired,
             fallback_expired=fallback_expired if domain else False,
+            brand_hint=brand_hint,
         )
         if not otp:
             if as_json:
@@ -205,12 +210,13 @@ def main():
     elif args.command == "diagnose":
         target = getattr(args, "target_opt", None) or args.target or args.domain or ""
         account = args.account
+        brand_hint = getattr(args, "hint", None)
         dom_sample = getattr(args, "dom_sample", None)
         allow_expired = args.allow_expired
         as_json = args.json
 
         client = SparkClient()
-        diag = client.diagnose(target=target, account=account, allow_expired=allow_expired, dom_sample=dom_sample)
+        diag = client.diagnose(target=target, account=account, allow_expired=allow_expired, dom_sample=dom_sample, brand_hint=brand_hint)
 
         if as_json:
             print(json.dumps(diag, indent=2))

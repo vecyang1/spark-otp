@@ -1996,6 +1996,140 @@ class TestDomDetection(unittest.TestCase):
         self.assertTrue(email_res.get("qualified"))
         self.assertEqual(email_res.get("channel"), "email_otp")
 
+    def test_passwordless_email_login_step_and_brand_hint_detection(self):
+        """
+        Verify that passwordless Email-OTP login screens (Step 1, e.g. 'Sign in to Multica / Enter your email to get a login code')
+        are detected by findEmailInput() and diagnosePageDom() as 'email_login_step',
+        while standard email+password login forms are NOT falsely flagged as passwordless OTP steps.
+        Also verify detectPageBrandHint() and buildApiQuery() include the page brand hint.
+        """
+        js_code = """
+        const fs = require('fs');
+        const vm = require('vm');
+        const contentJs = fs.readFileSync('extension/content.js', 'utf8');
+        const userJs = fs.readFileSync('userscript/spark-otp.user.js', 'utf8');
+
+        function extractSsoEngine(src) {
+            const startMarker = '// === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===';
+            const endMarker = '// === END CORE DOM DETECTION ENGINE (SSOT) ===';
+            return src.slice(src.indexOf(startMarker), src.indexOf(endMarker) + endMarker.length);
+        }
+
+        function runScenario(scriptSrc, hasPasswordInput) {
+            const emailInput = {
+                tagName: 'INPUT',
+                type: 'email',
+                id: 'login-email',
+                name: 'email',
+                placeholder: 'you@example.com',
+                value: '',
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                getAttribute(k) {
+                    const map = { type: 'email', id: 'login-email', name: 'email', placeholder: 'you@example.com' };
+                    return map[k] || null;
+                },
+                getBoundingClientRect() { return { width: 300, height: 40, top: 100, left: 100 }; }
+            };
+            const pwdInput = {
+                tagName: 'INPUT',
+                type: 'password',
+                id: 'login-password',
+                name: 'password',
+                value: '',
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                getAttribute(k) { return k === 'type' ? 'password' : null; },
+                getBoundingClientRect() { return { width: 300, height: 40, top: 150, left: 100 }; }
+            };
+            const cardContainer = {
+                textContent: hasPasswordInput
+                    ? 'Sign in to ExampleEnter your email and password'
+                    : 'Sign in to MulticaEnter your email to get a login codeEmailContinue',
+                querySelectorAll(sel) {
+                    if (sel.includes('password')) return hasPasswordInput ? [pwdInput] : [];
+                    return [];
+                }
+            };
+            emailInput.closest = (sel) => {
+                if (sel.includes('nav') || sel.includes('cookie')) return null;
+                return cardContainer;
+            };
+            pwdInput.closest = () => cardContainer;
+
+            const headingEl = { textContent: 'Sign in to Multica' };
+            const allInputs = hasPasswordInput ? [emailInput, pwdInput] : [emailInput];
+
+            const mockDoc = {
+                title: 'Multika Login',
+                body: { textContent: cardContainer.textContent, innerText: cardContainer.textContent },
+                querySelector(sel) {
+                    if (sel.includes('login-email') || sel.includes('email')) return emailInput;
+                    return null;
+                },
+                querySelectorAll(sel) {
+                    if (sel.includes('card-title') || sel.includes('h1')) return [headingEl];
+                    if (sel.includes('login-email') || sel.includes('email')) return [emailInput];
+                    if (sel.startsWith('input:not')) return allInputs;
+                    return [];
+                }
+            };
+
+            const sandbox = {
+                window: {
+                    location: { hostname: 'multika.example.com', pathname: '/login', search: '', hash: '', href: 'https://multika.example.com/login' },
+                    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' })
+                },
+                document: mockDoc,
+                URL,
+                 console
+            };
+            sandbox.window.top = sandbox.window;
+            sandbox.window.self = sandbox.window;
+
+            const ctx = vm.createContext(sandbox);
+            vm.runInContext(extractSsoEngine(scriptSrc), ctx);
+
+            const foundEmail = ctx.findEmailInput();
+            const diag = ctx.diagnosePageDom();
+            const query = ctx.buildApiQuery('multika.example.com', 'alex.turner@example.com');
+            return {
+                foundEmailId: foundEmail ? foundEmail.id : null,
+                channel: diag.detected_channel,
+                ruleId: diag.page_rule_id,
+                emailDetected: diag.email_input_detected,
+                brandHint: diag.brand_hint,
+                query
+            };
+        }
+
+        console.log(JSON.stringify({
+            extPasswordless: runScenario(contentJs, false),
+            extWithPassword: runScenario(contentJs, true),
+            userPasswordless: runScenario(userJs, false),
+            userWithPassword: runScenario(userJs, true)
+        }));
+        """
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        for key in ("extPasswordless", "userPasswordless"):
+            res = data[key]
+            self.assertEqual(res["foundEmailId"], "login-email")
+            self.assertEqual(res["channel"], "email_login_step")
+            self.assertEqual(res["ruleId"], "passwordless_email_step")
+            self.assertTrue(res["emailDetected"])
+            self.assertIn("Sign in to Multica", res["brandHint"])
+            self.assertIn("hint=", res["query"])
+
+        for key in ("extWithPassword", "userWithPassword"):
+            res = data[key]
+            self.assertIsNone(res["foundEmailId"], "Standard email+password form must NOT be flagged as passwordless email-OTP step")
+            self.assertEqual(res["channel"], "none")
+
 if __name__ == "__main__":
     unittest.main()
 

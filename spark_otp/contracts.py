@@ -10,7 +10,7 @@ OPENAPI_SPEC: Dict[str, Any] = {
     "info": {
         "title": "Spark OTP Bridge API",
         "description": "Local zero-LLM high-speed OTP extraction bridge for Spark Desktop",
-        "version": "1.6.0"
+        "version": "1.6.1"
     },
     "servers": [
         {"url": "http://127.0.0.1:9428", "description": "Localhost Daemon"}
@@ -98,6 +98,13 @@ OPENAPI_SPEC: Dict[str, Any] = {
                         "required": False,
                         "schema": {"type": "boolean", "default": False},
                         "description": "If true, returns expired OTP if no active code exists (flagged with is_expired=True)"
+                    },
+                    {
+                        "name": "hint",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                        "description": "Optional page brand or heading hint for custom self-hosted domains"
                     }
                 ],
                 "responses": {
@@ -166,6 +173,13 @@ OPENAPI_SPEC: Dict[str, Any] = {
                         "required": False,
                         "schema": {"type": "boolean", "default": False},
                         "description": "If true, streams expired OTP if no active code exists (flagged with is_expired=True)"
+                    },
+                    {
+                        "name": "hint",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                        "description": "Optional page brand or heading hint for custom self-hosted domains"
                     }
                 ],
                 "responses": {
@@ -249,6 +263,13 @@ OPENAPI_SPEC: Dict[str, Any] = {
                         "required": False,
                         "schema": {"type": "boolean"},
                         "description": "Include expired OTP codes in diagnostic resolution"
+                    },
+                    {
+                        "name": "hint",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "string"},
+                        "description": "Optional page brand or heading hint for custom self-hosted domains"
                     }
                 ],
                 "responses": {

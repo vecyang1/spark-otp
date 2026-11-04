@@ -198,6 +198,92 @@ def get_domain_brand(domain: str) -> str:
 
     return parts[-2]
 
+GENERIC_HINT_STOPWORDS = {
+    "sign", "signin", "signing", "log", "login", "logging", "logged", "continue", "welcome",
+    "verify", "verification", "security", "code", "passcode", "otp", "two", "factor", "2fa",
+    "totp", "auth", "authentication", "authenticate", "account", "accounts", "portal",
+    "dashboard", "console", "admin", "app", "application", "web", "website", "site", "page",
+    "home", "enter", "your", "email", "address", "get", "send", "sent", "with", "for", "from",
+    "the", "and", "into", "onto", "back", "next", "step", "one", "time", "password", "magic",
+    "link", "session", "user", "member", "client", "server", "cloud", "workspace", "issues",
+    "projects", "settings", "localhost", "http", "https", "com", "org", "net", "io", "ai"
+}
+
+def _expand_phonetic_brand_variants(token: str) -> List[str]:
+    """Generate phonetic C/K spelling variants for app/brand tokens (e.g. 'multika' <-> 'multica')."""
+    t = re.sub(r"[^a-z0-9]", "", (token or "").lower())
+    if not t:
+        return []
+    variants = [t]
+    if len(t) >= 5:
+        for src, dst in (("ka", "ca"), ("ca", "ka"), ("ko", "co"), ("co", "ko"), ("ku", "cu"), ("cu", "ku")):
+            if src in t:
+                v = t.replace(src, dst)
+                if v not in variants:
+                    variants.append(v)
+        if t.endswith("ik"):
+            v = t[:-2] + "ic"
+            if v not in variants:
+                variants.append(v)
+        elif t.endswith("ic"):
+            v = t[:-2] + "ik"
+            if v not in variants:
+                variants.append(v)
+    return variants
+
+def get_domain_tokens(domain: str) -> List[str]:
+    """
+    Extract primary root brand AND non-generic subdomain application tokens (plus phonetic variants)
+    from a hostname so self-hosted subdomain deployments reconcile with application brand tokens.
+    """
+    d = clean_domain(domain)
+    if not d:
+        return []
+    brand = get_domain_brand(d)
+    parts = d.split(".")
+    tokens: List[str] = []
+    if brand:
+        for v in _expand_phonetic_brand_variants(brand):
+            if v not in tokens:
+                tokens.append(v)
+
+    # Extract subdomain labels preceding the root brand
+    if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in SECOND_LEVEL_TLDS:
+        sub_parts = parts[:-3]
+    elif len(parts) >= 3:
+        sub_parts = parts[:-2]
+    else:
+        sub_parts = []
+
+    for sub in sub_parts:
+        sub_clean = sub.strip().lower()
+        if (
+            len(sub_clean) >= 3
+            and sub_clean not in COMMON_SERVICE_SUBDOMAINS
+            and sub_clean not in COMMON_SUBDOMAINS
+            and sub_clean not in COMMON_TLDS
+        ):
+            for v in _expand_phonetic_brand_variants(sub_clean):
+                if v not in tokens:
+                    tokens.append(v)
+    return tokens
+
+def extract_brand_hint_tokens(brand_hint: Optional[str]) -> List[str]:
+    """Extract candidate brand/service tokens from a page title or login heading (e.g. 'Sign in to Multica' -> ['multica', 'multika'])."""
+    if not brand_hint:
+        return []
+    raw_words = re.findall(r"[a-zA-Z0-9]{3,}", brand_hint.lower())
+    tokens: List[str] = []
+    for w in raw_words:
+        if w in GENERIC_HINT_STOPWORDS or w in COMMON_SERVICE_SUBDOMAINS or w in COMMON_TLDS:
+            continue
+        if w.isdigit():
+            continue
+        for v in _expand_phonetic_brand_variants(w):
+            if v not in tokens:
+                tokens.append(v)
+    return tokens
+
 def parse_email_date(date_str: str) -> Optional[datetime]:
     """Parse date string commonly emitted by Spark CLI."""
     date_str = date_str.strip()
@@ -247,15 +333,18 @@ def domain_matches(
     associated_domains: Optional[List[str]],
     sender: str,
     subject: str,
-    thread_text: str
+    thread_text: str,
+    brand_hint: Optional[str] = None,
 ) -> bool:
-    """Match page domain against rule metadata and email text."""
+    """Match page domain (including subdomain app tokens and optional page brand hints) against rule metadata and email text."""
     if not domain_filter:
         return True
 
     df_clean = clean_domain(domain_filter)
     brand = get_domain_brand(df_clean)
     root_domain = get_root_domain(df_clean)
+    domain_tokens = get_domain_tokens(df_clean)
+    hint_tokens = extract_brand_hint_tokens(brand_hint)
 
     # 1. If rule explicitly binds an extracted domain from subject (e.g. Cloudflare Access)
     if extracted_domain:
@@ -279,7 +368,14 @@ def domain_matches(
         for ad in associated_domains:
             ad_clean = clean_domain(ad)
             ad_root = get_root_domain(ad_clean)
-            if df_clean == ad_clean or df_clean.endswith("." + ad_clean) or ad_clean.endswith("." + df_clean) or root_domain == ad_root or (len(brand) >= 3 and brand in ad_clean):
+            if (
+                df_clean == ad_clean
+                or df_clean.endswith("." + ad_clean)
+                or ad_clean.endswith("." + df_clean)
+                or root_domain == ad_root
+                or (len(brand) >= 3 and brand in ad_clean)
+                or any(tok == ad_clean or (len(tok) >= 4 and tok in ad_clean) for tok in domain_tokens + hint_tokens)
+            ):
                 return True
 
     # 3. Direct visiting domain substring match
@@ -287,7 +383,7 @@ def domain_matches(
     if df_clean in corpus:
         return True
 
-    # 4. Brand match (verifying no conflicting tenant subdomain)
+    # 4. Brand, subdomain app token, and page brand hint match (verifying no conflicting tenant subdomain)
     if len(brand) >= 3:
         conflicting_domains = set(re.findall(r"([a-z0-9\.-]+\." + re.escape(root_domain) + r")", corpus))
         # If the visiting domain itself is explicitly present in the email, it is an explicit match, not a conflict
@@ -316,6 +412,13 @@ def domain_matches(
         if (re.match(r"^(bwh\d*|bawagon)$", brand) or brand in ("bawagon", "bandwagon")) and any(alias in sender_clean or alias in subject_clean or alias in text_clean for alias in ("bandwagon", "bawagon", "64clouds", "kiwivm")):
             return True
 
+        # Check non-generic subdomain tokens (e.g. 'multika' / 'multica' from 'multika.example.com') and page brand hints
+        for tok in domain_tokens + hint_tokens:
+            if tok == brand_clean or len(tok) < 4:
+                continue
+            if re.search(r"(?i)\b" + re.escape(tok) + r"\b", corpus) or tok in subject_clean or tok in sender_clean:
+                return True
+
     return False
 
 def clean_extracted_code(code_str: str) -> str:
@@ -342,6 +445,7 @@ def extract_universal_otp(
     now: Optional[datetime] = None,
     max_age_seconds: int = 600,
     allow_expired: bool = False,
+    brand_hint: Optional[str] = None,
 ) -> Optional[OTPResult]:
     """Universal intelligent fallback OTP matcher based on proximity, keyword analysis, and markdown normalization."""
     thread_text = unicodedata.normalize("NFKC", thread_text)
@@ -369,7 +473,8 @@ def extract_universal_otp(
             associated_domains=None,
             sender=sender,
             subject=subject,
-            thread_text=thread_text
+            thread_text=thread_text,
+            brand_hint=brand_hint,
         ):
             return None
 
@@ -540,6 +645,7 @@ def extract_otp_from_thread(
     now: Optional[datetime] = None,
     max_age_seconds: int = 600,
     allow_expired: bool = False,
+    brand_hint: Optional[str] = None,
 ) -> Optional[OTPResult]:
     """
     Extract OTP from full thread text matching against rules and domain.
@@ -595,7 +701,8 @@ def extract_otp_from_thread(
             associated_domains=rule.associated_domains,
             sender=sender,
             subject=subject,
-            thread_text=thread_text
+            thread_text=thread_text,
+            brand_hint=brand_hint,
         ):
             continue
 
@@ -655,5 +762,6 @@ def extract_otp_from_thread(
         domain_filter=domain_filter,
         now=now,
         max_age_seconds=max_age_seconds,
-        allow_expired=allow_expired
+        allow_expired=allow_expired,
+        brand_hint=brand_hint,
     )

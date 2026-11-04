@@ -609,6 +609,34 @@ Date: {dt_str}
         self.assertFalse(cand["domain_match"])
         self.assertIsNone(diag["resolved_otp"])
 
+    def test_sqlite_self_hosted_subdomain_phonetic_and_multiline_code(self):
+        """
+        Verify SQLite search and diagnose resolve self-hosted subdomain (multika.example.com)
+        when the email sender is a relay domain (notification@relay.example.org) and the subject/sender
+        uses phonetic brand spelling ('Multica') with a multiline standalone code block.
+        """
+        now = datetime.now()
+        ts_now = int(now.timestamp())
+        insert_mock_message(
+            self.db_path,
+            pk=736525,
+            sender="Multica <notification@relay.example.org>",
+            recipient="alex.turner@example.com",
+            subject="[Multica] Verification Code",
+            short_body="Multica\n\nYour verification code\n\n291240\n\nThis code expires in 10 minutes.",
+            received_ts=ts_now - 45
+        )
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+        otp = client.get_latest_otp(domain="multika.example.com", now=now)
+        self.assertIsNotNone(otp)
+        self.assertEqual(otp.code, "291240")
+        self.assertEqual(otp.service, "multica_auth")
+
+        diag = client.diagnose(target="multika.example.com", brand_hint="Sign in to Multica", now=now)
+        self.assertIsNotNone(diag["resolved_otp"])
+        self.assertEqual(diag["resolved_otp"]["code"], "291240")
+        self.assertTrue(diag["verdict"].startswith("SUCCESS"))
+
 if __name__ == "__main__":
     unittest.main()
 

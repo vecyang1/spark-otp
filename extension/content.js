@@ -54,7 +54,9 @@
       notFound: "Not found",
       offline: "Offline",
       readyToSend: "Ready to send code to {email}",
+      emailStepDetected: "Passwordless email login detected — enter email or click Send Code",
       sendCode: "Send Code",
+      watchOtp: "Watch OTP",
       sparkLogin: "Spark Login",
       forceFill: "Force Fill",
       disableSite: "Disable on this site",
@@ -81,7 +83,9 @@
       notFound: "未找到",
       offline: "离线",
       readyToSend: "准备发送验证码到 {email}",
+      emailStepDetected: "已检测到邮箱验证码登录步骤 — 请输入邮箱或点击发送",
       sendCode: "发送验证码",
+      watchOtp: "监听验证码",
       sparkLogin: "Spark 登录",
       forceFill: "强制填充",
       disableSite: "在此网站禁用",
@@ -192,6 +196,31 @@
       return match[1];
     }
     return host || "localhost";
+  }
+
+  // Extract concise brand/title context hint from page DOM (helps reconcile custom/self-hosted domains with brand emails)
+  function detectPageBrandHint() {
+    try {
+      if (typeof document === "undefined") return "";
+      const parts = [];
+      if (document.title && typeof document.title === "string") {
+        const cleanTitle = document.title.trim();
+        if (cleanTitle) parts.push(cleanTitle);
+      }
+      if (typeof document.querySelectorAll === "function") {
+        const headings = document.querySelectorAll('h1, h2, h3, [data-slot="card-title"], [class*="card-title" i], .Headline');
+        for (const el of headings) {
+          const txt = (el.textContent || "").trim().replace(/\s+/g, " ");
+          if (txt && txt.length >= 2 && txt.length <= 80 && !parts.includes(txt)) {
+            parts.push(txt);
+            if (parts.length >= 3) break;
+          }
+        }
+      }
+      return parts.join(" | ").slice(0, 120);
+    } catch (e) {
+      return "";
+    }
   }
 
   // Storage helper using sessionStorage (with in-memory fallback)
@@ -399,6 +428,12 @@
     let q = `domain=${encodeURIComponent(domain)}`;
     if (account) {
       q += `&account=${encodeURIComponent(account)}`;
+    }
+    if (typeof detectPageBrandHint === "function") {
+      const hint = detectPageBrandHint();
+      if (hint) {
+        q += `&hint=${encodeURIComponent(hint)}`;
+      }
     }
     const state = getAuthState(domain);
     if (state.failedCodes && state.failedCodes.length > 0) {
@@ -762,6 +797,11 @@
     const webUrls = /(?:website|web[-_ ]*url|domain|homepage|site[-_ ]*url|company[-_ ]*url|company[-_ ]*website|\burl\b|repo|github|handoff|persona|switch[-_ ]*device|continue[-_ ]*on|send[-_ ]*email|\blink\b|copy[-_ ]*link|share[-_ ]*link)/i;
     if (webUrls.test(combined) || /^https?:\/\/|^www\./i.test(placeholder) || (el.value && (/^https?:\/\/|^www\./i.test(el.value.trim()) || webUrls.test(el.value)))) {
       return finish(true, "web_url_or_handoff", "Website, URL, or device handoff link input", "none");
+    }
+
+    // Email address or username input fields (HTML5 type="email" or autocomplete="email"/"username") are never OTP code inputs
+    if (type === "email" || auto === "email" || auto === "username") {
+      return finish(true, "email_address_field", "Email address or username input field", "none");
     }
 
     // Segmented 1-char input (already passed Card, Authenticator App, SMS, and Promo/Zip gates above)
@@ -1279,7 +1319,7 @@
 
     const textNodes = Array.from(document.querySelectorAll("p, div, span, b, strong, em, td, li, h1, h2, h3, h4, section, main, article"));
     for (const node of textNodes) {
-      if (node.children.length > 5) continue;
+      if (node.children && node.children.length > 5) continue;
       const text = node.textContent || "";
       if (text.length > 500) continue;
 
@@ -1352,16 +1392,50 @@
     return null;
   }
 
-  // Find Email input field on page (primarily for Cloudflare Access or passwordless auth)
+  // Find Email input field on page (for Cloudflare Access and passwordless Email-OTP login steps)
   function findEmailInput() {
-    const isAuthPage = (typeof window !== "undefined" && window.location && window.location.hostname && window.location.hostname.includes("cloudflareaccess.com")) ||
-                       document.querySelector('form[action*="access" i], form[id*="totp" i]');
-    if (!isAuthPage) return null;
+    if (typeof document === "undefined" || !document.querySelector) return null;
+    const isCloudflareOrTotpForm = Boolean(
+      (typeof window !== "undefined" && window.location && window.location.hostname && window.location.hostname.includes("cloudflareaccess.com")) ||
+      document.querySelector('form[action*="access" i], form[id*="totp" i]')
+    );
 
-    const selectors = ['input#email', 'input[name="email"]', 'input[type="email"]', '.EmailInput'];
+    const selectors = ['input#login-email', 'input#email', 'input[name="email"]', 'input[type="email"]', 'input[autocomplete="email"]', '.EmailInput'];
+    const emailOtpStepRegex = /(?:enter\s+your\s+email\s+to\s+get\s+a\s+(?:login\s+|verification\s+|one-time\s+)?code|get\s+a\s+(?:login\s+|verification\s+|one-time\s+)?code|send\s+(?:a\s+|me\s+a\s+)?(?:login\s+|verification\s+|one-time\s+|security\s+)?code|email\s+(?:you\s+|me\s+)?a\s+(?:login\s+|verification\s+|one-time\s+)?code|sign\s+in\s+with\s+(?:email\s+)?code|continue\s+with\s+email\s+code|receive\s+a\s+(?:login\s+|verification\s+)?code|we(?:'ll|\s+will)\s+send\s+a\s+(?:login\s+|verification\s+)?code|获取验证码|发送验证码|邮箱验证码登录|发送登录码)/i;
+
     for (const sel of selectors) {
-      const el = document.querySelector(sel);
-      if (el && el.offsetParent !== null) return el;
+      const candidates = typeof document.querySelectorAll === "function"
+        ? Array.from(document.querySelectorAll(sel))
+        : [document.querySelector(sel)].filter(Boolean);
+      for (const el of candidates) {
+        if (!el) continue;
+        const visible = (typeof isInteractiveElement === "function") ? isInteractiveElement(el) : (el.offsetParent !== null);
+        if (!visible) continue;
+        if (isCloudflareOrTotpForm) return el;
+
+        // Check if this email input belongs to a passwordless Email-OTP login step (no visible password field in same form/card)
+        const cardContainer = el.closest ? el.closest('[data-slot="card"], .card, [role="dialog"], .login-card, .auth-card, main') : null;
+        const formContainer = (el.closest ? el.closest('form') : null) || el.form || el.parentElement;
+        const scopeContainers = [cardContainer, formContainer].filter(Boolean);
+        if (scopeContainers.length === 0) continue;
+
+        let hasVisiblePassword = false;
+        let combinedScopeText = "";
+        for (const sc of scopeContainers) {
+          if (sc.querySelectorAll) {
+            const pwdInputs = Array.from(sc.querySelectorAll('input[type="password"]'));
+            if (pwdInputs.some(p => (typeof isInteractiveElement === "function") ? isInteractiveElement(p) : (p.offsetParent !== null))) {
+              hasVisiblePassword = true;
+              break;
+            }
+          }
+          combinedScopeText += " " + ((sc.textContent || "").replace(/\s+/g, " ").trim());
+        }
+        if (hasVisiblePassword) continue;
+        if (emailOtpStepRegex.test(combinedScopeText)) {
+          return el;
+        }
+      }
     }
     return null;
   }
@@ -1528,16 +1602,22 @@
     };
 
     setTimeout(() => {
-      // 1. Look for enclosing form only (do not blindly match search or unrelated forms)
+      // 1. Look for enclosing form (including external buttons linked via HTML5 form="form-id" in CardFooter)
       const form = targetElement.closest("form") || document.getElementById("totp-form");
       if (form) {
-        const allSubmitBtns = Array.from(form.querySelectorAll('button[type="submit"], input[type="submit"], button:not([type]), input[type="button"], [role="button"], a.btn, a.button, a[class*="btn" i], a[class*="button" i]'));
+        const externalBtns = (form.id && typeof document !== "undefined" && document.querySelectorAll)
+          ? Array.from(document.querySelectorAll(`button[form="${form.id}"], input[form="${form.id}"]`))
+          : [];
+        const allSubmitBtns = [
+          ...Array.from(form.querySelectorAll('button[type="submit"], input[type="submit"], button:not([type]), input[type="button"], [role="button"], a.btn, a.button, a[class*="btn" i], a[class*="button" i]')),
+          ...externalBtns
+        ];
         const verifySubmit = allSubmitBtns.find(b => checkVerifyBtn(b) && !b.disabled);
         if (verifySubmit) {
           verifySubmit.click();
           return;
         }
-        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]') || externalBtns.find(b => !b.disabled);
         if (submitBtn && !submitBtn.disabled) {
           submitBtn.click();
           return;
@@ -1635,17 +1715,31 @@
   }
 
   function fillEmailAndSubmit(email) {
+    if (!email) return;
     const input = findEmailInput();
     if (!input) return;
+    const domain = detectTargetDomain();
+    if (domain) {
+      setStorageItem("spark_otp_last_email_" + domain, email);
+    }
     const setValueFn = (typeof setInputValueWithReactSupport === "function") ? setInputValueWithReactSupport : setInputValue;
     setValueFn(input, email);
 
     setTimeout(() => {
       const form = input.closest("form") || document.getElementById("totp-form");
       if (form) {
-        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
-        if (submitBtn) submitBtn.click();
-        else form.submit();
+        const externalBtn = (form.id && typeof document !== "undefined" && document.querySelector)
+          ? document.querySelector(`button[form="${form.id}"][type="submit"], input[form="${form.id}"][type="submit"], button[form="${form.id}"]`)
+          : null;
+        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"], button:not([type])') || externalBtn;
+        if (submitBtn && !submitBtn.disabled) {
+          submitBtn.click();
+          return;
+        }
+        if (typeof form.requestSubmit === "function") {
+          try { form.requestSubmit(); return; } catch (e) {}
+        }
+        form.submit();
       }
     }, 250);
   }
@@ -1708,6 +1802,8 @@
     const domainDisabled = typeof isDomainDisabled === "function" ? isDomainDisabled(domain) : false;
     const detectedEmail = findEmailOnPage();
     const otpInputs = findOtpInputs();
+    const emailInput = typeof findEmailInput === "function" ? findEmailInput() : null;
+    const brandHint = typeof detectPageBrandHint === "function" ? detectPageBrandHint() : "";
 
     const allInputs = (typeof document !== "undefined" && document.querySelectorAll)
       ? Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"])'))
@@ -1722,14 +1818,21 @@
       if (typeof isInteractiveElement === "function" && !isInteractiveElement(inp)) continue;
       const diag = diagnoseDomInput(inp);
       const isSelectedOtp = otpInputs.includes(inp);
+      const isEmailLoginStepInput = !isSelectedOtp && otpInputs.length === 0 && emailInput === inp;
       candidateDiagnostics.push({
         label: diag.label,
         input_summary: diag.input_summary,
-        qualified: isSelectedOtp,
-        disqualified: diag.disqualified,
-        channel: isSelectedOtp ? "email_otp" : diag.channel,
-        rule_id: isSelectedOtp ? diag.rule_id : (diag.disqualified ? diag.rule_id : "not_matched_by_selectors"),
-        reason: isSelectedOtp ? diag.reason : (diag.disqualified ? diag.reason : "Input not disqualified, but lacks OTP selector affinity")
+        qualified: isSelectedOtp || isEmailLoginStepInput,
+        disqualified: isEmailLoginStepInput ? false : diag.disqualified,
+        channel: isSelectedOtp ? "email_otp" : (isEmailLoginStepInput ? "email_login_step" : diag.channel),
+        rule_id: isSelectedOtp
+          ? diag.rule_id
+          : (isEmailLoginStepInput ? "passwordless_email_step" : (diag.disqualified ? diag.rule_id : "not_matched_by_selectors")),
+        reason: isSelectedOtp
+          ? diag.reason
+          : (isEmailLoginStepInput
+              ? "Passwordless Email-OTP login step (Step 1) — ready to send code or watch for OTP"
+              : (diag.disqualified ? diag.reason : "Input not disqualified, but lacks OTP selector affinity"))
       });
       if (diag.disqualified && ["card_payment_blocked", "authenticator_app_blocked", "sms_only_blocked", "custom_blocked"].includes(diag.channel)) {
         if (!primaryBlockedChannel) {
@@ -1757,6 +1860,10 @@
       pageChannel = primaryBlockedChannel;
       pageRuleId = primaryBlockedRule;
       pageVerdict = primaryBlockedReason;
+    } else if (emailInput) {
+      pageChannel = "email_login_step";
+      pageRuleId = "passwordless_email_step";
+      pageVerdict = "Passwordless Email Login step detected — ready to prefill email or watch for OTP";
     }
 
     return {
@@ -1767,6 +1874,8 @@
       email_only_mode: typeof emailOnlyMode === "boolean" ? emailOnlyMode : true,
       custom_blocked_terms: typeof customBlockedTerms !== "undefined" && Array.isArray(customBlockedTerms) ? customBlockedTerms : [],
       detected_email: detectedEmail || null,
+      brand_hint: brandHint || null,
+      email_input_detected: Boolean(emailInput),
       otp_input_count: otpInputs.length,
       detected_channel: pageChannel,
       page_channel: pageChannel,
@@ -1778,6 +1887,68 @@
   }
 
   // === END CORE DOM DETECTION ENGINE (SSOT) ===
+
+  let resolvedAutoEmail = "";
+  let currentPillState = "hidden";
+
+  async function daemonFetchJson(url) {
+    if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
+      try {
+        const proxyRes = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({ type: "SPARK_OTP_PROXY_FETCH", url }, (resp) => {
+            if (chrome.runtime && chrome.runtime.lastError) {
+              resolve(null);
+              return;
+            }
+            resolve(resp || null);
+          });
+        });
+        if (proxyRes && proxyRes.ok && proxyRes.data) {
+          return { ok: true, data: proxyRes.data };
+        }
+      } catch (e) {}
+    }
+    const res = await fetch(url, { cache: "no-store" });
+    if (res.ok) {
+      const data = await res.json();
+      return { ok: true, data };
+    }
+    return { ok: false, data: null };
+  }
+
+  async function resolvePreferredEmail(domain) {
+    const d = domain || detectTargetDomain();
+    const remembered = d ? getStorageItem("spark_otp_last_email_" + d) : null;
+    if (defaultEmail) return defaultEmail;
+    if (selectedAccount) return selectedAccount;
+    if (remembered) return remembered;
+    if (resolvedAutoEmail) return resolvedAutoEmail;
+    try {
+      const res = await daemonFetchJson(`http://127.0.0.1:${serverPort}/api/accounts`);
+      if (res.ok && res.data && Array.isArray(res.data.accounts) && res.data.accounts.length > 0) {
+        resolvedAutoEmail = res.data.accounts[0];
+        return resolvedAutoEmail;
+      }
+    } catch (e) {}
+    return "";
+  }
+
+  function bindEmailStepCapture(emailInput, domain) {
+    if (!emailInput || emailInput.dataset.sparkOtpBound === "1") return;
+    emailInput.dataset.sparkOtpBound = "1";
+    const d = domain || detectTargetDomain();
+    const saveEmail = () => {
+      const val = (emailInput.value || "").trim();
+      if (val && val.includes("@") && d) {
+        setStorageItem("spark_otp_last_email_" + d, val);
+      }
+    };
+    emailInput.addEventListener("change", saveEmail, { passive: true });
+    const form = emailInput.closest ? emailInput.closest("form") : emailInput.form;
+    if (form) {
+      form.addEventListener("submit", saveEmail, { passive: true });
+    }
+  }
 
   function getOrCreatePill() {
     let container = document.getElementById("spark-otp-pill-container");
@@ -1794,6 +1965,7 @@
     if (window.self !== window.top && (window.innerHeight < 100 || window.innerWidth < 150)) {
       return;
     }
+    currentPillState = state;
     const container = getOrCreatePill();
     if (state === "hidden") {
       container.style.display = "none";
@@ -1802,21 +1974,43 @@
     container.style.display = "block";
 
     if (state === "email_ready") {
+      const targetEmail = (data.email || "").trim();
+      const subtitleText = targetEmail
+        ? t("readyToSend", { email: targetEmail })
+        : t("emailStepDetected");
       container.innerHTML = `
         <div class="spark-otp-card">
           <div class="spark-otp-icon-wrap">${ICONS.mail}</div>
           <div class="spark-otp-content">
             <div class="spark-otp-title">${t("sparkLogin")}</div>
-            <div class="spark-otp-subtitle">${t("readyToSend", { email: data.email })}</div>
+            <div class="spark-otp-subtitle">${subtitleText}</div>
           </div>
           <div class="spark-otp-actions">
-            <button class="spark-otp-btn spark-otp-btn-primary" id="spark-btn-send-code">${t("sendCode")}</button>
+            ${targetEmail ? `<button class="spark-otp-btn spark-otp-btn-primary" id="spark-btn-send-code">${t("sendCode")}</button>` : ''}
+            <button class="spark-otp-btn spark-otp-btn-secondary" id="spark-btn-watch-otp">${t("watchOtp")}</button>
+            <button class="spark-otp-btn spark-otp-btn-ghost" id="spark-btn-dismiss-email" title="×">×</button>
           </div>
         </div>
       `;
       const btn = document.getElementById("spark-btn-send-code");
-      if (btn) {
-        btn.addEventListener("click", () => fillEmailAndSubmit(data.email));
+      if (btn && targetEmail) {
+        btn.addEventListener("click", () => fillEmailAndSubmit(targetEmail));
+      }
+      const watchBtn = document.getElementById("spark-btn-watch-otp");
+      if (watchBtn) {
+        watchBtn.addEventListener("click", () => {
+          const inp = findEmailInput();
+          if (inp && inp.value && inp.value.includes("@")) {
+            setStorageItem("spark_otp_last_email_" + detectTargetDomain(), inp.value.trim());
+          }
+          startListening();
+        });
+      }
+      const dismissBtn = document.getElementById("spark-btn-dismiss-email");
+      if (dismissBtn) {
+        dismissBtn.addEventListener("click", () => {
+          renderPill("hidden");
+        });
       }
     } else if (state === "watching") {
       if (!watchingTimer) {
@@ -1991,7 +2185,7 @@
     if (getStorageItem("spark_otp_dismissed_" + domain) === "1") return;
     isListening = true;
 
-    const detectedEmail = findEmailOnPage();
+    const detectedEmail = findEmailOnPage() || getStorageItem("spark_otp_last_email_" + domain) || "";
     const effectiveAccount = detectedEmail || selectedAccount || "";
 
     const pageErr = detectPageError();
@@ -2060,6 +2254,8 @@
     } catch (err) {
       pollFallback(domain);
     }
+    // Also trigger immediate one-shot poll via background service worker proxy (immune to HTTPS -> loopback PNA)
+    pollOnce(domain);
   }
 
   function stopListening() {
@@ -2086,7 +2282,7 @@
       if (isPollingInflight) return;
       isPollingInflight = true;
       try {
-        const detectedEmail = findEmailOnPage();
+        const detectedEmail = findEmailOnPage() || getStorageItem("spark_otp_last_email_" + domain) || "";
         const effectiveAccount = detectedEmail || selectedAccount || "";
         if (detectedEmail) {
           const badge = document.querySelector("#spark-otp-pill-container .spark-otp-meta-badge");
@@ -2096,9 +2292,9 @@
         }
         const query = buildApiQuery(domain, effectiveAccount);
         const apiUrl = `http://127.0.0.1:${serverPort}/api/otp?${query}`;
-        const res = await fetch(apiUrl);
-        if (res.ok) {
-          const data = await res.json();
+        const res = await daemonFetchJson(apiUrl);
+        if (res.ok && res.data) {
+          const data = res.data;
           if (data.success && data.otp && data.otp.code) {
             const receivedMs = data.otp.received_at ? (new Date(data.otp.received_at).getTime() || 0) : 0;
             if (isCodeRejected(data.otp.code, data.otp.message_id, receivedMs, domain)) {
@@ -2138,13 +2334,13 @@
   async function pollOnce(domain, btn) {
     try {
       const d = domain || detectTargetDomain();
-      const detectedEmail = findEmailOnPage();
+      const detectedEmail = findEmailOnPage() || getStorageItem("spark_otp_last_email_" + d) || "";
       const effectiveAccount = detectedEmail || selectedAccount || "";
       const query = buildApiQuery(d, effectiveAccount);
       const apiUrl = `http://127.0.0.1:${serverPort}/api/otp?${query}`;
-      const res = await fetch(apiUrl);
-      if (res.ok) {
-        const data = await res.json();
+      const res = await daemonFetchJson(apiUrl);
+      if (res.ok && res.data) {
+        const data = res.data;
         if (data.success && data.otp && data.otp.code) {
           const receivedMs = data.otp.received_at ? (new Date(data.otp.received_at).getTime() || 0) : 0;
           if (isCodeRejected(data.otp.code, data.otp.message_id, receivedMs, d)) {
@@ -2219,17 +2415,25 @@
     const otpInputs = findOtpInputs();
     const emailInput = findEmailInput();
 
-    if (otpInputs.length > 0) {
-      startListening();
-    } else if (emailInput && !emailInput.value) {
-      if (autoEmail) {
-        fillEmailAndSubmit(defaultEmail);
+    async function handleEmailStep(inp) {
+      if (!inp || isListening || activeCode) return;
+      bindEmailStepCapture(inp, domain);
+      const preferredEmail = await resolvePreferredEmail(domain);
+      if (isListening || activeCode || findOtpInputs().length > 0) return;
+      if (autoEmail && preferredEmail && !inp.value) {
+        fillEmailAndSubmit(preferredEmail);
       } else {
-        renderPill("email_ready", { email: defaultEmail });
+        renderPill("email_ready", { email: preferredEmail });
       }
     }
 
-    // Dynamic SPA monitoring: observe DOM changes for OTP fields appearing or disappearing
+    if (otpInputs.length > 0) {
+      startListening();
+    } else if (emailInput) {
+      handleEmailStep(emailInput);
+    }
+
+    // Dynamic SPA monitoring: observe DOM changes for OTP or passwordless email fields appearing or disappearing
     let mutationTimer = null;
     const observer = new MutationObserver((mutations) => {
       // Ignore mutations inside our own floating pill
@@ -2241,8 +2445,8 @@
         if (isDomainDisabled(domain) || getStorageItem("spark_otp_dismissed_" + domain) === "1") {
           if (isListening) {
             stopListening();
-            renderPill("hidden");
           }
+          renderPill("hidden");
           return;
         }
         const foundOtp = findOtpInputs();
@@ -2250,7 +2454,19 @@
           startListening();
         } else if (foundOtp.length === 0 && isListening) {
           stopListening();
-          renderPill("hidden");
+          const foundEmail = findEmailInput();
+          if (foundEmail) {
+            handleEmailStep(foundEmail);
+          } else {
+            renderPill("hidden");
+          }
+        } else if (foundOtp.length === 0 && !isListening && !activeCode) {
+          const foundEmail = findEmailInput();
+          if (foundEmail && currentPillState !== "email_ready") {
+            handleEmailStep(foundEmail);
+          } else if (!foundEmail && currentPillState === "email_ready") {
+            renderPill("hidden");
+          }
         }
       }, 120);
     });
@@ -2338,25 +2554,35 @@
         if (!msg || typeof msg !== "object") return false;
         if (msg.type === "SPARK_OTP_DIAGNOSE_PAGE") {
           const report = diagnosePageDom();
+          const payload = { ok: true, success: true, report, diagnosis: report };
           const isIframe = (typeof window !== "undefined" && window.top && window.self !== window.top);
           if (isIframe) {
-            if (report.otp_input_count > 0 || (report.candidates && report.candidates.length > 0)) {
-              sendResponse({ ok: true, report });
+            if (report.otp_input_count > 0 || report.email_input_detected || (report.candidates && report.candidates.length > 0)) {
+              sendResponse(payload);
             }
             return false;
           }
-          if (report.otp_input_count > 0 || (report.candidates && report.candidates.length > 0)) {
-            sendResponse({ ok: true, report });
+          if (report.otp_input_count > 0 || report.email_input_detected || (report.candidates && report.candidates.length > 0)) {
+            sendResponse(payload);
             return false;
           }
           setTimeout(() => {
-            sendResponse({ ok: true, report });
+            sendResponse(payload);
           }, 45);
           return true;
         }
         if (msg.type === "SPARK_OTP_TEST_SAMPLE") {
           const result = diagnoseSyntheticSample(msg.sample || {});
-          sendResponse({ ok: true, result });
+          sendResponse({ ok: true, success: true, result, diagnosis: result });
+          return false;
+        }
+        if (msg.type === "SPARK_OTP_FILL_CODE") {
+          if (msg.code) {
+            const filled = fillAndSubmit(String(msg.code), msg.submit !== false);
+            sendResponse({ ok: true, success: true, filled });
+          } else {
+            sendResponse({ ok: false, success: false, filled: false });
+          }
           return false;
         }
         return false;

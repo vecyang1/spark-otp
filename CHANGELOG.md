@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.1] - 2026-11-04
+
+### Added
+- **Self-Hosted Subdomain, Phonetic Brand Alias & Page Brand Hint Reconciliation**:
+  - Enhanced `spark_otp/extractor.py` (`get_domain_tokens`, `_expand_phonetic_brand_variants`, `extract_brand_hint_tokens`, `domain_matches`) and `spark_otp/spark_client.py` to reconcile self-hosted services on custom subdomains (e.g. `multika.<domain>`) when verification emails are sent from third-party SMTP relay domains (`notification@...`) or use phonetic C/K brand spelling (`Multica` vs `multika`).
+  - Added `--hint` / `?hint=` support across `spark-otp get`, `spark-otp diagnose`, `/api/otp`, `/api/stream`, and `/api/diagnose`, plus `detectPageBrandHint()` in the DOM SSOT engine.
+  - Added `multica_auth` provider rule and multiline standalone verification code extraction (`Your verification code\n\n291240`) in `spark_otp/config.py` and `spark_otp/extractor.py`.
+- **Passwordless Email-OTP Login Step 1 Detection & SPA Client-Side Redirect Support**:
+  - Upgraded `findEmailInput()` and `diagnosePageDom()` in `extension/content.js` (synced to `userscript/spark-otp.user.js`) to detect passwordless Email-OTP login screens (e.g. `"Sign in to Multica / Enter your email to get a login code"`) while strictly ignoring standard email+password forms.
+  - Upgraded `checkPage()` and its `MutationObserver` to handle Next.js / SPA client-side redirects (e.g. `/issues` -> `/login`) and Step 1 (email input) -> Step 2 (OTP input) transitions automatically, resolving the primary Spark mailbox account when `defaultEmail` is not manually configured.
+- **Popup UI Observability — Live Backend Email & Domain Reconciliation**:
+  - Fixed message payload mismatch between `content.js` (`report`/`result`) and `popup.js` (`diagnosis`).
+  - Added live **Mailbox Reconciliation** inside the Popup Page Detection Inspector (`/api/diagnose?target=...&hint=...&allow_expired=true`) with a 1-click **Fill on Page** button (`SPARK_OTP_FILL_CODE`).
+
 ## [2026-11-01] - 2026-11-01
 
 ### Maintenance

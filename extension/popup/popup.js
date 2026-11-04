@@ -25,6 +25,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const inspectorDomain = document.getElementById("inspector-domain");
   const inspectorChannelBadge = document.getElementById("inspector-channel-badge");
   const inspectorVerdict = document.getElementById("inspector-verdict");
+  const inspectorBackendReconcile = document.getElementById("inspector-backend-reconcile");
+  const btnFillInspectedCode = document.getElementById("btn-fill-inspected-code");
   const btnBlockCurrentSite = document.getElementById("btn-block-current-site");
   const btnPresetCard = document.getElementById("btn-preset-card");
   const btnPresetTotp = document.getElementById("btn-preset-totp");
@@ -65,6 +67,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       inspect_page: "Inspect",
       channel_none: "No OTP Field",
       channel_email_otp: "Email OTP Active",
+      channel_email_step: "Email Login Step",
       channel_card_blocked: "Card/Payment Blocked",
       channel_auth_blocked: "Authenticator Blocked",
       channel_sms_blocked: "SMS Blocked (Email-Only)",
@@ -73,6 +76,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       inspector_no_tab: "No inspectable web tab active",
       block_current_site: "Block Current Site",
       unblock_current_site: "Unblock Current Site",
+      fill_on_page: "Fill on Page",
+      reconcile_matched: "Mailbox Match:",
+      reconcile_none: "Mailbox Reconcile: No recent matching OTP email",
       rule_sandbox_title: "Rule & Input Diagnostic Tester",
       preset_card_cvv: "Card CVV",
       preset_auth_app: "Authenticator App",
@@ -122,6 +128,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       inspect_page: "重新检测",
       channel_none: "无验证码框",
       channel_email_otp: "邮箱验证码已激活",
+      channel_email_step: "邮箱登录步骤已就绪",
       channel_card_blocked: "已拦截银行卡/支付框",
       channel_auth_blocked: "已拦截验证器/TOTP",
       channel_sms_blocked: "已拦截短信验证码",
@@ -130,6 +137,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       inspector_no_tab: "当前标签页无可用网页上下文",
       block_current_site: "一键禁用当前网站",
       unblock_current_site: "解除当前网站禁用",
+      fill_on_page: "一键填入页面",
+      reconcile_matched: "邮箱对账命中:",
+      reconcile_none: "邮箱对账: 暂无匹配的近期验证码邮件",
       rule_sandbox_title: "规则对账与输入样本测试器",
       preset_card_cvv: "银行卡安全码 CVV",
       preset_auth_app: "验证器 App (TOTP)",
@@ -369,6 +379,68 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
+  let activeInspectedTabId = null;
+  let activeInspectedCode = "";
+
+  if (btnFillInspectedCode) {
+    btnFillInspectedCode.addEventListener("click", () => {
+      if (!activeInspectedTabId || !activeInspectedCode) return;
+      try {
+        chrome.tabs.sendMessage(activeInspectedTabId, { type: "SPARK_OTP_FILL_CODE", code: activeInspectedCode, submit: true }, () => {
+          btnFillInspectedCode.textContent = t("copied");
+          setTimeout(() => {
+            btnFillInspectedCode.textContent = t("fill_on_page");
+          }, 1200);
+        });
+      } catch (e) {}
+    });
+  }
+
+  async function fetchBackendReconciliation(domain, brandHint) {
+    if (!inspectorBackendReconcile || !domain || domain.includes(" ")) {
+      if (inspectorBackendReconcile) inspectorBackendReconcile.style.display = "none";
+      if (btnFillInspectedCode) btnFillInspectedCode.style.display = "none";
+      return;
+    }
+    const port = (inputPort && inputPort.value) ? inputPort.value : 9428;
+    try {
+      let url = `http://127.0.0.1:${port}/api/diagnose?target=${encodeURIComponent(domain)}&allow_expired=true`;
+      if (brandHint) {
+        url += `&hint=${encodeURIComponent(brandHint)}`;
+      }
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) return;
+      const diag = await res.json();
+      const resolved = diag && diag.resolved_otp;
+      inspectorBackendReconcile.style.display = "block";
+      if (resolved && resolved.code) {
+        activeInspectedCode = resolved.code;
+        const serviceRule = resolved.service || "universal";
+        const expiredBadge = resolved.is_expired ? ` <span style="color:#fbbf24;">(expired)</span>` : "";
+        inspectorBackendReconcile.innerHTML =
+          `<div><strong>${t("reconcile_matched")}</strong> <span class="rule-code-pill">${serviceRule}</span> <strong style="color:#38bdf8;font-family:ui-monospace,monospace;">${resolved.code}</strong>${expiredBadge}</div>` +
+          `<div style="color:#94a3b8;font-size:10px;margin-top:2px;">${resolved.subject || ""} · ${resolved.recipient || resolved.sender || ""}</div>`;
+        if (btnFillInspectedCode) {
+          btnFillInspectedCode.style.display = "inline-block";
+        }
+      } else {
+        activeInspectedCode = "";
+        if (btnFillInspectedCode) btnFillInspectedCode.style.display = "none";
+        const cands = Array.isArray(diag.candidate_evaluations) ? diag.candidate_evaluations : [];
+        const topCand = cands[0];
+        if (topCand) {
+          inspectorBackendReconcile.innerHTML =
+            `<div>${t("reconcile_none")}</div>` +
+            `<div style="color:#94a3b8;font-size:10px;margin-top:2px;">Latest: ${topCand.subject || "(no subject)"} → <span class="rule-code-pill">${topCand.failure_reason || "NO_MATCH"}</span></div>`;
+        } else {
+          inspectorBackendReconcile.innerHTML = `<div>${t("reconcile_none")}</div>`;
+        }
+      }
+    } catch (e) {
+      if (inspectorBackendReconcile) inspectorBackendReconcile.style.display = "none";
+    }
+  }
+
   function renderInspectorReport(report) {
     lastInspectorReport = report;
     if (!inspectorDomain || !inspectorChannelBadge || !inspectorVerdict) return;
@@ -377,6 +449,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       inspectorChannelBadge.className = "badge neutral";
       inspectorChannelBadge.textContent = t("channel_none");
       inspectorVerdict.textContent = t("inspector_no_tab");
+      if (inspectorBackendReconcile) inspectorBackendReconcile.style.display = "none";
+      if (btnFillInspectedCode) btnFillInspectedCode.style.display = "none";
       return;
     }
 
@@ -384,10 +458,13 @@ document.addEventListener("DOMContentLoaded", async () => {
     inspectorDomain.textContent = report.domain || "(unknown)";
     updateBlockSiteButtonState();
 
-    const channel = isHostBlocked(activeInspectedDomain) ? "site_disabled" : (report.detected_channel || "none");
+    const channel = isHostBlocked(activeInspectedDomain) ? "site_disabled" : (report.detected_channel || report.page_channel || "none");
     if (channel === "email_otp") {
       inspectorChannelBadge.className = "badge online";
       inspectorChannelBadge.textContent = t("channel_email_otp");
+    } else if (channel === "email_login_step") {
+      inspectorChannelBadge.className = "badge online";
+      inspectorChannelBadge.textContent = t("channel_email_step");
     } else if (channel === "card_payment_blocked") {
       inspectorChannelBadge.className = "badge blocked";
       inspectorChannelBadge.textContent = t("channel_card_blocked");
@@ -407,17 +484,19 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const candidates = Array.isArray(report.candidates) ? report.candidates : [];
     const topMatch = candidates.find(c => c.qualified) || candidates.find(c => c.disqualified && c.rule_id !== "no_otp_signal") || candidates[0];
-    let html = `<div>${report.verdict || ""}</div>`;
+    let html = `<div>${report.verdict || report.page_verdict || ""}</div>`;
     if (topMatch && topMatch.rule_id) {
       html += `<div style="margin-top:4px;"><span class="rule-code-pill">${topMatch.rule_id}</span><span>${topMatch.reason || ""}</span></div>`;
     }
     inspectorVerdict.innerHTML = html;
+    fetchBackendReconciliation(activeInspectedDomain, report.brand_hint || "");
   }
 
   function inspectActiveTab() {
     if (!inspectorDomain) return;
     if (typeof chrome === "undefined" || !chrome.tabs || !chrome.tabs.query) {
       activeInspectedDomain = "";
+      activeInspectedTabId = null;
       updateBlockSiteButtonState();
       renderInspectorReport(null);
       return;
@@ -425,9 +504,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tab = tabs && tabs[0];
       if (!tab || !tab.id) {
+        activeInspectedTabId = null;
         renderInspectorReport(null);
         return;
       }
+      activeInspectedTabId = tab.id;
       let fallbackHost = "";
       try {
         if (tab.url && /^https?:/i.test(tab.url)) {
@@ -447,6 +528,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           if (chrome.runtime && chrome.runtime.lastError) {
             renderInspectorReport({
               domain: fallbackHost,
+              brand_hint: tab.title || "",
               detected_channel: isHostBlocked(fallbackHost) ? "site_disabled" : "none",
               verdict: isHostBlocked(fallbackHost)
                 ? `Site '${fallbackHost}' is disabled in blacklist.`
@@ -455,11 +537,13 @@ document.addEventListener("DOMContentLoaded", async () => {
             });
             return;
           }
-          if (res && res.success && res.diagnosis) {
-            renderInspectorReport(res.diagnosis);
+          const diagReport = res && (res.diagnosis || res.report);
+          if (diagReport) {
+            renderInspectorReport(diagReport);
           } else {
             renderInspectorReport({
               domain: fallbackHost,
+              brand_hint: tab.title || "",
               detected_channel: isHostBlocked(fallbackHost) ? "site_disabled" : "none",
               verdict: `No active OTP inputs reported on ${fallbackHost}.`,
               candidates: []
@@ -469,6 +553,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       } catch (e) {
         renderInspectorReport({
           domain: fallbackHost,
+          brand_hint: tab.title || "",
           detected_channel: "none",
           verdict: `Active on ${fallbackHost}.`,
           candidates: []
@@ -497,7 +582,8 @@ document.addEventListener("DOMContentLoaded", async () => {
                 resolve(null);
                 return;
               }
-              resolve(resp && resp.diagnosis ? resp.diagnosis : null);
+              const diag = resp && (resp.diagnosis || resp.result);
+              resolve(diag || null);
             });
           } catch (e) {
             resolve(null);

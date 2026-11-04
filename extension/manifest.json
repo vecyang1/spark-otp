@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Spark OTP Autofill",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "description": "Automatically extracts and autofills verification codes from Spark Desktop via local CLI daemon across any website.",
   "permissions": [
     "storage"
@@ -10,6 +10,9 @@
     "http://127.0.0.1:*/*",
     "http://localhost:*/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "Spark OTP Settings",

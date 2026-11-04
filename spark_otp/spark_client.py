@@ -17,6 +17,8 @@ from .config import config, DEFAULT_RULES
 from .extractor import (
     extract_otp_from_thread,
     get_domain_brand,
+    get_domain_tokens,
+    extract_brand_hint_tokens,
     get_root_domain,
     clean_domain,
     COMMON_SERVICE_SUBDOMAINS,
@@ -140,6 +142,7 @@ class SparkClient:
         since_time: Optional[float] = None,
         allow_expired: bool = False,
         fallback_expired: bool = False,
+        brand_hint: Optional[str] = None,
     ) -> Optional[OTPResult]:
         """
         Direct Apple Mail Envelope Index fast-path (<5ms).
@@ -237,6 +240,7 @@ class SparkClient:
                 now=current_time,
                 max_age_seconds=max_age,
                 allow_expired=False,
+                brand_hint=brand_hint,
             )
             if res:
                 if (not exclude_codes_set or res.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res.message_id not in exclude_msg_ids_set):
@@ -249,6 +253,7 @@ class SparkClient:
                     now=current_time,
                     max_age_seconds=max_age,
                     allow_expired=True,
+                    brand_hint=brand_hint,
                 )
                 if res_exp:
                     if (not exclude_codes_set or res_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_exp.message_id not in exclude_msg_ids_set):
@@ -266,11 +271,11 @@ class SparkClient:
             domain_ok = not domain
             if domain:
                 for r in matching_rules:
-                    if domain_matches(domain, None, r.associated_domains, sender, subject, body):
+                    if domain_matches(domain, None, r.associated_domains, sender, subject, body, brand_hint=brand_hint):
                         domain_ok = True
                         break
                 if not domain_ok:
-                    domain_ok = domain_matches(domain, None, None, sender, subject, body)
+                    domain_ok = domain_matches(domain, None, None, sender, subject, body, brand_hint=brand_hint)
 
             if intent_match and domain_ok:
                 full_body = self._find_emlx_for_message(db_path, pk)
@@ -283,6 +288,7 @@ class SparkClient:
                         now=current_time,
                         max_age_seconds=max_age,
                         allow_expired=False,
+                        brand_hint=brand_hint,
                     )
                     if res_full:
                         if (not exclude_codes_set or res_full.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full.message_id not in exclude_msg_ids_set):
@@ -295,6 +301,7 @@ class SparkClient:
                             now=current_time,
                             max_age_seconds=max_age,
                             allow_expired=True,
+                            brand_hint=brand_hint,
                         )
                         if res_full_exp:
                             if (not exclude_codes_set or res_full_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full_exp.message_id not in exclude_msg_ids_set):
@@ -472,6 +479,7 @@ class SparkClient:
         since_time: Optional[float] = None,
         allow_expired: bool = False,
         fallback_expired: bool = False,
+        brand_hint: Optional[str] = None,
     ) -> Optional[OTPResult]:
         """
         Direct SQLite fast-path lookup (<5ms).
@@ -558,6 +566,7 @@ class SparkClient:
                 now=current_time,
                 max_age_seconds=max_age,
                 allow_expired=False,
+                brand_hint=brand_hint,
             )
             if res:
                 rule_obj = next((r for r in config.rules if r.name == res.service), None)
@@ -571,6 +580,7 @@ class SparkClient:
                             now=current_time,
                             max_age_seconds=max_age,
                             allow_expired=False,
+                            brand_hint=brand_hint,
                         )
                         if res_cb and res_cb.callback_url:
                             res = res_cb
@@ -584,6 +594,7 @@ class SparkClient:
                     now=current_time,
                     max_age_seconds=max_age,
                     allow_expired=True,
+                    brand_hint=brand_hint,
                 )
                 if res_exp:
                     rule_obj = next((r for r in config.rules if r.name == res_exp.service), None)
@@ -597,6 +608,7 @@ class SparkClient:
                                 now=current_time,
                                 max_age_seconds=max_age,
                                 allow_expired=True,
+                                brand_hint=brand_hint,
                             )
                             if res_exp_cb and res_exp_cb.callback_url:
                                 res_exp = res_exp_cb
@@ -615,11 +627,11 @@ class SparkClient:
                 domain_ok = not domain
                 if domain:
                     for r in matching_rules:
-                        if domain_matches(domain, None, r.associated_domains, sender, subject, short_body):
+                        if domain_matches(domain, None, r.associated_domains, sender, subject, short_body, brand_hint=brand_hint):
                             domain_ok = True
                             break
                     if not domain_ok:
-                        domain_ok = domain_matches(domain, None, None, sender, subject, short_body)
+                        domain_ok = domain_matches(domain, None, None, sender, subject, short_body, brand_hint=brand_hint)
 
                 if domain_ok:
                     full_thread = self.fetch_thread(str(pk))
@@ -631,6 +643,7 @@ class SparkClient:
                             now=current_time,
                             max_age_seconds=max_age,
                             allow_expired=False,
+                            brand_hint=brand_hint,
                         )
                         if res_full:
                             if (not exclude_codes_set or res_full.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full.message_id not in exclude_msg_ids_set):
@@ -643,6 +656,7 @@ class SparkClient:
                                 now=current_time,
                                 max_age_seconds=max_age,
                                 allow_expired=True,
+                                brand_hint=brand_hint,
                             )
                             if res_full_exp:
                                 if (not exclude_codes_set or res_full_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full_exp.message_id not in exclude_msg_ids_set):
@@ -675,18 +689,23 @@ class SparkClient:
     def get_accounts(self, include_apple_mail: bool = False) -> List[str]:
         """List all accounts configured in Spark Desktop, optionally including Apple Mail."""
         accounts = []
-        try:
-            if shutil.which(self.spark_bin):
-                res = subprocess.run(
-                    [self.spark_bin, "accounts"],
-                    capture_output=True,
-                    text=True,
-                    timeout=15
-                )
-                if res.returncode == 0:
-                    accounts = parse_accounts_output(res.stdout)
-        except Exception:
-            pass
+        # Fast-path: read directly from Spark SQLite (<2ms) when using default production sqlite_path
+        if self.sqlite_path is None:
+            accounts = self._get_spark_sqlite_accounts()
+
+        if not accounts:
+            try:
+                if shutil.which(self.spark_bin):
+                    res = subprocess.run(
+                        [self.spark_bin, "accounts"],
+                        capture_output=True,
+                        text=True,
+                        timeout=15
+                    )
+                    if res.returncode == 0:
+                        accounts = parse_accounts_output(res.stdout)
+            except Exception:
+                pass
 
         if not accounts:
             accounts = self._get_spark_sqlite_accounts()
@@ -837,14 +856,18 @@ class SparkClient:
         since_time: Optional[float] = None,
         allow_expired: bool = False,
         fallback_expired: bool = False,
+        brand_hint: Optional[str] = None,
     ) -> Optional[OTPResult]:
         df_clean = ""
         brand = ""
         root_domain = ""
+        domain_tokens: List[str] = []
+        hint_tokens = extract_brand_hint_tokens(brand_hint)
         if domain:
             df_clean = clean_domain(domain)
             brand = get_domain_brand(df_clean)
             root_domain = get_root_domain(df_clean)
+            domain_tokens = get_domain_tokens(df_clean)
 
         include_expired = allow_expired or (domain is not None and fallback_expired)
 
@@ -888,7 +911,14 @@ class SparkClient:
                             for ad in rule.associated_domains:
                                 ad_clean = clean_domain(ad)
                                 ad_root = get_root_domain(ad_clean)
-                                if df_clean == ad_clean or df_clean.endswith("." + ad_clean) or ad_clean.endswith("." + df_clean) or root_domain == ad_root or (len(brand) >= 3 and brand in ad_clean):
+                                if (
+                                    df_clean == ad_clean
+                                    or df_clean.endswith("." + ad_clean)
+                                    or ad_clean.endswith("." + df_clean)
+                                    or root_domain == ad_root
+                                    or (len(brand) >= 3 and brand in ad_clean)
+                                    or any(tok == ad_clean or (len(tok) >= 4 and tok in ad_clean) for tok in domain_tokens + hint_tokens)
+                                ):
                                     rule_matches_domain = True
                                     break
                     if rule_matches_domain and re.search(rule.sender_pattern, email.sender) and re.search(rule.subject_pattern, email.subject):
@@ -903,7 +933,7 @@ class SparkClient:
                         if cf_target and (cf_target in df_clean or df_clean.startswith(cf_target)):
                             potential_match = True
 
-                # 3. Check if clean domain or brand appears in sender or subject (with space collapsing)
+                # 3. Check if clean domain, brand, subdomain token, or hint token appears in sender or subject
                 if not potential_match:
                     sender_lower = email.sender.lower()
                     subject_lower = email.subject.lower()
@@ -922,6 +952,8 @@ class SparkClient:
                         conflicting = set(re.findall(r"([a-z0-9\.-]+\." + re.escape(root_domain) + r")", subject_lower))
                         if df_clean in conflicting or not any(cd != df_clean and not cd.startswith("www.") and cd.split(".")[0] not in COMMON_SERVICE_SUBDOMAINS for cd in conflicting):
                             potential_match = True
+                    elif any(len(tok) >= 4 and (tok in subject_clean or tok in sender_clean) for tok in domain_tokens + hint_tokens):
+                        potential_match = True
             else:
                 # No domain filter: any rule or OTP intent matches
                 for rule in config.rules:
@@ -946,6 +978,7 @@ class SparkClient:
                 now=current_time,
                 max_age_seconds=max_age,
                 allow_expired=False,
+                brand_hint=brand_hint,
             )
             if otp_result:
                 if (not exclude_codes_set or otp_result.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or otp_result.message_id not in exclude_msg_ids_set):
@@ -958,6 +991,7 @@ class SparkClient:
                     now=current_time,
                     max_age_seconds=max_age,
                     allow_expired=True,
+                    brand_hint=brand_hint,
                 )
                 if otp_exp:
                     if (not exclude_codes_set or otp_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or otp_exp.message_id not in exclude_msg_ids_set):
@@ -979,6 +1013,7 @@ class SparkClient:
         since_time: Optional[float] = None,
         allow_expired: bool = False,
         fallback_expired: bool = False,
+        brand_hint: Optional[str] = None,
         **kwargs
     ) -> Optional[OTPResult]:
         """
@@ -993,12 +1028,15 @@ class SparkClient:
         max_age = max_age_seconds if max_age_seconds is not None else config.max_email_age_seconds
         page_size = getattr(config, "email_page_size", 35)
         current_time = now or kwargs.get("current_time") or datetime.now()
+        hint = brand_hint or kwargs.get("hint")
 
         matching_rule = None
         if domain:
             df_clean = clean_domain(domain)
             brand = get_domain_brand(df_clean)
             root_domain = get_root_domain(df_clean)
+            domain_tokens = get_domain_tokens(df_clean)
+            hint_tokens = extract_brand_hint_tokens(hint)
             for rule in config.rules:
                 if rule.associated_domains:
                     if (re.match(r"^(bwh\d*|bawagon|bandwagon)(\.[a-z]{2,})?$", df_clean) or brand in ("bawagon", "bandwagon")) and any(ad in ("bandwagonhost.com", "64clouds.com", "bwh81.net", "bawagon") for ad in rule.associated_domains):
@@ -1007,7 +1045,14 @@ class SparkClient:
                     for ad in rule.associated_domains:
                         ad_clean = clean_domain(ad)
                         ad_root = get_root_domain(ad_clean)
-                        if df_clean == ad_clean or df_clean.endswith("." + ad_clean) or ad_clean.endswith("." + df_clean) or root_domain == ad_root or (len(brand) >= 3 and brand in ad_clean):
+                        if (
+                            df_clean == ad_clean
+                            or df_clean.endswith("." + ad_clean)
+                            or ad_clean.endswith("." + df_clean)
+                            or root_domain == ad_root
+                            or (len(brand) >= 3 and brand in ad_clean)
+                            or any(tok == ad_clean or (len(tok) >= 4 and tok in ad_clean) for tok in domain_tokens + hint_tokens)
+                        ):
                             matching_rule = rule
                             break
                     if matching_rule:
@@ -1029,6 +1074,7 @@ class SparkClient:
                     since_time=since_time,
                     allow_expired=allow_expired,
                     fallback_expired=fallback_expired,
+                    brand_hint=hint,
                 )
                 sqlite_succeeded = True
                 if sqlite_res:
@@ -1048,6 +1094,7 @@ class SparkClient:
                 since_time=since_time,
                 allow_expired=allow_expired,
                 fallback_expired=fallback_expired,
+                brand_hint=hint,
             )
             if apple_mail_res:
                 return apple_mail_res
@@ -1073,6 +1120,7 @@ class SparkClient:
                     since_time=since_time,
                     allow_expired=allow_expired,
                     fallback_expired=fallback_expired,
+                    brand_hint=hint,
                 )
                 if res:
                     return res
@@ -1091,6 +1139,7 @@ class SparkClient:
                 since_time=since_time,
                 allow_expired=allow_expired,
                 fallback_expired=fallback_expired,
+                brand_hint=hint,
             )
             if res:
                 return res
@@ -1109,6 +1158,7 @@ class SparkClient:
                     since_time=since_time,
                     allow_expired=allow_expired,
                     fallback_expired=fallback_expired,
+                    brand_hint=hint,
                 )
                 if res:
                     return res
@@ -1202,6 +1252,7 @@ process.stdout.write(JSON.stringify(res));
         allow_expired: bool = False,
         now: Optional[datetime] = None,
         dom_sample: Optional[Any] = None,
+        brand_hint: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Diagnostic-First reconciliation engine.
@@ -1219,6 +1270,7 @@ process.stdout.write(JSON.stringify(res));
                     "target": "",
                     "domain": None,
                     "account": None,
+                    "brand_hint": brand_hint,
                     "allow_expired": allow_expired,
                     "diagnosed_at": current_time.isoformat(),
                 },
@@ -1251,14 +1303,24 @@ process.stdout.write(JSON.stringify(res));
                     )
                     recent_rows = cur.fetchall()
                     target_rows = []
-                    if domain:
-                        cur.execute(
-                            "SELECT pk, accountPk, receivedDate, messageFrom, messageTo, subject, shortBody "
-                            "FROM messages WHERE subject LIKE ? OR shortBody LIKE ? "
-                            "ORDER BY receivedDate DESC, pk DESC LIMIT 10;",
-                            (f"%{domain}%", f"%{domain}%")
-                        )
-                        target_rows = cur.fetchall()
+                    if domain or brand_hint:
+                        search_terms = []
+                        if domain:
+                            search_terms.append(domain)
+                            for tok in get_domain_tokens(domain):
+                                if len(tok) >= 4 and tok not in search_terms:
+                                    search_terms.append(tok)
+                        for tok in extract_brand_hint_tokens(brand_hint):
+                            if len(tok) >= 4 and tok not in search_terms:
+                                search_terms.append(tok)
+                        for term in search_terms[:5]:
+                            cur.execute(
+                                "SELECT pk, accountPk, receivedDate, messageFrom, messageTo, subject, shortBody "
+                                "FROM messages WHERE subject LIKE ? OR shortBody LIKE ? "
+                                "ORDER BY receivedDate DESC, pk DESC LIMIT 10;",
+                                (f"%{term}%", f"%{term}%")
+                            )
+                            target_rows.extend(cur.fetchall())
 
                     seen_pks = set()
                     rows = []
@@ -1311,11 +1373,11 @@ process.stdout.write(JSON.stringify(res));
                             if matched_rule:
                                 r_obj = next((r for r in config.rules if r.name == matched_rule), None)
                                 assoc = r_obj.associated_domains if r_obj else None
-                                is_match = domain_matches(domain, extracted_domain, assoc, msg_from, subj, short_b)
+                                is_match = domain_matches(domain, extracted_domain, assoc, msg_from, subj, short_b, brand_hint=brand_hint)
                                 domain_match = is_match
                                 domain_match_reason = f"Rule '{matched_rule}' domain match: {is_match}"
                             else:
-                                is_match = domain_matches(domain, None, None, msg_from, subj, short_b)
+                                is_match = domain_matches(domain, None, None, msg_from, subj, short_b, brand_hint=brand_hint)
                                 domain_match = is_match
                                 domain_match_reason = f"Generic domain match: {is_match}"
 
@@ -1328,6 +1390,7 @@ process.stdout.write(JSON.stringify(res));
                             now=current_time,
                             max_age_seconds=86400 * 30,
                             allow_expired=True,
+                            brand_hint=brand_hint,
                         )
 
                         if otp_cand:
@@ -1342,6 +1405,7 @@ process.stdout.write(JSON.stringify(res));
                                         now=current_time,
                                         max_age_seconds=86400 * 30,
                                         allow_expired=True,
+                                        brand_hint=brand_hint,
                                     )
                                     if otp_cand_cb and otp_cand_cb.callback_url:
                                         otp_cand = otp_cand_cb
@@ -1355,7 +1419,15 @@ process.stdout.write(JSON.stringify(res));
                                     now=current_time,
                                     max_age_seconds=86400 * 30,
                                     allow_expired=True,
+                                    brand_hint=brand_hint,
                                 )
+
+                        if otp_cand:
+                            if not matched_rule or matched_rule in ("generic_otp", "universal"):
+                                matched_rule = otp_cand.service
+                            if domain and not domain_match:
+                                domain_match = True
+                                domain_match_reason = f"Rule '{matched_rule}' domain match: True"
 
                         extracted_code = otp_cand.code if otp_cand else None
                         callback_url = otp_cand.callback_url if otp_cand else None
@@ -1410,7 +1482,8 @@ process.stdout.write(JSON.stringify(res));
             domain=domain,
             account=account,
             allow_expired=allow_expired,
-            now=current_time
+            now=current_time,
+            brand_hint=brand_hint,
         )
 
         if resolved_otp:
@@ -1446,6 +1519,7 @@ process.stdout.write(JSON.stringify(res));
                 "target": clean_target,
                 "domain": domain,
                 "account": account,
+                "brand_hint": brand_hint,
                 "allow_expired": allow_expired,
                 "diagnosed_at": current_time.isoformat(),
             },
