@@ -14,7 +14,7 @@
 [![Chrome Extension](https://img.shields.io/badge/Chrome_Extension-MV3-brightgreen.svg)](extension/)
 [![Userscript](https://img.shields.io/badge/Userscript-Tampermonkey-orange.svg)](userscript/)
 [![Architecture](https://img.shields.io/badge/Architecture-Zero--LLM_Deterministic-success.svg)](docs/architecture.md)
-[![Tests](https://img.shields.io/badge/Tests-183%20passed-success.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-185%20passed-success.svg)](tests/)
 
 **Universal zero-LLM email verification code (OTP / 2FA) auto-detection, extraction, and autofill engine powered by local macOS Spark Desktop & Apple Mail.**
 
@@ -40,7 +40,7 @@
 ## Key Capabilities
 
 1. **Deterministic Zero-LLM Extraction Engine**:
-   - Out-of-the-box rule profiles for **25+ major services**: Cloudflare Access, GitHub, Google, AWS / Amazon, Microsoft / Azure / Live, Stripe, Supabase, Vercel, Notion, Discord, Steam Guard (alphanumeric), Twitter / X, Shopify, Apple ID, Slack (hyphenated `UZW-XAD` normalized), Adobe (markdown bold wrapping), SOLIDWORKS / 3DS (`34P514`), TidyCal, Dia Browser, Marqeta 3DS Banking PINs, Bandwagon Host / KiwiVM, and more.
+   - Out-of-the-box rule profiles for **25+ major services**: Cloudflare Access, GitHub, Google, AWS / Amazon, Microsoft / Azure / Live, Stripe, Supabase, Vercel, Notion, Discord, Steam Guard (alphanumeric), Twitter / X, Shopify, Apple ID, Slack (hyphenated `UZW-XAD` normalized), Adobe (markdown bold wrapping), SOLIDWORKS / 3DS (`34P514`), TidyCal, Dia Browser, Marqeta 3DS Banking PINs, Bandwagon Host / KiwiVM, SiteGround, Multica, and more.
    - **Intelligent Multilingual Fallback**: Contextual proximity keyword scoring extracts codes from arbitrary enterprise SaaS platforms across English, 简体中文, 日本語, ภาษาไทย, and Tiếng Việt.
    - **Disqualification Safeguards**: Prevents false positive extraction of shipment tracking numbers, invoice amounts, reference codes, phone numbers, and dictionary words.
 

@@ -93,8 +93,8 @@ OTP_INTENT_PATTERN = re.compile(
 
 EXP_PATTERNS = [
     # English
-    (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in)|within)\s*(\d+)\s*hour", 3600),
-    (r"(?i)(?:expires\s+(?:in|after)|valid\s+(?:for|in)|within)\s*(\d+)\s*minute", 60),
+    (r"(?i)(?:expires?\s+(?:in|after)|valid\s+(?:for|in)|within)\s*(\d+)\s*hour", 3600),
+    (r"(?i)(?:expires?\s+(?:in|after)|valid\s+(?:for|in)|within)\s*(\d+)\s*minute", 60),
     # Chinese (Simplified & Traditional)
     (r"(?i)(?:有效时间|有效期|有效期限)(?:为|：|:)?\s*(\d+)\s*(?:小时|小時|時間)", 3600),
     (r"(?i)(\d+)\s*(?:个)?(?:小时|小時|時間)(?:之?内)?有效", 3600),
@@ -392,6 +392,8 @@ def domain_matches(
             non_infra_conflicts = [
                 cd for cd in conflicting_domains
                 if cd != df_clean
+                and not df_clean.endswith("." + cd)
+                and not cd.endswith("." + df_clean)
                 and not cd.startswith("www.")
                 and cd.split(".")[0] not in COMMON_SERVICE_SUBDOMAINS
             ]
@@ -538,8 +540,10 @@ def extract_universal_otp(
         r"(?i)(?:验证码|校验码|动态码|安全码|授权码|驗證碼|校驗碼|動態碼|安全碼|認証コード|確認コード|ワンタイムパスワード)\s*(?:是|为)?[：:]\s*(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
         # Subject or line start code (e.g. "434490 is your verification code")
         r"(?i)(?:^|[\r\n])\s*(?:\[[^\]]*\]\s*)?([0-9]{4,8})\s+(?:is\s+your|is\s+the|is)\b",
-        # Subject email or device verification code (e.g. "Email verification code: 861326", "device verification code: 181174")
-        r"(?i)(?:email\s+|device\s+)?(?:verification|login|security|access|confirmation)\s*code\s*[:#：]\s*([0-9]{4,8})(?!\d)",
+        # Subject email or device verification/authentication code (e.g. "Email verification code: 861326", "Your SiteGround authentication code: 648551")
+        r"(?i)(?:email\s+|device\s+)?(?:verification|authentication|login|security|access|confirmation)\s*code\s*[:#：]\s*([0-9]{4,8})(?!\d)",
+        # "Use the code below to authenticate / verify:" multiline block
+        r"(?i)use\s+the\s+code\s+below\s+to\s+(?:authenticate|verify|log\s*in|sign\s*in)\s*[:#：]?[\s\r\n]+(?:\*\*\s*)?([0-9]{4,8})(?!\d)",
         # Standard keyword proximity (multilingual)
         r"(?i)(?:"
         r"verification\s*code|verify|security\s*code|login\s*code|access\s*code|"

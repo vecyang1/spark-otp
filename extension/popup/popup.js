@@ -636,7 +636,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         reason: "Blocked SMS/Phone verification field (Strict Email-Only Mode enabled)."
       };
     }
-    if (/otp|verification\s*code|security\s*code|验证码|one-time-code/i.test(ctx)) {
+    if (/otp|verification\s*code|authentication\s*code|confirmation\s*code|login\s*code|security\s*code|验证码|one-time-code/i.test(ctx)) {
       return {
         disqualified: false,
         qualified: true,

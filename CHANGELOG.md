@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.2] - 2026-11-06
+
+### Added
+- **SiteGround Authentication Code Provider Rule & 24-Hour TTL Support (`siteground_auth`)**:
+  - Added `siteground_auth` rule in `spark_otp/config.py` covering `siteground.com`, `login.siteground.com`, `my.siteground.com`, and `tools.siteground.com` with `default_ttl_seconds=86400` (24 hours).
+  - Enhanced `generic_otp` in `spark_otp/config.py` and `extract_universal_otp()` in `spark_otp/extractor.py` to support `"authentication code"`, `"confirmation code"`, and multiline `"Use the code below to authenticate/verify:\n\n648551"` body blocks.
+
+### Fixed
+- **DOM Detection for Unattributed Inputs Wrapped in `"Authentication code"` Labels (SiteGround `/code-authentication`)**:
+  - Expanded Priority 5 label matching (`findOtpInputs`), `isExplicitOtpMarker` (`isDisqualifiedInput`), `hasVerificationAffinity`, `targetedSelectors`, and Priority 6 dedicated auth form/route matching in `extension/content.js` (synced to `userscript/spark-otp.user.js`) to match `auth(?:entication)?` and `confirm(?:ation)?` alongside `verification|security|login|device|email`, as well as `/code-authentication` routes and `.sg-field-label` / `[data-e2e*="field-label"]` wrappers.
+  - Added `"Enter the authentication code you have received"` to `hasExplicitEmailContext` so received-code prompts are never misclassified as Authenticator App (TOTP) prompts.
+- **Singular `"expire in X hours/minutes"` TTL Parsing**:
+  - Fixed `EXP_PATTERNS` in `spark_otp/extractor.py` (`expires?` instead of `expires`) so emails stating `"will expire in 24 hours"` or `"expire in 15 minutes"` accurately resolve their explicit TTL instead of falling back to 600s.
+- **Parent/Child Subdomain Conflict False-Positive in `domain_matches`**:
+  - Fixed `non_infra_conflicts` in `spark_otp/extractor.py` so parent/child domain pairs (e.g. `login.acmehost.example.org` vs `acmehost.example.org`) are recognized as the same tenant hierarchy rather than conflicting sibling tenants.
+- **Synthetic Sample Diagnostic Parity (`diagnoseSyntheticSample`)**:
+  - Updated `diagnoseSyntheticSample()` in `extension/content.js` and `userscript/spark-otp.user.js` so inputs without any positive OTP selector or label affinity return `qualified: false, rule_id: "not_matched_by_selectors"`, matching `diagnosePageDom()` live inspection behavior 100%.
+
 ## [1.6.1] - 2026-11-04
 
 ### Added

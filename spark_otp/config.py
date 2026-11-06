@@ -277,10 +277,19 @@ DEFAULT_RULES = [
         filter_query="Multica",
     ),
     RuleDefinition(
+        name="siteground_auth",
+        sender_pattern=r"(?i)(?:siteground|@siteground\.com)",
+        subject_pattern=r"(?i)(?:SiteGround.*(?:authentication|verification|security|login)\s*code|(?:authentication|verification|security|login)\s*code)",
+        code_regex=r"(?i)(?:(?:your\s+)?(?:siteground\s+)?(?:authentication|verification|security|login)\s*code:?\s*|use\s+the\s+code\s+below\s+to\s+authenticate[:\s\r\n]+|code:?\s*)([0-9]{6})\b",
+        default_ttl_seconds=86400,
+        associated_domains=["siteground.com", "login.siteground.com", "my.siteground.com", "tools.siteground.com"],
+        filter_query="from:siteground.com",
+    ),
+    RuleDefinition(
         name="generic_otp",
         sender_pattern=r".*",
-        subject_pattern=r"(?i)(?:verification|login|security|access|auth|otp|one-time|verify|confirm|passcode|validation|device).*code|(?:device\s+)?verification\b|验证码|动态码|校验码|安全码|授权码|驗證碼|動態碼|校驗碼|安全碼|認証コード|確認コード|ワンタイムパスワード|인증\s*번호|인증\s*코드|확인\s*코드|código\s*de\s*verificación|code\s*de\s*vérification|verifizierungscode|bestätigungscode|código\s*de\s*confirmação|код\s*подтверждения|codice\s*di\s*verifica|mã\s*xác\s*thực|รหัส\s*otp|kode\s*verifikasi|رمز\s*التحقق|सत्यापन\s*कोड",
-        code_regex=r"(?i)(?:your\s+(?:device\s+)?(?:verification|login|security|confirmation|access)?\s*code\s*(?:is|为|:)\s*|your\s+(?:device\s+)?(?:verification|login|security|confirmation|access)\s*code[\s\r\n]+|(?:device\s+)?verification\s*code:?\s*|code is:?|code:\s*|passcode:\s*|validation code:\s*|验证码(?:是|为|)[：:]?\s*|动态码(?:是|为|)[：:]?\s*|校验码(?:是|为|)[：:]?\s*|認証コード(?:は|：|:)\s*|ワンタイムパスワード(?:は|：|:)\s*|인증\s*번호(?:는|은|:)?\s*|인증\s*코드(?:는|은|:)?\s*|código\s*de\s*verificación:?\s*|code\s*de\s*vérification:?\s*|(?:verifizierungscode|bestätigungscode)\s*(?:ist|lautet|:)?\s*|код\s*подтверждения:?\s*|codice\s*di\s*verifica:?\s*|mã\s*xác\s*thực:?\s*|รหัส\s*otp:?\s*|kode\s*verifikasi:?\s*|رمز\s*التحقق:?\s*)([0-9]{4,8}|(?=[0-9A-Za-z]*\d)[0-9A-Za-z]{5,8})(?![0-9a-zA-Z])",
+        subject_pattern=r"(?i)(?:verification|login|security|access|auth(?:entication)?|otp|one-time|verify|confirm(?:ation)?|passcode|validation|device).*code|(?:device\s+)?verification\b|验证码|动态码|校验码|安全码|授权码|驗證碼|動態碼|校驗碼|安全碼|認証コード|確認コード|ワンタイムパスワード|인증\s*번호|인증\s*코드|확인\s*코드|código\s*de\s*verificación|code\s*de\s*vérification|verifizierungscode|bestätigungscode|código\s*de\s*confirmação|код\s*подтверждения|codice\s*di\s*verifica|mã\s*xác\s*thực|รหัส\s*otp|kode\s*verifikasi|رمز\s*التحقق|सत्यापन\s*कोड",
+        code_regex=r"(?i)(?:your\s+(?:[a-z0-9\.-]+\s+)?(?:verification|login|security|confirmation|authentication|access|auth)?\s*code\s*(?:is|为|:)\s*|your\s+(?:[a-z0-9\.-]+\s+)?(?:verification|login|security|confirmation|authentication|access|auth)\s*code[\s\r\n]+|use\s+the\s+code\s+below\s+to\s+(?:authenticate|verify|log\s*in|sign\s*in)[:\s\r\n]+|(?:device\s+|email\s+)?(?:verification|authentication|security|login|confirmation)\s*code:?\s*|code is:?|code:\s*|passcode:\s*|validation code:\s*|验证码(?:是|为|)[：:]?\s*|动态码(?:是|为|)[：:]?\s*|校验码(?:是|为|)[：:]?\s*|認証コード(?:は|：|:)\s*|ワンタイムパスワード(?:は|：|:)\s*|인증\s*번호(?:는|은|:)?\s*|인증\s*코드(?:는|은|:)?\s*|código\s*de\s*verificación:?\s*|code\s*de\s*vérification:?\s*|(?:verifizierungscode|bestätigungscode)\s*(?:ist|lautet|:)?\s*|код\s*подтверждения:?\s*|codice\s*di\s*verifica:?\s*|mã\s*xác\s*thực:?\s*|รหัส\s*otp:?\s*|kode\s*verifikasi:?\s*|رمز\s*التحقق:?\s*)([0-9]{4,8}|(?=[0-9A-Za-z]*\d)[0-9A-Za-z]{5,8})(?![0-9a-zA-Z])",
         default_ttl_seconds=600,
     )
 ]

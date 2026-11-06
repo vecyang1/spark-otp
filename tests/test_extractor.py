@@ -1099,6 +1099,65 @@ This code expires in 10 minutes. If you didn't request this, you can safely igno
         )
         self.assertIsNone(res_unrelated)
 
+    def test_siteground_authentication_code_and_24h_ttl(self):
+        """
+        Verify SiteGround 'Your SiteGround authentication code: 648551' email extraction,
+        'will expire in 24 hours' singular 'expire' TTL parsing (86400s), and domain matching
+        across login.siteground.com and my.siteground.com.
+        """
+        # Email sent at 19:54, checked 25 minutes later at 20:19 (beyond 600s default, within 24h TTL)
+        now = datetime(2026, 4, 15, 20, 19)
+        raw = """
+ID: 737080
+Subject: Your SiteGround authentication code: 648551
+From: SiteGround <noreply@siteground.com>
+To: alex.turner@example.com
+Date: 2026-04-15 19:54
+Type: Email
+
+Hello Alex,
+
+Use the code below to authenticate:
+
+648551
+
+Please be aware that this code is temporary and will expire in 24 hours.
+
+Kind Regards,
+The SiteGround Team
+"""
+        res_login = extract_otp_from_thread(raw, domain_filter="login.siteground.com", now=now)
+        self.assertIsNotNone(res_login)
+        self.assertEqual(res_login.code, "648551")
+        self.assertEqual(res_login.service, "siteground_auth")
+        self.assertFalse(res_login.is_expired)
+        self.assertEqual(res_login.time_remaining_seconds, 86400 - 25 * 60)
+
+        res_my = extract_otp_from_thread(raw, domain_filter="my.siteground.com", now=now)
+        self.assertIsNotNone(res_my)
+        self.assertEqual(res_my.code, "648551")
+        self.assertEqual(res_my.service, "siteground_auth")
+
+        # Body-only 'Use the code below to authenticate:' fallback for generic providers
+        raw_generic_auth = """
+ID: 737081
+Subject: Your AcmeHost authentication code
+From: AcmeHost <noreply@acmehost.example.org>
+To: alex.turner@example.com
+Date: 2026-04-15 20:15
+Type: Email
+
+Use the code below to authenticate:
+
+918273
+
+This code will expire in 15 minutes.
+"""
+        res_gen = extract_otp_from_thread(raw_generic_auth, domain_filter="login.acmehost.example.org", now=now)
+        self.assertIsNotNone(res_gen)
+        self.assertEqual(res_gen.code, "918273")
+        self.assertEqual(res_gen.time_remaining_seconds, 15 * 60 - 4 * 60)
+
 if __name__ == "__main__":
     unittest.main()
 

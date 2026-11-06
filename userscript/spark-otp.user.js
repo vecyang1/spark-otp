@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Spark OTP Autofill
 // @namespace    https://github.com/vecyang1/spark-otp
-// @version      1.6.1
+// @version      1.6.2
 // @description  Automatically extracts and autofills verification codes from Spark Desktop via local daemon across all websites
 // @author       V
 // @match        http://*/*
@@ -753,7 +753,7 @@
 
     const hasExplicitEmailContext = isCloudflareAccess
       || /(?:email[-_ ]*(?:verification[-_ ]*)?(?:code|otp|pin|token)|code[-_ ]*sent[-_ ]*to[-_ ]*email|邮箱验证码|邮件验证码)/i.test(combined)
-      || /(?:sent\s+(?:a\s+)?(?:\d+[- ]*(?:digit|char)\s+)?(?:verification\s+|security\s+|login\s+|device\s+|auth\s+|one[-_ ]*time\s+)?(?:code|passcode|pin|otp|email)\s+to|(?:verification|security)\s+code\s+sent\s+to|check\s+your\s+email|sent\s+(?:it\s+)?to\s+your\s+email|we\s+(?:just\s+|have\s+)?emailed\s+you|email\s+with\s+a\s+(?:verification\s+)?code|发送(?:至|到).*?邮箱|已向.*?发送.*?验证码|邮箱中的验证码|メールに.*?送信)/i.test(containerPrimaryText);
+      || /(?:sent\s+(?:a\s+)?(?:\d+[- ]*(?:digit|char)\s+)?(?:verification\s+|authentication\s+|security\s+|login\s+|device\s+|auth\s+|one[-_ ]*time\s+)?(?:code|passcode|pin|otp|email)\s+to|(?:verification|authentication|security|confirmation)\s+code\s+sent\s+to|enter\s+the\s+(?:authentication|verification|security|login|confirmation)\s+code\s+you\s+have\s+received|check\s+your\s+email|sent\s+(?:it\s+)?to\s+your\s+email|we\s+(?:just\s+|have\s+)?emailed\s+you|email\s+with\s+a\s+(?:verification\s+|authentication\s+)?code|发送(?:至|到).*?邮箱|已向.*?发送.*?验证码|邮箱中的验证码|メールに.*?送信)/i.test(containerPrimaryText);
 
     // =========================================================================
     // PRIORITY GATE A: Credit / Debit Card & Payment Checkout Disqualification
@@ -851,9 +851,9 @@
 
     // Explicit Positive OTP markers that override ambiguous keywords (must be specific code/passcode/pin/token)
     const isExplicitOtpMarker = /(?:two[-_ ]*factor|twofa|second[-_ ]*factor|one[-_ ]*time|mfa)[-_ ]*(?:code|passcode|pin\b|token)/i.test(combined)
-      || /(?:verification|verify|auth|login|device|email)[-_ ]*(?:verification[-_ ]*)?(?:code|passcode|pin\b|token)/i.test(combined)
+      || /(?:verification|verify|auth(?:entication)?|login|device|email|confirm(?:ation)?)[-_ ]*(?:verification[-_ ]*|authentication[-_ ]*)?(?:code|passcode|pin\b|token)/i.test(combined)
       || (!effectiveEmailOnly && /(?:phone|sms)[-_ ]*(?:verification[-_ ]*)?(?:code|passcode|pin\b|token)/i.test(combined))
-      || /(?:devicecode|device_code|twofactorauthcode|twofactorcode|twofacode|otpcode|email_code)/i.test(combined)
+      || /(?:devicecode|device_code|twofactorauthcode|twofactorcode|twofacode|otpcode|email_code|authenticationcode|authentication_code|confirmationcode|confirmation_code)/i.test(combined)
       || (!effectiveEmailOnly && /(?:sms_code)/i.test(combined))
       || /(?:^|[\W_])(?:otp|passcode)(?:[\W_]|$)/i.test(name)
       || /(?:^|[\W_])(?:otp|passcode)(?:[\W_]|$)/i.test(id)
@@ -1052,7 +1052,7 @@
       } catch (e) {}
 
       const textSample = `${name} ${id} ${placeholder} ${aria} ${title} ${className} ${labelText}`;
-      if (/(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|sms[-_ ]*code|email[-_ ]*code|security[-_ ]*code|auth[-_ ]*code|login[-_ ]*code|device[-_ ]*code|code[-_ ]*input|pin[-_ ]*input|otp[-_ ]*input|codeinput|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(textSample) || /(?:sent\s*to\s*(?:your\s*)?(?:email|phone|mobile|device)|check\s*your\s*(?:email|phone|inbox|sms)|보낸|전송|enviado|envoyé|gesendet|отправлен)/i.test(textSample)) {
+      if (/(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|sms[-_ ]*code|email[-_ ]*code|security[-_ ]*code|auth(?:entication)?[-_ ]*code|confirm(?:ation)?[-_ ]*code|login[-_ ]*code|device[-_ ]*code|code[-_ ]*input|pin[-_ ]*input|otp[-_ ]*input|codeinput|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(textSample) || /(?:sent\s*to\s*(?:your\s*)?(?:email|phone|mobile|device)|check\s*your\s*(?:email|phone|inbox|sms)|enter\s*the\s*(?:authentication|verification|security|login)\s*code\s*you\s*have\s*received|보낸|전송|enviado|envoyé|gesendet|отправлен)/i.test(textSample)) {
         return true;
       }
 
@@ -1063,7 +1063,7 @@
           const action = (typeof form.getAttribute === "function" ? form.getAttribute("action") : form.action) || "";
           const fId = form.id || "";
           const fCls = typeof form.className === "string" ? form.className : (typeof form.getAttribute === "function" ? form.getAttribute("class") : "") || "";
-          if (/(?:^|[\W_])(?:browser_auth|two[-_ ]*factor[-_ ]*code|totp[-_ ]*code|verify[-_ ]*code|enter[-_ ]*otp|cloudflare|access|login|signin)(?:[\W_]|$)/i.test(`${action} ${fId} ${fCls}`)) {
+          if (/(?:^|[\W_])(?:browser_auth|two[-_ ]*factor[-_ ]*code|totp[-_ ]*code|verify[-_ ]*code|verification[-_ ]*code|code[-_ ]*auth(?:entication)?|auth(?:entication)?[-_ ]*code|enter[-_ ]*otp|cloudflare|access|login|signin)(?:[\W_]|$)/i.test(`${action} ${fId} ${fCls}`)) {
             return true;
           }
         }
@@ -1076,7 +1076,7 @@
           const search = (window.location.search || "").toLowerCase();
           const host = (window.location.hostname || "").toLowerCase();
           const docTitle = (typeof document !== "undefined" && document.title ? document.title : "").toLowerCase();
-          if (/(?:browser_auth|two[-_ ]*factor[-_ ]*code|totp[-_ ]*code|verify[-_ ]*code|verification[-_ ]*code|cdn-cgi\/access)/i.test(path + " " + search) || /(?:cloudflareaccess\.com)/i.test(host) || /(?:two[-_ ]*factor|2fa|totp)\s*(?:code|passcode|verification)/i.test(docTitle)) {
+          if (/(?:browser_auth|two[-_ ]*factor[-_ ]*code|totp[-_ ]*code|verify[-_ ]*code|verification[-_ ]*code|code[-_ ]*auth(?:entication)?|auth(?:entication)?[-_ ]*code|cdn-cgi\/access)/i.test(path + " " + search) || /(?:cloudflareaccess\.com)/i.test(host) || /(?:two[-_ ]*factor|2fa|totp|authentication|verification)\s*(?:code|passcode|verification)/i.test(docTitle)) {
             return true;
           }
         }
@@ -1130,6 +1130,13 @@
       'input[name*="verifycode" i]',
       'input[name*="auth_code" i]',
       'input[name*="auth-code" i]',
+      'input[name*="authcode" i]',
+      'input[name*="authentication_code" i]',
+      'input[name*="authentication-code" i]',
+      'input[name*="authenticationcode" i]',
+      'input[name*="confirmation_code" i]',
+      'input[name*="confirmation-code" i]',
+      'input[name*="confirmationcode" i]',
       'input[name*="security_code" i]',
       'input[name*="security-code" i]',
       'input[name*="login_code" i]',
@@ -1160,11 +1167,21 @@
       'input[id*="verify_code" i]',
       'input[id*="auth-code" i]',
       'input[id*="auth_code" i]',
+      'input[id*="authcode" i]',
+      'input[id*="authentication-code" i]',
+      'input[id*="authentication_code" i]',
+      'input[id*="authenticationcode" i]',
+      'input[id*="confirmation-code" i]',
+      'input[id*="confirmation_code" i]',
+      'input[id*="confirmationcode" i]',
       'input[id*="security-code" i]',
       'input[id*="security_code" i]',
       'input[placeholder*="verification code" i]',
       'input[placeholder*="verification-code" i]',
       'input[placeholder*="verify code" i]',
+      'input[placeholder*="authentication code" i]',
+      'input[placeholder*="authentication-code" i]',
+      'input[placeholder*="confirmation code" i]',
       'input[placeholder*="device code" i]',
       'input[placeholder*="device verification code" i]',
       'input[placeholder*="two-factor code" i]',
@@ -1193,6 +1210,8 @@
       'input[placeholder*="รหัสยืนยัน" i]',
       'input[aria-label*="verification code" i]',
       'input[aria-label*="verify code" i]',
+      'input[aria-label*="authentication code" i]',
+      'input[aria-label*="confirmation code" i]',
       'input[aria-label*="device code" i]',
       'input[aria-label*="two-factor code" i]',
       'input[aria-label*="2fa code" i]',
@@ -1208,6 +1227,8 @@
       'input[data-testid*="verification-code" i]',
       'input[data-testid*="verification_code" i]',
       'input[data-testid*="verify-code" i]',
+      'input[data-testid*="authentication-code" i]',
+      'input[data-testid*="authentication_code" i]',
       'input[class*="CodeInput" i]',
       'input[class*="code-input" i]',
       'input[class*="code_input" i]'
@@ -1245,14 +1266,14 @@
       if (matches.length >= 4 && matches.length <= 8) return sortInputsByVisualOrder(matches);
     }
 
-    // 5. Label-based matching (handles WHMCS & custom forms where input has generic name/id but label has OTP text)
-    const labelElements = Array.from(document.querySelectorAll("label, [role='label'], .control-label, .form-label, .field-label, [class*='label' i]"));
+    // 5. Label-based matching (handles WHMCS, SiteGround & custom forms where input has generic name/id but label has OTP text)
+    const labelElements = Array.from(document.querySelectorAll("label, [role='label'], .control-label, .form-label, .field-label, [data-e2e*='label' i], [class*='label' i]"));
     for (const lbl of labelElements) {
       if (lbl.children && lbl.children.length > 4) continue;
       const labelText = (lbl.textContent || "").trim();
       if (labelText.length > 80) continue;
       if (/(?:security\s*notice|security\s*tips|will\s*send|will\s*be\s*sent|will\s*be\s*required|learn\s*more|terms|privacy|policy|guidelines?|faq)/i.test(labelText)) continue;
-      if (/(?:verification|security|login|device|two[-_ ]*factor|auth|one[-_ ]*time|sms|email)\s*(?:verification\s*)?(?:code|passcode|pin|token)|验证码|校验码|动态码|ワンタイム|認証コード/i.test(labelText)) {
+      if (/(?:verification|security|login|device|two[-_ ]*factor|auth(?:entication)?|confirm(?:ation)?|one[-_ ]*time|sms|email)\s*(?:verification\s*|authentication\s*)?(?:code|passcode|pin|token)|验证码|校验码|动态码|ワンタイム|認証コード/i.test(labelText)) {
         // 5a. Explicit label[for="id"]
         const forId = (typeof lbl.getAttribute === "function" ? lbl.getAttribute("for") : lbl.htmlFor) || "";
         if (forId) {
@@ -1266,8 +1287,8 @@
         if (nested && isInteractiveElement(nested) && !isDisqualifiedInput(nested)) {
           return [nested];
         }
-        // 5c. Form-group / control-group wrapper (standard in WHMCS / Bootstrap / Tailwind)
-        const container = lbl.closest ? lbl.closest('.control-group, .form-group, .field, .form-item, .form-row, .input-group, fieldset, tr') : null;
+        // 5c. Form-group / control-group / field-label wrapper (standard in WHMCS / SiteGround / Bootstrap / Tailwind)
+        const container = lbl.closest ? lbl.closest('.control-group, .form-group, .field, .form-item, .form-row, .input-group, .sg-field-label, [data-e2e*="field-label" i], [class*="field-label" i], fieldset, tr') : null;
         if (container) {
           const groupInput = container.querySelector && container.querySelector('input[type="text"], input[type="tel"], input[type="number"], input[type="password"], input:not([type])');
           if (groupInput && isInteractiveElement(groupInput) && !isDisqualifiedInput(groupInput)) {
@@ -1291,13 +1312,16 @@
       }
     }
 
-    // 6. Dedicated 2FA / OTP Form Context (e.g. WHMCS browser_auth.php, email 2FA modal dialogs)
+    // 6. Dedicated 2FA / OTP Form Context (e.g. WHMCS browser_auth.php, SiteGround /code-authentication, email 2FA modal dialogs)
     const allForms = Array.from(document.querySelectorAll("form"));
+    const locPathAndSearch = (typeof window !== "undefined" && window.location)
+      ? `${window.location.pathname || ""} ${window.location.search || ""}`
+      : "";
     const dedicatedAuthForms = allForms.filter(form => {
       const action = (typeof form.getAttribute === "function" ? form.getAttribute("action") : form.action) || "";
       const id = form.id || "";
       const cls = typeof form.className === "string" ? form.className : (typeof form.getAttribute === "function" ? form.getAttribute("class") : "") || "";
-      return /(?:^|[\W_])(?:browser_auth|two[-_ ]*factor[-_ ]*code|verify[-_ ]*code|enter[-_ ]*otp)(?:[\W_]|$)/i.test(`${action} ${id} ${cls}`);
+      return /(?:^|[\W_])(?:browser_auth|two[-_ ]*factor[-_ ]*code|verify[-_ ]*code|verification[-_ ]*code|code[-_ ]*auth(?:entication)?|auth(?:entication)?[-_ ]*code|enter[-_ ]*otp)(?:[\W_]|$)/i.test(`${action} ${id} ${cls} ${allForms.length === 1 ? locPathAndSearch : ""}`);
     });
     for (const form of dedicatedAuthForms) {
       const inputs = Array.from(form.querySelectorAll('input[type="text"], input[type="tel"], input[type="number"], input:not([type])'))
@@ -1817,7 +1841,7 @@
       } catch (e) {}
     }
     const ctxText = [s.contextText, s.formText, s.headingText, s.pageText].filter(Boolean).join(" ").trim();
-    return diagnoseDomInput(mockEl, {
+    const diag = diagnoseDomInput(mockEl, {
       label: s.label || s.labelText || "",
       contextText: ctxText,
       hostname: host,
@@ -1825,6 +1849,20 @@
       emailOnlyMode: typeof s.emailOnlyMode === "boolean" ? s.emailOnlyMode : undefined,
       customBlockedTerms: Array.isArray(s.customBlockedTerms) ? s.customBlockedTerms : undefined
     });
+    if (!diag.disqualified && diag.rule_id === "candidate_passed_disqualification") {
+      const affinityCorpus = `${attrs.name} ${attrs.id} ${attrs.placeholder} ${attrs["aria-label"]} ${attrs["data-testid"]} ${attrs.class} ${s.label || s.labelText || ""} ${ctxText} ${host} ${path}`;
+      const hasPositiveAffinity = /(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|sms[-_ ]*code|email[-_ ]*code|security[-_ ]*code|auth(?:entication)?[-_ ]*code|confirm(?:ation)?[-_ ]*code|login[-_ ]*code|device[-_ ]*code|code[-_ ]*input|pin[-_ ]*input|otp[-_ ]*input|codeinput|code[-_ ]*auth(?:entication)?|browser_auth|cdn-cgi\/access|cloudflareaccess|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(affinityCorpus);
+      if (!hasPositiveAffinity) {
+        return Object.assign({}, diag, {
+          qualified: false,
+          disqualified: false,
+          channel: "none",
+          rule_id: "not_matched_by_selectors",
+          reason: "Input not disqualified, but lacks OTP selector or label affinity"
+        });
+      }
+    }
+    return diag;
   }
 
   function diagnosePageDom() {

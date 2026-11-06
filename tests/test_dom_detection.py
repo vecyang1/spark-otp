@@ -2130,6 +2130,206 @@ class TestDomDetection(unittest.TestCase):
             self.assertIsNone(res["foundEmailId"], "Standard email+password form must NOT be flagged as passwordless email-OTP step")
             self.assertEqual(res["channel"], "none")
 
+    def test_siteground_code_authentication_dom_and_diagnostic_parity(self):
+        """
+        Verify SiteGround's https://login.siteground.com/code-authentication DOM structure:
+        <form action="">
+          <div class="sg-grid">
+            <label class="sg-field-label" data-e2e="form-field-label">
+              <span class="sg-text sg-form-label" data-e2e="form-label">Authentication code</span>
+              <span class="sg-field-wrapper">
+                <input class="sg-input sg-field" data-e2e="form-field" data-component="input" tabindex="0" value="">
+              </span>
+            </label>
+            <button type="submit" class="sg-button-base"><span class="sg-button--content">Submit</span></button>
+          </div>
+        </form>
+        where the <input> has no name, id, placeholder, autocomplete, or maxlength.
+        """
+        js_code = """
+        const fs = require('fs');
+        const vm = require('vm');
+        const contentJs = fs.readFileSync('extension/content.js', 'utf8');
+        const userJs = fs.readFileSync('userscript/spark-otp.user.js', 'utf8');
+
+        function extractSsoEngine(src) {
+            const startMarker = '// === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===';
+            const endMarker = '// === END CORE DOM DETECTION ENGINE (SSOT) ===';
+            return src.slice(src.indexOf(startMarker), src.indexOf(endMarker) + endMarker.length);
+        }
+
+        function runSiteGroundSuite(scriptSrc) {
+            const sgInput = {
+                tagName: 'INPUT',
+                type: 'text',
+                name: '',
+                id: '',
+                placeholder: '',
+                className: 'sg-input sg-field',
+                value: '',
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                getAttribute(k) {
+                    const map = {
+                        class: 'sg-input sg-field',
+                        'data-e2e': 'form-field',
+                        'data-component': 'input',
+                        tabindex: '0'
+                    };
+                    return map[k] || null;
+                },
+                getBoundingClientRect() { return { width: 320, height: 48, top: 240, left: 480 }; }
+            };
+
+            const sgLabelSpan = {
+                tagName: 'SPAN',
+                className: 'sg-text sg-form-label',
+                textContent: 'Authentication code',
+                children: [],
+                getAttribute(k) {
+                    if (k === 'data-e2e') return 'form-label';
+                    if (k === 'class') return 'sg-text sg-form-label';
+                    return null;
+                }
+            };
+
+            const sgLabel = {
+                tagName: 'LABEL',
+                className: 'sg-field-label',
+                textContent: 'Authentication code',
+                children: [sgLabelSpan, { tagName: 'SPAN', children: [sgInput] }],
+                getAttribute(k) {
+                    if (k === 'data-e2e') return 'form-field-label';
+                    if (k === 'class') return 'sg-field-label';
+                    return null;
+                },
+                querySelector(sel) {
+                    if (sel.includes('input')) return sgInput;
+                    return null;
+                },
+                closest(sel) {
+                    if (sel.includes('sg-field-label') || sel.includes('field-label')) return sgLabel;
+                    if (sel.includes('form')) return sgForm;
+                    return null;
+                }
+            };
+
+            const sgForm = {
+                tagName: 'FORM',
+                action: '',
+                id: '',
+                className: '',
+                textContent: 'Authentication code Enter the authentication code you have received: Authentication code Submit Resend Code',
+                getAttribute(k) { return k === 'action' ? '' : null; },
+                querySelector(sel) {
+                    if (sel.includes('input')) return sgInput;
+                    return null;
+                },
+                querySelectorAll(sel) {
+                    if (sel.includes('input')) return [sgInput];
+                    return [];
+                }
+            };
+
+            sgInput.form = sgForm;
+            sgInput.parentElement = sgLabel;
+            sgInput.closest = (sel) => {
+                if (sel === 'label' || sel.includes('sg-field-label')) return sgLabel;
+                if (sel.includes('form')) return sgForm;
+                return null;
+            };
+            sgLabelSpan.closest = sgLabel.closest;
+
+            const headingH1 = { textContent: 'Authentication code' };
+
+            const mockDoc = {
+                title: 'SiteGround Login',
+                body: {
+                    textContent: sgForm.textContent,
+                    innerText: sgForm.textContent,
+                    querySelectorAll() { return []; }
+                },
+                querySelector(sel) {
+                    if (sel.includes('input[autocomplete') || sel.includes('data-input-otp')) return null;
+                    return null;
+                },
+                querySelectorAll(sel) {
+                    if (sel.includes("label, [role='label']")) return [sgLabel, sgLabelSpan];
+                    if (sel === 'form') return [sgForm];
+                    if (sel.startsWith('input:not')) return [sgInput];
+                    if (sel.includes('h1, h2')) return [headingH1];
+                    return [];
+                }
+            };
+
+            const sandbox = {
+                window: {
+                    location: {
+                        hostname: 'login.siteground.com',
+                        pathname: '/code-authentication',
+                        search: '?redirect=https%3A%2F%2Fmy.siteground.com%2Faccept%2Fcollaboration%2F179395&lang=en',
+                        hash: '',
+                        href: 'https://login.siteground.com/code-authentication?redirect=https%3A%2F%2Fmy.siteground.com%2Faccept%2Fcollaboration%2F179395&lang=en'
+                    },
+                    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' })
+                },
+                document: mockDoc,
+                URL,
+                console
+            };
+            sandbox.window.top = sandbox.window;
+            sandbox.window.self = sandbox.window;
+
+            const ctx = vm.createContext(sandbox);
+            vm.runInContext(extractSsoEngine(scriptSrc), ctx);
+
+            const foundInputs = ctx.findOtpInputs();
+            const pageDiag = ctx.diagnosePageDom();
+            const syntheticSg = ctx.diagnoseSyntheticSample({
+                labelText: 'Authentication code',
+                formText: 'Authentication code Enter the authentication code you have received:',
+                url: 'https://login.siteground.com/code-authentication'
+            });
+            const syntheticNonOtp = ctx.diagnoseSyntheticSample({
+                labelText: 'Custom project memo',
+                name: 'memo_field',
+                url: 'https://app.example.com/settings'
+            });
+
+            return {
+                foundCount: foundInputs.length,
+                pageChannel: pageDiag.detected_channel,
+                pageRuleId: pageDiag.page_rule_id,
+                candidateQualified: pageDiag.candidates[0] ? pageDiag.candidates[0].qualified : false,
+                candidateRuleId: pageDiag.candidates[0] ? pageDiag.candidates[0].rule_id : null,
+                syntheticSg,
+                syntheticNonOtp
+            };
+        }
+
+        console.log(JSON.stringify({
+            ext: runSiteGroundSuite(contentJs),
+            user: runSiteGroundSuite(userJs)
+        }));
+        """
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        for target in ("ext", "user"):
+            r = data[target]
+            self.assertEqual(r["foundCount"], 1, f"{target}: SiteGround Authentication code input must be detected by findOtpInputs()")
+            self.assertEqual(r["pageChannel"], "email_otp", f"{target}: diagnosePageDom() must report email_otp")
+            self.assertEqual(r["pageRuleId"], "explicit_email_otp_marker", f"{target}: diagnosePageDom() must report explicit_email_otp_marker")
+            self.assertTrue(r["candidateQualified"], f"{target}: candidate must be qualified")
+            self.assertEqual(r["candidateRuleId"], "explicit_email_otp_marker")
+            self.assertTrue(r["syntheticSg"]["qualified"], f"{target}: synthetic SiteGround sample must qualify")
+            self.assertFalse(r["syntheticSg"]["disqualified"])
+            self.assertEqual(r["syntheticSg"]["rule_id"], "explicit_email_otp_marker")
+            self.assertFalse(r["syntheticNonOtp"]["qualified"], f"{target}: unrelated non-OTP sample must NOT qualify")
+            self.assertEqual(r["syntheticNonOtp"]["rule_id"], "not_matched_by_selectors")
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -70,7 +70,7 @@ Scope: project-local
   - **Adversarial Path**: Negative TTL rejection, future timestamp (clock skew) blocking, malformed CLI noise handling, rejected code blacklist filtering, and preventing infinite submission loops on `?incorrect=true`.
 
 ### 7. Evidence Rule
-- "没人跑的检查不算证据": Every architectural invariant and code path is protected by automated tests (183/183 passing) with verifiable stdout/stderr receipts and Playwright browser E2E verification.
+- "没人跑的检查不算证据": Every architectural invariant and code path is protected by automated tests (185/185 passing) with verifiable stdout/stderr receipts and Playwright browser E2E verification.
 
 ### 8. Strict Email-Only DOM Gating & UI Observability ("能读、能试、能调")
 - **Priority Gates A/B/C/D in `isDisqualifiedInput(el)`**: Evaluated strictly before `maxlength="1"`, `autocomplete="one-time-code"`, or `data-input-otp="true"` shortcuts so Credit/Debit Card forms (CVV / `Security code*` on LinkedIn Checkout), Authenticator App (TOTP / Google Authenticator / 1Password / Passkey) modals, SMS-only prompts, and `type="email"` fields never falsely trigger the Email OTP floating pill.

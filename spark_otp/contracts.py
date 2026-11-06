@@ -10,7 +10,7 @@ OPENAPI_SPEC: Dict[str, Any] = {
     "info": {
         "title": "Spark OTP Bridge API",
         "description": "Local zero-LLM high-speed OTP extraction bridge for Spark Desktop",
-        "version": "1.6.1"
+        "version": "1.6.2"
     },
     "servers": [
         {"url": "http://127.0.0.1:9428", "description": "Localhost Daemon"}
