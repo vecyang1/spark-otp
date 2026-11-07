@@ -1963,7 +1963,8 @@ class TestDomDetection(unittest.TestCase):
 
             self.assertTrue(r["smsBlockedDiag"]["disqualified"], f"{target}: SMS-only code must be blocked when emailOnlyMode=true")
             self.assertEqual(r["smsBlockedDiag"]["channel"], "sms_only_blocked")
-            self.assertFalse(r["smsAllowedDiag"]["disqualified"], f"{target}: SMS-only code must be allowed when emailOnlyMode=false")
+            self.assertTrue(r["smsAllowedDiag"]["disqualified"], f"{target}: SMS-only code must ALWAYS be blocked even when emailOnlyMode=false since Spark has no SMS capability")
+            self.assertEqual(r["smsAllowedDiag"]["channel"], "sms_only_blocked")
 
             self.assertTrue(r["customKeywordDiag"]["disqualified"], f"{target}: Custom blocked term must disqualify matching field")
             self.assertEqual(r["customKeywordDiag"]["rule_id"], "custom_blocked_term")
@@ -2329,6 +2330,244 @@ class TestDomDetection(unittest.TestCase):
             self.assertEqual(r["syntheticSg"]["rule_id"], "explicit_email_otp_marker")
             self.assertFalse(r["syntheticNonOtp"]["qualified"], f"{target}: unrelated non-OTP sample must NOT qualify")
             self.assertEqual(r["syntheticNonOtp"]["rule_id"], "not_matched_by_selectors")
+
+    def test_xiaohongshu_and_phone_sms_login_modal_disqualification(self):
+        """
+        Two-Sided Verification for Phone / SMS Login & Verification Modals:
+        1. Xiaohongshu (xiaohongshu.com) Phone Login modal ('手机号登录' + '+86 输入手机号' + '输入验证码' + '获取验证码' + '登录')
+           where the verification code input only has placeholder='输入验证码' and sits inside a single-input row wrapper:
+           - findOtpInputs() MUST return [] (never pop up the floating OTP pill).
+           - diagnosePageDom() MUST report detected_channel == 'sms_only_blocked'.
+        2. Masked phone number prompts ('已向 138****5678 发送验证码' and 'We sent a 6-digit verification code to +1 ***-***-4829')
+           MUST be blocked as 'sms_only_blocked' (never misclassified by hasExplicitEmailContext).
+        3. Graphic/image captcha inputs ('请输入图形验证码' / '图片验证码') MUST be blocked as 'promo_or_search_field'.
+        4. Genuine Email OTP prompts ('已向 alex.turner@example.com 发送验证码' / '邮箱验证码') MUST continue to qualify as 'email_otp'.
+        """
+        js_code = """
+        const fs = require('fs');
+        const vm = require('vm');
+        const contentJs = fs.readFileSync('extension/content.js', 'utf8');
+        const userJs = fs.readFileSync('userscript/spark-otp.user.js', 'utf8');
+
+        function extractSsoEngine(src) {
+            const startMarker = '// === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===';
+            const endMarker = '// === END CORE DOM DETECTION ENGINE (SSOT) ===';
+            return src.slice(src.indexOf(startMarker), src.indexOf(endMarker) + endMarker.length);
+        }
+
+        function runPhoneSmsSuite(scriptSrc) {
+            // Simulate Xiaohongshu login modal DOM:
+            // <div class="login-container">
+            //   <div class="right">
+            //     <div class="title">手机号登录</div>
+            //     <label class="phone-box"><span>+86</span><input placeholder="输入手机号" type="text"></label>
+            //     <label class="auth-code-box"><input placeholder="输入验证码" type="text"><span>获取验证码</span></label>
+            //     <button>登录</button>
+            //   </div>
+            // </div>
+            const phoneInput = {
+                tagName: 'INPUT',
+                type: 'text',
+                name: '',
+                id: '',
+                placeholder: '输入手机号',
+                className: 'css-phone-input',
+                value: '',
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                getAttribute(k) {
+                    const map = { placeholder: '输入手机号', type: 'text', class: 'css-phone-input' };
+                    return map[k] || null;
+                },
+                getBoundingClientRect() { return { width: 240, height: 42, top: 260, left: 600 }; }
+            };
+
+            const codeInput = {
+                tagName: 'INPUT',
+                type: 'text',
+                name: '',
+                id: '',
+                placeholder: '输入验证码',
+                className: 'css-code-input',
+                value: '',
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                getAttribute(k) {
+                    const map = { placeholder: '输入验证码', type: 'text', class: 'css-code-input', maxlength: '6' };
+                    return map[k] || null;
+                },
+                getBoundingClientRect() { return { width: 180, height: 42, top: 320, left: 600 }; }
+            };
+
+            const phoneBox = {
+                tagName: 'LABEL',
+                className: 'phone',
+                textContent: '+86',
+                children: [{ tagName: 'SPAN', textContent: '+86' }, phoneInput],
+                querySelectorAll(sel) {
+                    if (sel.includes('input')) return [phoneInput];
+                    return [];
+                },
+                querySelector() { return null; }
+            };
+
+            const codeBox = {
+                tagName: 'LABEL',
+                className: 'auth-code',
+                textContent: '获取验证码',
+                children: [codeInput, { tagName: 'SPAN', textContent: '获取验证码' }],
+                querySelectorAll(sel) {
+                    if (sel.includes('input')) return [codeInput];
+                    return [];
+                },
+                querySelector() { return null; }
+            };
+
+            const titleNode = {
+                tagName: 'DIV',
+                className: 'title',
+                textContent: '手机号登录',
+                getAttribute(k) { return k === 'class' ? 'title' : null; }
+            };
+
+            const rightPane = {
+                tagName: 'DIV',
+                className: 'right',
+                textContent: '手机号登录 +86 获取验证码 登录 我已阅读并同意《用户协议》《隐私政策》 新用户可直接登录',
+                children: [titleNode, phoneBox, codeBox],
+                querySelectorAll(sel) {
+                    if (sel === 'input') return [phoneInput, codeInput];
+                    if (sel.includes('input, select')) return [titleNode, phoneInput, codeInput];
+                    if (sel.includes('a, button')) return [{ tagName: 'BUTTON', textContent: '登录', className: 'submit' }];
+                    return [];
+                },
+                querySelector() { return null; }
+            };
+
+            phoneInput.parentElement = phoneBox;
+            codeInput.parentElement = codeBox;
+            phoneBox.parentElement = rightPane;
+            codeBox.parentElement = rightPane;
+            rightPane.parentElement = { tagName: 'BODY', textContent: rightPane.textContent };
+
+            codeInput.closest = (sel) => {
+                if (sel === 'label') return codeBox;
+                if (sel.includes('[class*="auth" i]')) return codeBox;
+                return null;
+            };
+            phoneInput.closest = (sel) => (sel === 'label' ? phoneBox : null);
+
+            const mockDoc = {
+                title: '阳朔 萤爱 歌手 - 小红书搜索',
+                body: {
+                    textContent: rightPane.textContent,
+                    innerText: rightPane.textContent,
+                    querySelectorAll() { return [phoneInput, codeInput]; }
+                },
+                querySelector() { return null; },
+                querySelectorAll(sel) {
+                    if (sel.includes('placeholder*="验证码"')) return [codeInput];
+                    if (sel.startsWith('input:not')) return [phoneInput, codeInput];
+                    return [];
+                }
+            };
+
+            const sandbox = {
+                window: {
+                    location: {
+                        hostname: 'www.xiaohongshu.com',
+                        pathname: '/search_result/',
+                        search: '?keyword=test&type=51',
+                        hash: '',
+                        href: 'https://www.xiaohongshu.com/search_result/?keyword=test&type=51'
+                    },
+                    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' })
+                },
+                document: mockDoc,
+                URL,
+                console
+            };
+            sandbox.window.top = sandbox.window;
+            sandbox.window.self = sandbox.window;
+
+            const ctx = vm.createContext(sandbox);
+            vm.runInContext(extractSsoEngine(scriptSrc), ctx);
+
+            const xhsFound = ctx.findOtpInputs();
+            const xhsPageDiag = ctx.diagnosePageDom();
+            const xhsCodeDiag = ctx.diagnoseDomInput(codeInput);
+
+            // Synthetic test 1: Masked Chinese phone number prompt ('已向 138****5678 发送验证码')
+            const maskedCnPhoneDiag = ctx.diagnoseSyntheticSample({
+                placeholder: '输入验证码',
+                maxLength: 6,
+                formText: '安全验证 已向 138****5678 发送验证码，请输入6位验证码'
+            });
+
+            // Synthetic test 2: Masked international phone prompt ('We sent a 6-digit verification code to +1 ***-***-4829')
+            const maskedIntlPhoneDiag = ctx.diagnoseSyntheticSample({
+                placeholder: 'Enter 6-digit code',
+                maxLength: 6,
+                formText: 'We sent a 6-digit verification code to +1 ***-***-4829'
+            });
+
+            // Synthetic test 3: Graphic/Image Captcha ('请输入图形验证码')
+            const graphicCaptchaDiag = ctx.diagnoseSyntheticSample({
+                placeholder: '请输入图形验证码',
+                maxLength: 4,
+                formText: '账号登录'
+            });
+
+            // Synthetic test 4: Genuine Email OTP ('已向 alex.turner@example.com 发送验证码')
+            const genuineEmailDiag = ctx.diagnoseSyntheticSample({
+                placeholder: '输入验证码',
+                maxLength: 6,
+                formText: '安全验证 已向 alex.turner@example.com 发送验证码，请前往邮箱查收'
+            });
+
+            return {
+                xhsFoundCount: xhsFound.length,
+                xhsPageChannel: xhsPageDiag.detected_channel,
+                xhsCodeDisqualified: xhsCodeDiag.disqualified,
+                xhsCodeChannel: xhsCodeDiag.channel,
+                xhsCodeRuleId: xhsCodeDiag.rule_id,
+                maskedCnPhoneDiag,
+                maskedIntlPhoneDiag,
+                graphicCaptchaDiag,
+                genuineEmailDiag
+            };
+        }
+
+        console.log(JSON.stringify({
+            ext: runPhoneSmsSuite(contentJs),
+            user: runPhoneSmsSuite(userJs)
+        }));
+        """
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        for target in ("ext", "user"):
+            r = data[target]
+            self.assertEqual(r["xhsFoundCount"], 0, f"{target}: Xiaohongshu phone login modal must NOT trigger OTP input detection")
+            self.assertEqual(r["xhsPageChannel"], "sms_only_blocked", f"{target}: Xiaohongshu page diagnosis must report sms_only_blocked")
+            self.assertTrue(r["xhsCodeDisqualified"], f"{target}: Xiaohongshu codeInput must be disqualified")
+            self.assertEqual(r["xhsCodeChannel"], "sms_only_blocked")
+
+            self.assertTrue(r["maskedCnPhoneDiag"]["disqualified"], f"{target}: Masked Chinese phone prompt must be blocked")
+            self.assertEqual(r["maskedCnPhoneDiag"]["channel"], "sms_only_blocked")
+
+            self.assertTrue(r["maskedIntlPhoneDiag"]["disqualified"], f"{target}: Masked international phone prompt must be blocked")
+            self.assertEqual(r["maskedIntlPhoneDiag"]["channel"], "sms_only_blocked")
+
+            self.assertTrue(r["graphicCaptchaDiag"]["disqualified"], f"{target}: Graphic captcha must be blocked")
+            self.assertEqual(r["graphicCaptchaDiag"]["rule_id"], "promo_or_search_field")
+
+            self.assertFalse(r["genuineEmailDiag"]["disqualified"], f"{target}: Genuine Email OTP must NOT be blocked")
+            self.assertTrue(r["genuineEmailDiag"]["qualified"], f"{target}: Genuine Email OTP must qualify")
+            self.assertEqual(r["genuineEmailDiag"]["channel"], "email_otp")
 
 if __name__ == "__main__":
     unittest.main()

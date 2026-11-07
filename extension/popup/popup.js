@@ -627,13 +627,13 @@ document.addEventListener("DOMContentLoaded", async () => {
         reason: "Blocked Authenticator App (TOTP / 2FA App) prompt."
       };
     }
-    if (emailOnlyMode && (/sms|text\s*message|短信|手机验证码/i.test(ctx)) && !(/email|e-mail|邮箱|邮件/i.test(ctx))) {
+    if ((/sms|text\s*message|phone\s*(?:login|verification|number|code)|mobile\s*(?:login|verification|number|code)|短信|手机验证码|手机号登录|手机登录|输入手机号|请输入手机号|\+86/i.test(ctx)) && !(/email|e-mail|邮箱|邮件/i.test(ctx))) {
       return {
         disqualified: true,
         qualified: false,
         channel: "sms_only_blocked",
         rule_id: "sms_only_context",
-        reason: "Blocked SMS/Phone verification field (Strict Email-Only Mode enabled)."
+        reason: "Blocked SMS/Phone verification field (Spark Mail has no phone SMS capability)."
       };
     }
     if (/otp|verification\s*code|authentication\s*code|confirmation\s*code|login\s*code|security\s*code|验证码|one-time-code/i.test(ctx)) {

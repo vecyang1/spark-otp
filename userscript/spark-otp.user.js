@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Spark OTP Autofill
 // @namespace    https://github.com/vecyang1/spark-otp
-// @version      1.6.2
+// @version      1.6.3
 // @description  Automatically extracts and autofills verification codes from Spark Desktop via local daemon across all websites
 // @author       V
 // @match        http://*/*
@@ -680,6 +680,7 @@
 
     let containerPrimaryText = (options.contextText || "").toLowerCase();
     let hasSiblingCardFields = false;
+    let hasSiblingPhoneFields = false;
     let formMetaText = "";
 
     try {
@@ -692,32 +693,81 @@
         formMetaText = `${fAction} ${fId} ${fName} ${fCls}`.toLowerCase();
       }
 
-      const outerScopeEl = (el.closest && el.closest('form, fieldset, [role="dialog"], [role="region"], .modal, .card, .checkout, main, section')) || formEl;
-      const scopeEl = outerScopeEl
-        || (el.closest && el.closest('[class*="payment" i], [class*="checkout" i], [class*="billing" i], [class*="auth" i], [class*="verify" i], [class*="login" i], [class*="mfa" i], [class*="2fa" i]'))
-        || el.parentElement
-        || (typeof document !== "undefined" ? document.body : null);
+      const dialogOrCardEl = (el.closest && el.closest('form, fieldset, [role="dialog"], [role="alertdialog"], [class*="modal" i], [class*="dialog" i], [class*="popup" i], [class*="drawer" i], .card, .checkout')) || formEl;
+      const authWrapEl = el.closest && el.closest('[class*="payment" i], [class*="checkout" i], [class*="billing" i], [class*="auth" i], [class*="verify" i], [class*="login" i], [class*="sign" i], [class*="passport" i], [class*="mfa" i], [class*="2fa" i]');
 
-      if (scopeEl) {
+      // Climb up local ancestors (up to 6 levels, stopping before BODY/HTML/MAIN) so single-row wrappers
+      // (e.g. div.code-row inside div.login-container on Xiaohongshu) expand to the full login/verification panel
+      let localPanelEl = el.parentElement || null;
+      let steps = 0;
+      while (localPanelEl && localPanelEl.parentElement && steps < 6) {
+        const parent = localPanelEl.parentElement;
+        const pTag = (parent.tagName || "").toUpperCase();
+        if (pTag === "BODY" || pTag === "HTML" || pTag === "MAIN") break;
+        const pTextLen = (parent.textContent || "").length;
+        if (pTextLen > 2400) break;
+        const currInputs = typeof localPanelEl.querySelectorAll === "function" ? localPanelEl.querySelectorAll("input").length : 0;
+        const pClsAndId = `${typeof parent.className === "string" ? parent.className : ""} ${parent.id || ""}`;
+        if (currInputs <= 1 || /(?:login|auth|verify|sign|modal|dialog|form|card|panel|box|container|right|content|passport|sms|phone|mobile|account)/i.test(pClsAndId)) {
+          localPanelEl = parent;
+          steps++;
+        } else {
+          break;
+        }
+      }
+
+      const primaryScopeEl = dialogOrCardEl || localPanelEl || authWrapEl || el.parentElement || (!options.isSyntheticSample && typeof document !== "undefined" ? document.body : null);
+      const scopeSet = [];
+      for (const candidate of [primaryScopeEl, localPanelEl, authWrapEl, formEl]) {
+        if (candidate && !scopeSet.includes(candidate)) {
+          scopeSet.push(candidate);
+        }
+      }
+
+      const switcherPhraseRegex = /(?:instead|another\s+way|other\s+method|other\s+options?|try\s+another|switch\s+to|use\s+(?:authenticator|authentication\s+app|2fa\s+app|sms|phone|mobile|text|passkey|security\s+key|backup|recovery)|verify\s+(?:via|with|by|using)\s+(?:sms|phone|authenticator)|其他(?:验证)?方式|换一种方式|切换验证方式|使用(?:身份)?验证器|使用短信验证|使用手机验证)/i;
+      let cardSignals = 0;
+      let phoneSignals = 0;
+      const siblingInputHints = [];
+
+      for (const scopeEl of scopeSet) {
         if (typeof scopeEl.querySelectorAll === "function") {
-          const siblingNodes = scopeEl.querySelectorAll("input, select, label, legend, h1, h2, h3, h4, [class*='label' i], [class*='title' i], [class*='header' i]");
-          let cardSignals = 0;
+          const siblingNodes = scopeEl.querySelectorAll("input, select, label, legend, h1, h2, h3, h4, [class*='label' i], [class*='title' i], [class*='header' i], [class*='tab' i], [class*='prefix' i], [class*='country' i], [class*='area' i]");
           for (const node of siblingNodes) {
             if (node === el) continue;
+            const nTag = (node.tagName || "").toUpperCase();
+            const nType = (node.type || "").toLowerCase();
             const nAuto = (typeof node.getAttribute === "function" ? (node.getAttribute("autocomplete") || "") : (node.autocomplete || "")).toLowerCase();
             const nName = (node.name || "").toLowerCase();
             const nId = (node.id || "").toLowerCase();
             const nPh = (node.placeholder || "").toLowerCase();
             const nAria = (typeof node.getAttribute === "function" ? (node.getAttribute("aria-label") || "") : "").toLowerCase();
-            const nTxt = (node.tagName !== "INPUT" && node.tagName !== "SELECT" ? (node.textContent || "") : "").toLowerCase();
-            const nMeta = `${nAuto} ${nName} ${nId} ${nPh} ${nAria} ${nTxt}`;
+            const nTestId = (typeof node.getAttribute === "function" ? (node.getAttribute("data-testid") || "") : "").toLowerCase();
+            const nCls = typeof node.className === "string" ? node.className.toLowerCase() : (typeof node.getAttribute === "function" ? (node.getAttribute("class") || "") : "").toLowerCase();
+            const nTxt = (nTag !== "INPUT" && nTag !== "SELECT" ? (node.textContent || "") : "").toLowerCase();
+            const nMeta = `${nAuto} ${nName} ${nId} ${nPh} ${nAria} ${nTestId} ${nCls} ${nTxt}`;
+
+            if (nTag === "INPUT" || nTag === "SELECT") {
+              if (nPh) siblingInputHints.push(nPh);
+              if (nAria) siblingInputHints.push(nAria);
+              const nMaxLenVal = typeof node.getAttribute === "function" ? node.getAttribute("maxlength") : node.maxLength;
+              const nMaxLen = parseInt(nMaxLenVal, 10);
+              const isSiblingOtpBox = (!isNaN(nMaxLen) && nMaxLen <= 8)
+                || /(?:code|otp|pin|token|verify|passcode|验证码|校验码|动态码|認証コード)/i.test(`${nName} ${nId} ${nPh} ${nAria}`);
+
+              if (!isSiblingOtpBox && nType !== "hidden" && nType !== "checkbox" && nType !== "radio" && nType !== "submit" && nType !== "button") {
+                if (/(?:^|[\s_-])(?:tel|tel-national|tel-local|tel-country-code|mobile)(?:$|[\s_-])/i.test(nAuto)
+                    || /(?:phone[-_ ]*num(?:ber)?|mobile[-_ ]*num(?:ber)?|tel[-_ ]*num(?:ber)?|cell[-_ ]*phone|telephone|手机号|手机号码|输入手机号|请输入手机号|填写手机号|电话号码|联系电话|本机号码|電話番号|携帯番号|携帯電話番号|휴대폰\s*번호|전화번호|số\s*điện\s*thoại|เบอร์โทรศัพท์|เบอร์มือถือ)/i.test(nMeta)
+                    || ((/(?:^|[\W_])(?:phone|mobile|tel|cellphone|phonenumber|mobilenumber|user_phone|user_mobile|login_phone)(?:[\W_]|$)/i.test(`${nName} ${nId}`)) && !/(?:email|mail)/i.test(`${nName} ${nId}`))
+                    || (nType === "tel" && (isNaN(nMaxLen) || nMaxLen >= 10))) {
+                  phoneSignals++;
+                }
+              }
+            }
+
             if (/(?:^|[\s_-])cc-(?:number|exp|exp-month|exp-year|name|type|csc)(?:$|[\s_-])/i.test(nAuto)
                 || /(?:credit\s*\/?\s*debit\s*card|credit\s+or\s+debit\s+card|select\s+your\s+payment\s+method|saved\s+payment\s+methods|card\s*number|cardholder|name\s+on\s+card|expiration\s*date|expiry\s*date|mm\s*\/\s*yy|信用卡|借记卡|银行卡号)/i.test(nMeta)) {
               cardSignals++;
             }
-          }
-          if (cardSignals >= 1) {
-            hasSiblingCardFields = true;
           }
         }
 
@@ -726,7 +776,9 @@
           const switchers = scopeEl.querySelectorAll('a, button, [role="button"], [role="link"], nav, footer, [class*="switch" i], [class*="alternate" i], [class*="another-way" i], [class*="try-another" i]');
           for (const sw of switchers) {
             const swTxt = (sw.textContent || "").trim().toLowerCase();
-            if (swTxt && swTxt.length > 0 && swTxt.length < 200) {
+            const swCls = typeof sw.className === "string" ? sw.className : "";
+            const isExplicitSwitcherContainer = /(?:switch|alternate|another-way|try-another)/i.test(swCls);
+            if (swTxt && swTxt.length > 0 && swTxt.length < 200 && (isExplicitSwitcherContainer || switcherPhraseRegex.test(swTxt))) {
               rawScope = rawScope.split(swTxt).join(" ");
             }
           }
@@ -734,6 +786,16 @@
         if (rawScope.trim()) {
           containerPrimaryText = `${containerPrimaryText} ${rawScope}`.trim();
         }
+      }
+
+      if (siblingInputHints.length > 0) {
+        containerPrimaryText = `${containerPrimaryText} ${siblingInputHints.join(" ")}`.trim();
+      }
+      if (cardSignals >= 1) {
+        hasSiblingCardFields = true;
+      }
+      if (phoneSignals >= 1) {
+        hasSiblingPhoneFields = true;
       }
     } catch (e) {}
 
@@ -751,9 +813,14 @@
       }
     }
 
+    const hasPhoneOrSmsSignalInContext = hasSiblingPhoneFields
+      || /(?:sms|text\s+message|phone\s+number|mobile\s+number|whatsapp|手机号|手机号码|短信|手机验证|手机登录|语音验证码|電話番号|携帯番号|휴대폰|문자\s*인증|số\s*điện\s*thoại|เบอร์โทรศัพท์)/i.test(`${combined} ${containerPrimaryText} ${formMetaText}`);
+
     const hasExplicitEmailContext = isCloudflareAccess
-      || /(?:email[-_ ]*(?:verification[-_ ]*)?(?:code|otp|pin|token)|code[-_ ]*sent[-_ ]*to[-_ ]*email|邮箱验证码|邮件验证码)/i.test(combined)
-      || /(?:sent\s+(?:a\s+)?(?:\d+[- ]*(?:digit|char)\s+)?(?:verification\s+|authentication\s+|security\s+|login\s+|device\s+|auth\s+|one[-_ ]*time\s+)?(?:code|passcode|pin|otp|email)\s+to|(?:verification|authentication|security|confirmation)\s+code\s+sent\s+to|enter\s+the\s+(?:authentication|verification|security|login|confirmation)\s+code\s+you\s+have\s+received|check\s+your\s+email|sent\s+(?:it\s+)?to\s+your\s+email|we\s+(?:just\s+|have\s+)?emailed\s+you|email\s+with\s+a\s+(?:verification\s+|authentication\s+)?code|发送(?:至|到).*?邮箱|已向.*?发送.*?验证码|邮箱中的验证码|メールに.*?送信)/i.test(containerPrimaryText);
+      || /(?:email[-_ ]*(?:verification[-_ ]*|auth(?:entication)?[-_ ]*|login[-_ ]*|security[-_ ]*)?(?:code|otp|pin|token|passcode)|code[-_ ]*sent[-_ ]*to[-_ ]*email|邮箱验证码|邮件验证码|邮箱校验码|邮件校验码|メールアドレス認証)/i.test(combined)
+      || /(?:check\s+your\s+email|sent\s+(?:it\s+|a\s+code\s+)?to\s+your\s+email|we\s+(?:just\s+|have\s+)?emailed\s+you|email\s+with\s+a\s+(?:verification\s+|authentication\s+|security\s+|login\s+)?code|enter\s+the\s+code\s+sent\s+to\s+your\s+email|发送(?:至|到).*?邮箱|已向.*?邮箱.*?发送|邮箱中的验证码|查收.*?邮件|查收.*?邮箱|メール(?:アドレス)?に.*?送信|メールに記載された)/i.test(containerPrimaryText)
+      || /(?:sent\s+(?:a\s+)?(?:\d+[- ]*(?:digit|char)\s+)?(?:verification\s+|authentication\s+|security\s+|login\s+|device\s+|auth\s+|one[-_ ]*time\s+)?(?:code|passcode|pin|otp|email)\s+to|(?:verification|authentication|security|confirmation)\s+code\s+sent\s+to|已(?:将.*?验证码)?发送(?:至|到)|已向)\s*:?\s*[^\s,;:]{1,64}@[^\s,;:]{1,64}/i.test(containerPrimaryText)
+      || (!hasPhoneOrSmsSignalInContext && /enter\s+the\s+(?:authentication|verification|security|login|confirmation)\s+code\s+you\s+have\s+received/i.test(containerPrimaryText));
 
     // =========================================================================
     // PRIORITY GATE A: Credit / Debit Card & Payment Checkout Disqualification
@@ -797,24 +864,33 @@
     }
 
     // =========================================================================
-    // PRIORITY GATE C: Strict Email-Only Mode — Block SMS / Phone-Only OTPs
+    // PRIORITY GATE C: Unconditional Phone / SMS / Voice OTP Disqualification
+    // (Spark Mail & Apple Mail are email clients with zero phone SMS capability)
     // =========================================================================
-    if (effectiveEmailOnly) {
-      if (/(?:sms[-_ ]*(?:verification[-_ ]*)?(?:code|otp|pin|token)|phone[-_ ]*(?:verification[-_ ]*)?(?:code|otp|pin|token)|mobile[-_ ]*(?:verification[-_ ]*)?(?:code|otp|pin)|whatsapp[-_ ]*(?:code|otp)|text[-_ ]*message[-_ ]*code|短信验证码|手机验证码|短信校验码|手机校验码|SMS認証|SMS確認コード)/i.test(combined)
-          && !/(?:email|邮箱|邮件|メール)/i.test(combined)) {
-        return finish(true, "sms_only_field", "SMS/Phone verification field blocked by Strict Email-Only Mode", "sms_only_blocked");
-      }
-      if (/(?:sent\s+(?:a\s+)?(?:\d+[- ]*digit\s+)?(?:verification\s+|security\s+)?code\s+(?:via\s+sms|by\s+sms|to\s+your\s+phone|to\s+your\s+mobile)|we\s+texted\s+(?:a\s+code|you)|text\s+message\s+sent\s+to|enter\s+the\s+code\s+sent\s+to\s+your\s+(?:phone|mobile)|已将短信验证码发送至|短信验证码已发送)/i.test(containerPrimaryText)
-          && !hasExplicitEmailContext) {
-        return finish(true, "sms_only_context", "SMS/Phone-only verification prompt blocked by Strict Email-Only Mode", "sms_only_blocked");
-      }
+    // C1. Explicit SMS / Phone / Mobile / Voice / WhatsApp OTP attributes on input or label
+    if (/(?:(?:^|[\W_])sms(?:[-_ ]*(?:verification[-_ ]*|verify[-_ ]*|auth(?:entication)?[-_ ]*|login[-_ ]*|security[-_ ]*)?(?:code|otp|pin|token|passcode|input|field|num(?:ber)?))?(?:[\W_]|$)|(?:phone|mobile|tel|cellphone|whatsapp|voice)[-_ ]*(?:verification[-_ ]*|verify[-_ ]*|auth(?:entication)?[-_ ]*|login[-_ ]*|security[-_ ]*)?(?:code|otp|pin|token|passcode)|(?:smscode|smsotp|phonecode|phoneotp|mobilecode|mobileotp|telcode|verify_sms|sms_verify|phone_verify)|text[-_ ]*message[-_ ]*(?:verification[-_ ]*)?(?:code|otp|pin)|短信验证码|手机验证码|短信校验码|手机校验码|短信动态码|手机动态码|语音验证码|短信码|手机码|手机号验证码|手机短信验证码|SMS認証|SMS確認コード|SMSコード|電話番号認証|문자\s*인증|휴대폰\s*인증|mã\s*(?:xác\s*thực\s*|xác\s*minh\s*|otp\s*)?sms|รหัส\s*(?:ยืนยัน\s*|otp\s*)?sms)/i.test(combined)
+        && !/(?:email|e-mail|邮箱|邮件|メール)/i.test(combined)) {
+      return finish(true, "sms_only_field", "SMS/Phone verification field blocked (Spark Mail has no phone SMS capability)", "sms_only_blocked");
+    }
+
+    // C2. Companion Phone / Mobile Number input in the same login/verification form or modal (e.g. Xiaohongshu "+86 输入手机号" + "输入验证码")
+    if (hasSiblingPhoneFields && !hasExplicitEmailContext) {
+      return finish(true, "sms_only_companion_field", "Phone/SMS login or verification form detected (sibling phone number input present; Spark Mail has no phone SMS capability)", "sms_only_blocked");
+    }
+
+    // C3. Enclosing modal/form/container prompts for Phone login or SMS verification
+    if ((/(?:sent\s+(?:a\s+)?(?:\d+[- ]*(?:digit|char)\s+)?(?:verification\s+|security\s+|login\s+|one[-_ ]*time\s+)?(?:code|otp|pin|passcode)\s+(?:via\s+sms|by\s+sms|via\s+text|by\s+text|to\s+your\s+(?:phone|mobile|cell)|via\s+whatsapp)|(?:verification|security|login|confirmation)\s+code\s+sent\s+(?:via\s+sms|by\s+sms|to\s+your\s+(?:phone|mobile))|we\s+(?:just\s+)?texted\s+(?:a\s+code|you)|we\s+sent\s+(?:an\s+sms|a\s+text\s+message)|text\s+message\s+sent\s+to|sms\s+sent\s+to|enter\s+the\s+(?:\d+[- ]*digit\s+)?code\s+sent\s+to\s+your\s+(?:phone|mobile|number)|check\s+your\s+(?:phone|mobile|text\s+messages|sms)\s+for\s+(?:a\s+|the\s+)?(?:verification\s+|security\s+|login\s+)?code|(?:phone|mobile|sms)\s+(?:number\s+)?(?:login|sign\s*in|verification|verify)|(?:log\s*in|sign\s*in|continue)\s+with\s+(?:your\s+)?(?:phone|mobile|sms)|verify\s+your\s+(?:phone|mobile)(?:\s+number)?|enter\s+your\s+(?:phone|mobile)\s+number|send\s+(?:code\s+via\s+|via\s+)?sms|get\s+sms\s+code|whatsapp\s+(?:verification|code|otp)|手机号登录|手机登录|手机号码登录|手机快捷登录|手机号快捷登录|短信登录|短信验证码登录|手机验证码登录|手机号一键登录|手机号注册|手机注册|手机安全验证|手机验证|短信验证|验证手机号|验证手机号码|绑定手机|绑定手机号|更换手机|更换手机号|修改手机号|输入手机号|请输入手机号|请填写手机号|请输入手机号码|输入手机号码|获取短信验证码|发送短信验证码|重新获取短信|短信验证码|手机验证码|短信校验码|手机校验码|语音验证码|已将(?:短信)?验证码发送至|短信验证码已发送|验证码已发送至手机|已发送(?:短信)?至\s*(?:\+\d|\d{3})|已向(?:您的)?手机|发送(?:至|到)(?:您的)?手机|手机收到的验证码|查收短信|短信中的验证码|電話番号でログイン|電話番号認証|携帯電話番号を入力|SMSで(?:認証|送信)|ショートメッセージ|전화번호\s*로그인|휴대폰\s*(?:번호\s*)?(?:로그인|인증)|문자\s*인증|휴대폰\s*번호를\s*입력|đăng\s*nhập\s*bằng\s*số\s*điện\s*thoại|xác\s*thực\s*số\s*điện\s*thoại|nhập\s*số\s*điện\s*thoại|gửi\s*mã\s*qua\s*sms|เข้าสู่ระบบด้วยเบอร์โทรศัพท์|ยืนยันเบอร์โทรศัพท์|กรอกเบอร์โทรศัพท์)/i.test(`${containerPrimaryText} ${formMetaText}`)
+        || /(?:sent\s+(?:a\s+)?(?:[\w-]+\s+){0,4}(?:code|otp|pin|passcode)\s+to|code\s+sent\s+to|发送(?:至|到)|已发送(?:至|到)?|已向)\s*:?\s*(?:\+\d{1,4}[\s-]*)?(?:\d{2,4}[\s-]*\*{3,}[\s-]*\d{2,4}|\*{3,}[\s-]*\*{3,}[\s-]*\d{3,4}|1[3-9]\d\*{4}\d{4})/i.test(containerPrimaryText)
+        || /(?:^|[\s(])(?:\+86|\+852|\+853|\+886)(?:[\s)]|$)[\s\S]{0,120}(?:验证码|获取验证码)/i.test(containerPrimaryText))
+        && !hasExplicitEmailContext) {
+      return finish(true, "sms_only_context", "SMS/Phone verification prompt blocked (Spark Mail has no phone SMS capability)", "sms_only_blocked");
     }
 
     // =========================================================================
     // PRIORITY GATE D: Negative Semantic Patterns (Promo, Search, Zip, URLs)
     // =========================================================================
     // 1. Promo, coupon, discounts, search, captcha, referral, invitation, affiliate, voucher, rewards, redemption
-    const promoAndSearch = /(?:promo|coupon|discount|voucher|referral|affiliate|invite|invitation|gift[-_ ]*(?:card|code|cert)|reward[-_ ]*code|bonus[-_ ]*code|redeem|redemption|claim[-_ ]*code|search|captcha|turnstile|recaptcha|hcaptcha|query|keyword)/i;
+    const promoAndSearch = /(?:promo|coupon|discount|voucher|referral|affiliate|invite|invitation|gift[-_ ]*(?:card|code|cert)|reward[-_ ]*code|bonus[-_ ]*code|redeem|redemption|claim[-_ ]*code|search|captcha|turnstile|recaptcha|hcaptcha|query|keyword|图形验证码|图片验证码|字符验证码|算术验证码|计算结果)/i;
     if (promoAndSearch.test(combined)) {
       return finish(true, "promo_or_search_field", "Promo, coupon, captcha, or search input", "none");
     }
@@ -852,9 +928,7 @@
     // Explicit Positive OTP markers that override ambiguous keywords (must be specific code/passcode/pin/token)
     const isExplicitOtpMarker = /(?:two[-_ ]*factor|twofa|second[-_ ]*factor|one[-_ ]*time|mfa)[-_ ]*(?:code|passcode|pin\b|token)/i.test(combined)
       || /(?:verification|verify|auth(?:entication)?|login|device|email|confirm(?:ation)?)[-_ ]*(?:verification[-_ ]*|authentication[-_ ]*)?(?:code|passcode|pin\b|token)/i.test(combined)
-      || (!effectiveEmailOnly && /(?:phone|sms)[-_ ]*(?:verification[-_ ]*)?(?:code|passcode|pin\b|token)/i.test(combined))
       || /(?:devicecode|device_code|twofactorauthcode|twofactorcode|twofacode|otpcode|email_code|authenticationcode|authentication_code|confirmationcode|confirmation_code)/i.test(combined)
-      || (!effectiveEmailOnly && /(?:sms_code)/i.test(combined))
       || /(?:^|[\W_])(?:otp|passcode)(?:[\W_]|$)/i.test(name)
       || /(?:^|[\W_])(?:otp|passcode)(?:[\W_]|$)/i.test(id)
       || /(?:验证码|校验码|动态码|授权码|認証コード|確認コード|ワンタイム|mã\s*xác\s*thực|mã\s*xác\s*minh|mã\s*otp|รหัส\s*otp|รหัสยืนยัน)/i.test(combined)
@@ -1052,7 +1126,7 @@
       } catch (e) {}
 
       const textSample = `${name} ${id} ${placeholder} ${aria} ${title} ${className} ${labelText}`;
-      if (/(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|sms[-_ ]*code|email[-_ ]*code|security[-_ ]*code|auth(?:entication)?[-_ ]*code|confirm(?:ation)?[-_ ]*code|login[-_ ]*code|device[-_ ]*code|code[-_ ]*input|pin[-_ ]*input|otp[-_ ]*input|codeinput|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(textSample) || /(?:sent\s*to\s*(?:your\s*)?(?:email|phone|mobile|device)|check\s*your\s*(?:email|phone|inbox|sms)|enter\s*the\s*(?:authentication|verification|security|login)\s*code\s*you\s*have\s*received|보낸|전송|enviado|envoyé|gesendet|отправлен)/i.test(textSample)) {
+      if (/(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|email[-_ ]*code|security[-_ ]*code|auth(?:entication)?[-_ ]*code|confirm(?:ation)?[-_ ]*code|login[-_ ]*code|device[-_ ]*code|code[-_ ]*input|pin[-_ ]*input|otp[-_ ]*input|codeinput|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(textSample) || /(?:sent\s*to\s*(?:your\s*)?(?:email|device)|check\s*your\s*(?:email|inbox)|enter\s*the\s*(?:authentication|verification|security|login)\s*code\s*you\s*have\s*received|보낸|전송|enviado|envoyé|gesendet|отправлен)/i.test(textSample)) {
         return true;
       }
 
@@ -1143,8 +1217,6 @@
       'input[name*="login-code" i]',
       'input[name*="email_code" i]',
       'input[name*="email-code" i]',
-      'input[name*="sms_code" i]',
-      'input[name*="sms-code" i]',
       'input[id*="twofactor" i]',
       'input[id*="two-factor" i]',
       'input[id*="two_factor" i]',
@@ -1273,7 +1345,7 @@
       const labelText = (lbl.textContent || "").trim();
       if (labelText.length > 80) continue;
       if (/(?:security\s*notice|security\s*tips|will\s*send|will\s*be\s*sent|will\s*be\s*required|learn\s*more|terms|privacy|policy|guidelines?|faq)/i.test(labelText)) continue;
-      if (/(?:verification|security|login|device|two[-_ ]*factor|auth(?:entication)?|confirm(?:ation)?|one[-_ ]*time|sms|email)\s*(?:verification\s*|authentication\s*)?(?:code|passcode|pin|token)|验证码|校验码|动态码|ワンタイム|認証コード/i.test(labelText)) {
+      if (/(?:verification|security|login|device|two[-_ ]*factor|auth(?:entication)?|confirm(?:ation)?|one[-_ ]*time|email)\s*(?:verification\s*|authentication\s*)?(?:code|passcode|pin|token)|验证码|校验码|动态码|ワンタイム|認証コード/i.test(labelText)) {
         // 5a. Explicit label[for="id"]
         const forId = (typeof lbl.getAttribute === "function" ? lbl.getAttribute("for") : lbl.htmlFor) || "";
         if (forId) {
@@ -1457,7 +1529,8 @@
     );
 
     const selectors = ['input#login-email', 'input#email', 'input[name="email"]', 'input[type="email"]', 'input[autocomplete="email"]', '.EmailInput'];
-    const emailOtpStepRegex = /(?:enter\s+your\s+email\s+to\s+get\s+a\s+(?:login\s+|verification\s+|one-time\s+)?code|get\s+a\s+(?:login\s+|verification\s+|one-time\s+)?code|send\s+(?:a\s+|me\s+a\s+)?(?:login\s+|verification\s+|one-time\s+|security\s+)?code|email\s+(?:you\s+|me\s+)?a\s+(?:login\s+|verification\s+|one-time\s+)?code|sign\s+in\s+with\s+(?:email\s+)?code|continue\s+with\s+email\s+code|receive\s+a\s+(?:login\s+|verification\s+)?code|we(?:'ll|\s+will)\s+send\s+a\s+(?:login\s+|verification\s+)?code|获取验证码|发送验证码|邮箱验证码登录|发送登录码)/i;
+    const emailOtpStepRegex = /(?:enter\s+your\s+email\s+to\s+get\s+a\s+(?:login\s+|verification\s+|one-time\s+)?code|get\s+a\s+(?:login\s+|verification\s+|one-time\s+)?code|send\s+(?:a\s+|me\s+a\s+)?(?:login\s+|verification\s+|one-time\s+|security\s+)?code|email\s+(?:you\s+|me\s+)?a\s+(?:login\s+|verification\s+|one-time\s+)?code|sign\s+in\s+with\s+(?:email\s+)?code|continue\s+with\s+email\s+code|receive\s+a\s+(?:login\s+|verification\s+)?code|we(?:'ll|\s+will)\s+send\s+a\s+(?:login\s+|verification\s+)?code|获取(?:邮箱)?验证码|发送(?:邮箱)?验证码|邮箱验证码登录|发送登录码)/i;
+    const phoneStepBlockRegex = /(?:手机号登录|手机登录|短信登录|输入手机号|请输入手机号|phone\s+login|sign\s+in\s+with\s+phone|enter\s+your\s+phone)/i;
 
     for (const sel of selectors) {
       const candidates = typeof document.querySelectorAll === "function"
@@ -1467,6 +1540,8 @@
         if (!el) continue;
         const visible = (typeof isInteractiveElement === "function") ? isInteractiveElement(el) : (el.offsetParent !== null);
         if (!visible) continue;
+        const elMeta = `${el.name || ""} ${el.id || ""} ${el.placeholder || ""}`;
+        if (/(?:phone|mobile|tel|手机|电话)/i.test(elMeta) && !/(?:email|邮箱)/i.test(elMeta)) continue;
         if (isCloudflareOrTotpForm) return el;
 
         // Check if this email input belongs to a passwordless Email-OTP login step (no visible password field in same form/card)
@@ -1488,6 +1563,7 @@
           combinedScopeText += " " + ((sc.textContent || "").replace(/\s+/g, " ").trim());
         }
         if (hasVisiblePassword) continue;
+        if (phoneStepBlockRegex.test(combinedScopeText) && !/(?:邮箱|邮件|email)/i.test(combinedScopeText)) continue;
         if (emailOtpStepRegex.test(combinedScopeText)) {
           return el;
         }
@@ -1846,12 +1922,13 @@
       contextText: ctxText,
       hostname: host,
       pathname: path,
+      isSyntheticSample: true,
       emailOnlyMode: typeof s.emailOnlyMode === "boolean" ? s.emailOnlyMode : undefined,
       customBlockedTerms: Array.isArray(s.customBlockedTerms) ? s.customBlockedTerms : undefined
     });
     if (!diag.disqualified && diag.rule_id === "candidate_passed_disqualification") {
       const affinityCorpus = `${attrs.name} ${attrs.id} ${attrs.placeholder} ${attrs["aria-label"]} ${attrs["data-testid"]} ${attrs.class} ${s.label || s.labelText || ""} ${ctxText} ${host} ${path}`;
-      const hasPositiveAffinity = /(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|sms[-_ ]*code|email[-_ ]*code|security[-_ ]*code|auth(?:entication)?[-_ ]*code|confirm(?:ation)?[-_ ]*code|login[-_ ]*code|device[-_ ]*code|code[-_ ]*input|pin[-_ ]*input|otp[-_ ]*input|codeinput|code[-_ ]*auth(?:entication)?|browser_auth|cdn-cgi\/access|cloudflareaccess|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(affinityCorpus);
+      const hasPositiveAffinity = /(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|email[-_ ]*code|security[-_ ]*code|auth(?:entication)?[-_ ]*code|confirm(?:ation)?[-_ ]*code|login[-_ ]*code|device[-_ ]*code|code[-_ ]*input|pin[-_ ]*input|otp[-_ ]*input|codeinput|code[-_ ]*auth(?:entication)?|browser_auth|cdn-cgi\/access|cloudflareaccess|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(affinityCorpus);
       if (!hasPositiveAffinity) {
         return Object.assign({}, diag, {
           qualified: false,

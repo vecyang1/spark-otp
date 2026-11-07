@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.3] - 2026-11-07
+
+### Fixed
+- **Unconditional Phone / SMS Login & Verification Disqualification (`sms_only_blocked`)**:
+  - **Enclosing Login Panel Ancestor Climbing & Sibling Phone Input Detection (`sms_only_companion_field`)**: Fixed DOM scope resolution in `isDisqualifiedInput(el)` (`extension/content.js` & `userscript/spark-otp.user.js`) so single-input row wrappers (e.g. `label.auth-code` inside `div.login-container > div.right` on Xiaohongshu `xiaohongshu.com`) climb up local panel ancestors (before `BODY`/`MAIN`) and inspect sibling `<input>` / `<select>` attributes (`placeholder`, `aria-label`, `autocomplete="tel"`, `name`, `id`, `type="tel"`). Generic verification inputs (`placeholder="输入验证码"`) paired with a companion phone number input (`+86 输入手机号`) are now deterministically disqualified as `sms_only_companion_field`.
+  - **Unconditional Priority Gate C Enforcement**: Removed the `emailOnlyMode` bypass from Priority Gate C, `isExplicitOtpMarker`, `targetedSelectors`, `hasVerificationAffinity`, and `popup.js` fallback because Spark Mail Desktop and Apple Mail have zero phone SMS capability.
+  - **Targeted Switcher Stripping & Strict `hasExplicitEmailContext` Recipient Validation**: Fixed `rawScope` switcher stripping so primary headings/buttons (`手机号登录`, `获取短信验证码`) are never stripped, and tightened `hasExplicitEmailContext` so masked phone number prompts (`已向 138****5678 发送验证码`, `We sent a 6-digit verification code to +1 ***-***-4829`) are never misclassified as email contexts.
+  - **Graphic Captcha Disqualification & Detached Synthetic Sample Isolation**: Added Chinese graphic/math captcha terms (`图形验证码`, `图片验证码`, `字符验证码`, `算术验证码`) to Priority Gate D (`promo_or_search_field`) and isolated `diagnoseSyntheticSample()` (`isSyntheticSample: true`) from live `document.body` inputs.
+
 ## [1.6.2] - 2026-11-06
 
 ### Added

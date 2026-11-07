@@ -70,10 +70,10 @@ Scope: project-local
   - **Adversarial Path**: Negative TTL rejection, future timestamp (clock skew) blocking, malformed CLI noise handling, rejected code blacklist filtering, and preventing infinite submission loops on `?incorrect=true`.
 
 ### 7. Evidence Rule
-- "没人跑的检查不算证据": Every architectural invariant and code path is protected by automated tests (185/185 passing) with verifiable stdout/stderr receipts and Playwright browser E2E verification.
+- "没人跑的检查不算证据": Every architectural invariant and code path is protected by automated tests (186/186 passing) with verifiable stdout/stderr receipts and Playwright browser E2E verification.
 
 ### 8. Strict Email-Only DOM Gating & UI Observability ("能读、能试、能调")
-- **Priority Gates A/B/C/D in `isDisqualifiedInput(el)`**: Evaluated strictly before `maxlength="1"`, `autocomplete="one-time-code"`, or `data-input-otp="true"` shortcuts so Credit/Debit Card forms (CVV / `Security code*` on LinkedIn Checkout), Authenticator App (TOTP / Google Authenticator / 1Password / Passkey) modals, SMS-only prompts, and `type="email"` fields never falsely trigger the Email OTP floating pill.
+- **Priority Gates A/B/C/D in `isDisqualifiedInput(el)`**: Evaluated strictly before `maxlength="1"`, `autocomplete="one-time-code"`, or `data-input-otp="true"` shortcuts so Credit/Debit Card forms (CVV / `Security code*` on LinkedIn Checkout), Authenticator App (TOTP / Google Authenticator / 1Password / Passkey) modals, Phone/SMS login or verification prompts (`sms_only_field`, `sms_only_companion_field` when a sibling phone number input is present in the enclosing login panel such as Xiaohongshu's `手机号登录` modal, and `sms_only_context` unconditionally because Spark Mail & Apple Mail have zero phone SMS capability), graphic captchas (`图形验证码`), and `type="email"` fields never falsely trigger the Email OTP floating pill.
 - **Passwordless Email-OTP Step 1 & Self-Hosted Subdomain Reconciliation**: `findEmailInput()` detects passwordless email login steps (Step 1) across SPA client-side redirects, while `detectPageBrandHint()` + `get_domain_tokens()` + `_expand_phonetic_brand_variants()` reconcile self-hosted subdomains (`multika.*`) with third-party SMTP relay senders and phonetic brand variants (`Multica`).
 - **Diagnostic-First SSOT (`diagnoseDomInput`, `diagnoseSyntheticSample`, `diagnosePageDom`)**: Shared across Chrome Extension Popup, Tampermonkey Userscript, Python CLI (`spark-otp diagnose --dom-sample`), and HTTP bridge (`GET /api/diagnose?dom_sample=...`).
 
