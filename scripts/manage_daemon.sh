@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 export PYTHONUNBUFFERED=1
 PID_FILE="/tmp/spark-otp.pid"
 LOG_FILE="/tmp/spark-otp.log"
