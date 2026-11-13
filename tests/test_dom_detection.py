@@ -2569,6 +2569,99 @@ class TestDomDetection(unittest.TestCase):
             self.assertTrue(r["genuineEmailDiag"]["qualified"], f"{target}: Genuine Email OTP must qualify")
             self.assertEqual(r["genuineEmailDiag"]["channel"], "email_otp")
 
+    def test_cloudflare_access_error_detection_and_query_hardening(self):
+        """
+        Verify Cloudflare Access 'That account does not have access.' + ?__cf_access_message=unauthorized
+        detection, brand_hint stripping of generic 'Cloudflare Access' title, and buildApiQuery
+        enforcing allow_expired=0 and strict_account=1.
+        """
+        content_js = (REPO_ROOT / "extension" / "content.js").read_text(encoding="utf-8")
+        user_js = (REPO_ROOT / "userscript" / "spark-otp.user.js").read_text(encoding="utf-8")
+
+        js_code = r"""
+        const vm = require('vm');
+        const contentJs = __CONTENT_JS__;
+        const userJs = __USER_JS__;
+
+        function extractSsot(src) {
+            const s = '// === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===';
+            const e = '// === END CORE DOM DETECTION ENGINE (SSOT) ===';
+            return src.slice(src.indexOf(s) + s.length, src.indexOf(e));
+        }
+
+        function runCase(src) {
+            const alertEl = { textContent: 'That account does not have access.', children: [] };
+            const h1El = { textContent: 'Log in to XOMO Air Fleet Status', children: [] };
+            const sandbox = {
+                window: {
+                    location: {
+                        hostname: 'rough-snowflake-0815.cloudflareaccess.com',
+                        pathname: '/cdn-cgi/access/login/status.xomoair.com',
+                        search: '?kid=0984ba&redirect_url=%2F%3F__cf_access_message%3Dunauthorized',
+                        hash: '',
+                        href: 'https://rough-snowflake-0815.cloudflareaccess.com/cdn-cgi/access/login/status.xomoair.com?kid=0984ba&redirect_url=%2F%3F__cf_access_message%3Dunauthorized'
+                    },
+                    sessionStorage: {
+                        _d: {},
+                        getItem(k) { return this._d[k] || null; },
+                        setItem(k, v) { this._d[k] = String(v); }
+                    },
+                    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' })
+                },
+                document: {
+                    title: 'Sign in ・ Cloudflare Access',
+                    body: { innerText: 'That account does not have access. Log in to XOMO Air Fleet Status' },
+                    querySelector: () => null,
+                    querySelectorAll: (sel) => {
+                        if (sel === '[role="alert"]') return [alertEl];
+                        if (sel.includes('h1')) return [h1El];
+                        return [];
+                    }
+                },
+                URL,
+                CSS: { escape: (x) => x },
+                NodeFilter: { SHOW_ELEMENT: 1 },
+                console
+            };
+            sandbox.window.top = sandbox.window;
+            sandbox.window.self = sandbox.window;
+            const ctx = vm.createContext(sandbox);
+            vm.runInContext(extractSsot(src), ctx);
+
+            const domain = ctx.detectTargetDomain();
+            const brandHint = ctx.detectPageBrandHint();
+            const errUrl = ctx.detectPageError();
+            // Clear URL search and verify DOM alert alone detects Cloudflare Access error
+            sandbox.window.location.search = '?kid=0984ba';
+            const errDom = ctx.detectPageError();
+
+            const queryStrict = ctx.buildApiQuery(domain, 'yanghxmail@gmail.com', { strictAccount: true, allowExpired: false });
+            const queryDefault = ctx.buildApiQuery(domain, 'yanghxmail@gmail.com');
+
+            return { domain, brandHint, errUrl, errDom, queryStrict, queryDefault };
+        }
+
+        console.log(JSON.stringify({
+            ext: runCase(contentJs),
+            user: runCase(userJs)
+        }));
+        """.replace("__CONTENT_JS__", json.dumps(content_js)).replace("__USER_JS__", json.dumps(user_js))
+
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        for target in ("ext", "user"):
+            r = data[target]
+            self.assertEqual(r["domain"], "status.xomoair.com")
+            self.assertNotIn("Cloudflare Access", r["brandHint"], f"{target}: must strip generic Cloudflare Access title")
+            self.assertIn("XOMO Air Fleet Status", r["brandHint"])
+            self.assertTrue(r["errUrl"]["hasError"], f"{target}: must detect ?__cf_access_message=unauthorized")
+            self.assertTrue(r["errDom"]["hasError"], f"{target}: must detect 'That account does not have access.' DOM alert")
+            self.assertIn("allow_expired=0", r["queryStrict"])
+            self.assertIn("strict_account=1", r["queryStrict"])
+            self.assertIn("allow_expired=0", r["queryDefault"])
+
 if __name__ == "__main__":
     unittest.main()
 

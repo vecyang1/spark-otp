@@ -1158,6 +1158,53 @@ This code will expire in 15 minutes.
         self.assertEqual(res_gen.code, "918273")
         self.assertEqual(res_gen.time_remaining_seconds, 15 * 60 - 4 * 60)
 
+    def test_cloudflare_cross_domain_with_brand_hint_isolation(self):
+        """
+        Regression: Cloudflare Access email for json.worldinspirelab.com must NEVER fall
+        through to generic_otp or extract_universal_otp when querying status.xomoair.com
+        even if brand_hint contains 'Sign in ・ Cloudflare Access'.
+        """
+        now = datetime(2026, 11, 13, 19, 3, 38)
+        raw_cf_other_app = """
+ID: 738595
+Subject: Cloudflare Access login code for json.worldinspirelab.com
+From: Cloudflare <noreply@notify.cloudflare.com>
+To: yanghxmail@gmail.com
+Date: 2026-11-13 11:24:24
+Type: Email
+
+Your login code: 901738
+Your Cloudflare Access code 901738
+This code expires after 10 minutes or if you request a new code.
+"""
+        res = extract_otp_from_thread(
+            raw_cf_other_app,
+            domain_filter="status.xomoair.com",
+            now=now,
+            allow_expired=True,
+            brand_hint="Sign in ・ Cloudflare Access | rough-snowflake-0815 | Log in to XOMO Air Fleet Status",
+        )
+        self.assertIsNone(res, "Cross-app Cloudflare Access code must NEVER match another domain via brand_hint fallback")
+
+        # Also test non-rule generic login email explicitly naming another domain in 'for <domain>'
+        raw_generic_other = """
+ID: 738596
+Subject: Login code for json.worldinspirelab.com
+From: Auth Service <noreply@auth-relay.example.org>
+To: yanghxmail@gmail.com
+Date: 2026-11-13 19:02:00
+Type: Email
+
+Your login code: 554433
+"""
+        res_generic = extract_otp_from_thread(
+            raw_generic_other,
+            domain_filter="status.xomoair.com",
+            now=now,
+            brand_hint="Sign in ・ Cloudflare Access",
+        )
+        self.assertIsNone(res_generic, "Generic email explicitly bound to another domain in subject must be rejected")
+
 if __name__ == "__main__":
     unittest.main()
 

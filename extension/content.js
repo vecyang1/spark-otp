@@ -202,15 +202,21 @@
   function detectPageBrandHint() {
     try {
       if (typeof document === "undefined") return "";
+      const host = (typeof window !== "undefined" && window.location && window.location.hostname ? window.location.hostname : "").toLowerCase();
+      const pathname = (typeof window !== "undefined" && window.location && window.location.pathname ? window.location.pathname : "").toLowerCase();
+      const isCloudflareAccess = host.endsWith("cloudflareaccess.com") || pathname.startsWith("/cdn-cgi/access/");
       const parts = [];
       if (document.title && typeof document.title === "string") {
         const cleanTitle = document.title.trim();
-        if (cleanTitle) parts.push(cleanTitle);
+        if (cleanTitle && !(isCloudflareAccess && /\bcloudflare\s*access\b/i.test(cleanTitle))) {
+          parts.push(cleanTitle);
+        }
       }
       if (typeof document.querySelectorAll === "function") {
         const headings = document.querySelectorAll('h1, h2, h3, [data-slot="card-title"], [class*="card-title" i], .Headline');
         for (const el of headings) {
           const txt = (el.textContent || "").trim().replace(/\s+/g, " ");
+          if (isCloudflareAccess && /\bcloudflare\s*access\b/i.test(txt)) continue;
           if (txt && txt.length >= 2 && txt.length <= 80 && !parts.includes(txt)) {
             parts.push(txt);
             if (parts.length >= 3) break;
@@ -319,11 +325,11 @@
   }
 
   function detectPageError() {
-    // 1. URL search or hash param indicating failure (e.g. ?incorrect=true, ?error=..., ?failed=...)
+    // 1. URL search or hash param indicating failure (e.g. ?incorrect=true, ?error=..., ?failed=..., Cloudflare Access unauthorized)
     try {
       const search = (typeof window !== "undefined" && window.location && window.location.search) || "";
       const hash = (typeof window !== "undefined" && window.location && window.location.hash) || "";
-      if (/(?:incorrect|error|failed|invalid|bad_code|bad-code)/i.test(search + " " + hash)) {
+      if (/(?:incorrect|error|failed|invalid|bad_code|bad-code|__cf_access_message|unauthorized|access_denied)/i.test(search + " " + hash)) {
         return { hasError: true, reason: "url_param" };
       }
     } catch (e) {}
@@ -345,7 +351,7 @@
         '#login-error',
         '.login-error'
       ];
-      const errorTextRegex = /(?:incorrect|invalid|wrong|expired|failed|not\s*valid|has\s*expired)\s*(?:verification\s*|security\s*|auth\s*|login\s*|one-time\s*)?(?:code|passcode|token|pin|otp)?|(?:code|passcode|token|pin|otp)\s*(?:is\s*)?(?:incorrect|invalid|wrong|expired|not\s*valid|has\s*expired)|验证码.*?(?:错误|不正确|有误|已过期|无效)|認証コード.*?(?:正しくありません|無効|切れています)/i;
+      const errorTextRegex = /(?:incorrect|invalid|wrong|expired|failed|not\s*valid|has\s*expired)\s*(?:verification\s*|security\s*|auth\s*|login\s*|one-time\s*)?(?:code|passcode|token|pin|otp)?|(?:code|passcode|token|pin|otp)\s*(?:is\s*)?(?:incorrect|invalid|wrong|expired|not\s*valid|has\s*expired)|(?:that\s+account\s+)?does\s+not\s+have\s+access|unauthorized|验证码.*?(?:错误|不正确|有误|已过期|无效)|認証コード.*?(?:正しくありません|無効|切れています)/i;
 
       for (const sel of errorSelectors) {
         const els = document.querySelectorAll(sel);
@@ -357,7 +363,7 @@
         }
       }
 
-      // Check general elements for exact Bandwagon "Incorrect code, please try again" or similar
+      // Check general elements for exact Bandwagon "Incorrect code, please try again", Cloudflare Access "That account does not have access.", or similar
       const paragraphs = document.querySelectorAll("p, div, span");
       for (const el of paragraphs) {
         if (el.children.length > 2) continue;
@@ -365,6 +371,7 @@
         if (text.length > 0 && text.length < 150) {
           if (/incorrect\s*code(?:,\s*please\s*try\s*again)?/i.test(text) ||
               /invalid\s*(?:two-factor|verification)\s*code/i.test(text) ||
+              /(?:that\s+account\s+)?does\s+not\s+have\s+access/i.test(text) ||
               /验证码错误/i.test(text)) {
             return { hasError: true, reason: "dom_text", text };
           }
@@ -424,10 +431,16 @@
     return false;
   }
 
-  function buildApiQuery(domain, account) {
+  function buildApiQuery(domain, account, options = {}) {
     let q = `domain=${encodeURIComponent(domain)}`;
     if (account) {
       q += `&account=${encodeURIComponent(account)}`;
+    }
+    if (options && options.allowExpired !== true) {
+      q += `&allow_expired=0`;
+    }
+    if (options && options.strictAccount && account) {
+      q += `&strict_account=1`;
     }
     if (typeof detectPageBrandHint === "function") {
       const hint = detectPageBrandHint();
@@ -2313,7 +2326,7 @@
       renderPill("watching", { domain, account: effectiveAccount });
     }
 
-    const query = buildApiQuery(domain, effectiveAccount);
+    const query = buildApiQuery(domain, effectiveAccount, { strictAccount: Boolean(detectedEmail), allowExpired: false });
     let streamUrl = `http://127.0.0.1:${serverPort}/api/stream?${query}`;
 
     try {
@@ -2326,6 +2339,9 @@
         try {
           const data = JSON.parse(e.data);
           if (data && data.code) {
+            if (data.is_expired === true) {
+              return;
+            }
             const receivedMs = data.received_at ? (new Date(data.received_at).getTime() || 0) : 0;
             if (isCodeRejected(data.code, data.message_id, receivedMs, domain)) {
               renderPill("code_failed", {
@@ -2405,12 +2421,15 @@
             badge.textContent = `${domain} · ${detectedEmail}`;
           }
         }
-        const query = buildApiQuery(domain, effectiveAccount);
+        const query = buildApiQuery(domain, effectiveAccount, { strictAccount: Boolean(detectedEmail), allowExpired: false });
         const apiUrl = `http://127.0.0.1:${serverPort}/api/otp?${query}`;
         const res = await daemonFetchJson(apiUrl);
         if (res.ok && res.data) {
           const data = res.data;
           if (data.success && data.otp && data.otp.code) {
+            if (data.otp.is_expired === true) {
+              return;
+            }
             const receivedMs = data.otp.received_at ? (new Date(data.otp.received_at).getTime() || 0) : 0;
             if (isCodeRejected(data.otp.code, data.otp.message_id, receivedMs, domain)) {
               renderPill("code_failed", {
@@ -2451,12 +2470,19 @@
       const d = domain || detectTargetDomain();
       const detectedEmail = findEmailOnPage() || getStorageItem("spark_otp_last_email_" + d) || "";
       const effectiveAccount = detectedEmail || selectedAccount || "";
-      const query = buildApiQuery(d, effectiveAccount);
+      const query = buildApiQuery(d, effectiveAccount, { strictAccount: Boolean(detectedEmail), allowExpired: false });
       const apiUrl = `http://127.0.0.1:${serverPort}/api/otp?${query}`;
       const res = await daemonFetchJson(apiUrl);
       if (res.ok && res.data) {
         const data = res.data;
         if (data.success && data.otp && data.otp.code) {
+          if (data.otp.is_expired === true) {
+            if (btn) {
+              btn.textContent = t("notFound");
+              setTimeout(() => { btn.textContent = t("refresh"); }, 1500);
+            }
+            return;
+          }
           const receivedMs = data.otp.received_at ? (new Date(data.otp.received_at).getTime() || 0) : 0;
           if (isCodeRejected(data.otp.code, data.otp.message_id, receivedMs, d)) {
             renderPill("code_failed", {

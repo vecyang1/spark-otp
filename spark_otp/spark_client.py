@@ -143,6 +143,7 @@ class SparkClient:
         allow_expired: bool = False,
         fallback_expired: bool = False,
         brand_hint: Optional[str] = None,
+        strict_account: bool = False,
     ) -> Optional[OTPResult]:
         """
         Direct Apple Mail Envelope Index fast-path (<5ms).
@@ -200,18 +201,21 @@ class SparkClient:
         if account:
             acc_clean = account.strip().lower()
             matching_acc = [r for r in rows if r[3] and acc_clean in r[3].lower()]
-            other_acc = [r for r in rows if not (r[3] and acc_clean in r[3].lower())]
-            if matching_acc and other_acc:
-                newest_match_ts = matching_acc[0][6]
-                newest_other_ts = other_acc[0][6]
-                if newest_other_ts > newest_match_ts + 180:
-                    rows = other_acc + matching_acc
-                else:
-                    rows = matching_acc + other_acc
-            elif matching_acc:
+            if strict_account:
                 rows = matching_acc
             else:
-                rows = other_acc
+                other_acc = [r for r in rows if not (r[3] and acc_clean in r[3].lower())]
+                if matching_acc and other_acc:
+                    newest_match_ts = matching_acc[0][6]
+                    newest_other_ts = other_acc[0][6]
+                    if newest_other_ts > newest_match_ts + 180:
+                        rows = other_acc + matching_acc
+                    else:
+                        rows = matching_acc + other_acc
+                elif matching_acc:
+                    rows = matching_acc
+                else:
+                    rows = other_acc
 
         exclude_codes_set = set(str(c).strip().upper() for c in exclude_codes) if exclude_codes else set()
         exclude_msg_ids_set = set(str(m).strip() for m in exclude_message_ids) if exclude_message_ids else set()
@@ -480,6 +484,7 @@ class SparkClient:
         allow_expired: bool = False,
         fallback_expired: bool = False,
         brand_hint: Optional[str] = None,
+        strict_account: bool = False,
     ) -> Optional[OTPResult]:
         """
         Direct SQLite fast-path lookup (<5ms).
@@ -526,18 +531,21 @@ class SparkClient:
         if account:
             acc_clean = account.strip().lower()
             matching_acc = [r for r in rows if r[2] and acc_clean in r[2].lower()]
-            other_acc = [r for r in rows if not (r[2] and acc_clean in r[2].lower())]
-            if matching_acc and other_acc:
-                newest_match_ts = matching_acc[0][5]
-                newest_other_ts = other_acc[0][5]
-                if newest_other_ts > newest_match_ts + 180:
-                    rows = other_acc + matching_acc
-                else:
-                    rows = matching_acc + other_acc
-            elif matching_acc:
+            if strict_account:
                 rows = matching_acc
             else:
-                rows = other_acc
+                other_acc = [r for r in rows if not (r[2] and acc_clean in r[2].lower())]
+                if matching_acc and other_acc:
+                    newest_match_ts = matching_acc[0][5]
+                    newest_other_ts = other_acc[0][5]
+                    if newest_other_ts > newest_match_ts + 180:
+                        rows = other_acc + matching_acc
+                    else:
+                        rows = matching_acc + other_acc
+                elif matching_acc:
+                    rows = matching_acc
+                else:
+                    rows = other_acc
 
         exclude_codes_set = set(str(c).strip().upper() for c in exclude_codes) if exclude_codes else set()
         exclude_msg_ids_set = set(str(m).strip() for m in exclude_message_ids) if exclude_message_ids else set()
@@ -857,6 +865,7 @@ class SparkClient:
         allow_expired: bool = False,
         fallback_expired: bool = False,
         brand_hint: Optional[str] = None,
+        strict_account: bool = False,
     ) -> Optional[OTPResult]:
         df_clean = ""
         brand = ""
@@ -871,12 +880,16 @@ class SparkClient:
 
         include_expired = allow_expired or (domain is not None and fallback_expired)
 
-        # If a preferred account is specified, prioritize emails from that account
+        # If a preferred account is specified, prioritize (or strictly isolate) emails from that account
         sorted_emails = emails
         if preferred_account:
-            pref = [e for e in emails if e.account == preferred_account]
-            others = [e for e in emails if e.account != preferred_account]
-            sorted_emails = pref + others
+            acc_clean = preferred_account.strip().lower()
+            pref = [e for e in emails if e.account and acc_clean in e.account.strip().lower()]
+            if strict_account:
+                sorted_emails = pref
+            else:
+                others = [e for e in emails if not (e.account and acc_clean in e.account.strip().lower())]
+                sorted_emails = pref + others
 
         exclude_codes_set = set(str(c).strip().upper() for c in exclude_codes) if exclude_codes else set()
         exclude_msg_ids_set = set(str(m).strip() for m in exclude_message_ids) if exclude_message_ids else set()
@@ -1014,6 +1027,7 @@ class SparkClient:
         allow_expired: bool = False,
         fallback_expired: bool = False,
         brand_hint: Optional[str] = None,
+        strict_account: bool = False,
         **kwargs
     ) -> Optional[OTPResult]:
         """
@@ -1075,6 +1089,7 @@ class SparkClient:
                     allow_expired=allow_expired,
                     fallback_expired=fallback_expired,
                     brand_hint=hint,
+                    strict_account=strict_account,
                 )
                 sqlite_succeeded = True
                 if sqlite_res:
@@ -1095,6 +1110,7 @@ class SparkClient:
                 allow_expired=allow_expired,
                 fallback_expired=fallback_expired,
                 brand_hint=hint,
+                strict_account=strict_account,
             )
             if apple_mail_res:
                 return apple_mail_res
@@ -1121,6 +1137,7 @@ class SparkClient:
                     allow_expired=allow_expired,
                     fallback_expired=fallback_expired,
                     brand_hint=hint,
+                    strict_account=strict_account,
                 )
                 if res:
                     return res
@@ -1140,6 +1157,7 @@ class SparkClient:
                 allow_expired=allow_expired,
                 fallback_expired=fallback_expired,
                 brand_hint=hint,
+                strict_account=strict_account,
             )
             if res:
                 return res
@@ -1153,12 +1171,14 @@ class SparkClient:
                     domain,
                     max_age,
                     current_time,
+                    preferred_account=account,
                     exclude_codes=exclude_codes,
                     exclude_message_ids=exclude_message_ids,
                     since_time=since_time,
                     allow_expired=allow_expired,
                     fallback_expired=fallback_expired,
                     brand_hint=hint,
+                    strict_account=strict_account,
                 )
                 if res:
                     return res
@@ -1253,6 +1273,7 @@ process.stdout.write(JSON.stringify(res));
         now: Optional[datetime] = None,
         dom_sample: Optional[Any] = None,
         brand_hint: Optional[str] = None,
+        strict_account: bool = False,
     ) -> Dict[str, Any]:
         """
         Diagnostic-First reconciliation engine.
@@ -1484,6 +1505,7 @@ process.stdout.write(JSON.stringify(res));
             allow_expired=allow_expired,
             now=current_time,
             brand_hint=brand_hint,
+            strict_account=strict_account,
         )
 
         if resolved_otp:
@@ -1519,6 +1541,7 @@ process.stdout.write(JSON.stringify(res));
                 "target": clean_target,
                 "domain": domain,
                 "account": account,
+                "strict_account": strict_account,
                 "brand_hint": brand_hint,
                 "allow_expired": allow_expired,
                 "diagnosed_at": current_time.isoformat(),

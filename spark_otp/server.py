@@ -199,7 +199,7 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
         diag_result["metrics"] = {"duration_ms": round(duration_ms, 2)}
         self.wfile.write(json.dumps(diag_result, indent=2).encode("utf-8"))
 
-    def _safe_get_otp(self, domain, max_age, account, exclude_codes=None, exclude_message_ids=None, since_time=None, allow_expired=False, fallback_expired=False, brand_hint=None):
+    def _safe_get_otp(self, domain, max_age, account, exclude_codes=None, exclude_message_ids=None, since_time=None, allow_expired=False, fallback_expired=False, brand_hint=None, strict_account=False):
         if not self.client:
             return None
         kwargs = {}
@@ -215,11 +215,13 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
             kwargs["fallback_expired"] = True
         if brand_hint is not None:
             kwargs["brand_hint"] = brand_hint
+        if strict_account:
+            kwargs["strict_account"] = True
         try:
             return self.client.get_latest_otp(domain=domain, max_age_seconds=max_age, account=account, **kwargs)
         except TypeError:
             try:
-                kwargs_filtered = {k: v for k, v in kwargs.items() if k not in ("fallback_expired", "brand_hint")}
+                kwargs_filtered = {k: v for k, v in kwargs.items() if k not in ("fallback_expired", "brand_hint", "strict_account")}
                 return self.client.get_latest_otp(domain=domain, max_age_seconds=max_age, account=account, **kwargs_filtered)
             except TypeError:
                 try:
@@ -232,6 +234,8 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
         domain = params.get("domain", [None])[0]
         account = params.get("account", [None])[0]
         brand_hint = params.get("hint", params.get("brand_hint", [None]))[0]
+        strict_account_param = params.get("strict_account", [None])[0]
+        strict_account = strict_account_param.lower() in ("1", "true", "yes") if strict_account_param else False
         max_age_param = params.get("max_age", [None])[0]
         max_age = int(max_age_param) if max_age_param and max_age_param.isdigit() else None
 
@@ -267,6 +271,7 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
                 allow_expired=allow_expired,
                 fallback_expired=fallback_expired,
                 brand_hint=brand_hint,
+                strict_account=strict_account,
             )
             status = "hit" if otp else "miss"
         except Exception as e:
@@ -332,6 +337,8 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
         domain = params.get("domain", [None])[0]
         account = params.get("account", [None])[0]
         brand_hint = params.get("hint", params.get("brand_hint", [None]))[0]
+        strict_account_param = params.get("strict_account", [None])[0]
+        strict_account = strict_account_param.lower() in ("1", "true", "yes") if strict_account_param else False
         max_age_param = params.get("max_age", [None])[0]
         max_age = int(max_age_param) if max_age_param and max_age_param.isdigit() else None
 
@@ -379,6 +386,7 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
                         allow_expired=allow_expired,
                         fallback_expired=fallback_expired,
                         brand_hint=brand_hint,
+                        strict_account=strict_account,
                     )
                 except Exception as e:
                     telemetry.record(

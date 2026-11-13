@@ -637,6 +637,43 @@ Date: {dt_str}
         self.assertEqual(diag["resolved_otp"]["code"], "291240")
         self.assertTrue(diag["verdict"].startswith("SUCCESS"))
 
+    def test_sqlite_strict_account_prevents_cross_mailbox_hijack(self):
+        """
+        When strict_account=True (e.g. browser detected exact recipient on page),
+        an OTP sent to another mailbox must NEVER hijack the requested account.
+        """
+        now = datetime.now()
+        ts_now = int(now.timestamp())
+        insert_mock_message(
+            self.db_path,
+            pk=738674,
+            sender="Cloudflare <noreply@notify.cloudflare.com>",
+            recipient="yanghxmail@gmail.com",
+            subject="Cloudflare Access login code for status.xomoair.com",
+            short_body="Your login code: 056957 Your Cloudflare Access code 056957",
+            received_ts=ts_now - 30,
+        )
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+
+        # Strict mode for 123hxsmyxh@gmail.com must return None while waiting for 123hxsmyxh's own code
+        strict_res = client.get_latest_otp(
+            domain="status.xomoair.com",
+            account="123hxsmyxh@gmail.com",
+            strict_account=True,
+            now=now,
+        )
+        self.assertIsNone(strict_res, "strict_account=True must not return another mailbox's OTP")
+
+        # Legacy non-strict mode still permits fallback
+        fallback_res = client.get_latest_otp(
+            domain="status.xomoair.com",
+            account="123hxsmyxh@gmail.com",
+            strict_account=False,
+            now=now,
+        )
+        self.assertIsNotNone(fallback_res)
+        self.assertEqual(fallback_res.code, "056957")
+
 if __name__ == "__main__":
     unittest.main()
 

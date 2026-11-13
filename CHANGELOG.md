@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-11-13] - 2026-11-13
+
+### Fixes
+- Prioritize ~/.local/bin and /usr/local/bin in PATH over Homebrew python3.15 (`1ad7e68`)
+
+### Maintenance
+- Auto-sanitize privacy files and local paths (`f4b0c42`)
+
 ## [1.6.3] - 2026-11-07
 
 ### Fixed

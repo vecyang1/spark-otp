@@ -57,6 +57,8 @@ class MockSparkClient:
                     is_expired=True,
                     time_remaining_seconds=0
                 )
+            return None
+        self.last_kwargs = dict(kwargs)
         return self.mock_otp
 
     def diagnose(self, target="", account=None, allow_expired=False):
@@ -289,6 +291,24 @@ class TestServer(unittest.TestCase):
         self.assertEqual(payload["code"], "998877")
         self.assertTrue(payload["is_expired"])
         req.close()
+
+    def test_otp_endpoint_allow_expired_zero_disables_fallback(self):
+        """Test that /api/otp?domain=...&allow_expired=0 strictly suppresses expired fallback."""
+        url = f"http://127.0.0.1:{self.port}/api/otp?domain=expired.domain.com&allow_expired=0"
+        req = urllib.request.urlopen(url)
+        self.assertEqual(req.status, 200)
+        data = json.loads(req.read().decode("utf-8"))
+        self.assertFalse(data["success"])
+        self.assertIsNone(data.get("otp"))
+
+    def test_otp_endpoint_strict_account_forwarding(self):
+        """Test that /api/otp forwards strict_account=1 to client.get_latest_otp."""
+        url = f"http://127.0.0.1:{self.port}/api/otp?domain=test.domain.com&account=alex.turner@example.com&strict_account=1"
+        req = urllib.request.urlopen(url)
+        self.assertEqual(req.status, 200)
+        data = json.loads(req.read().decode("utf-8"))
+        self.assertTrue(data["success"])
+        self.assertTrue(getattr(self.mock_client, "last_kwargs", {}).get("strict_account"))
 
     def test_diagnose_endpoint_success(self):
         """Test that /api/diagnose returns 200 with complete audit trail and metrics."""

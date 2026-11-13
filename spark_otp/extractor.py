@@ -383,8 +383,22 @@ def domain_matches(
     if df_clean in corpus:
         return True
 
-    # 4. Brand, subdomain app token, and page brand hint match (verifying no conflicting tenant subdomain)
+    # 4. Brand, subdomain app token, and page brand hint match (verifying no conflicting tenant subdomain or explicit subject target domain)
     if len(brand) >= 3:
+        explicit_subject_targets = [
+            clean_domain(m)
+            for m in re.findall(r"(?i)\bfor\s+([a-z0-9][a-z0-9\.-]+\.[a-z]{2,})\b", subject)
+        ]
+        for target_dom in explicit_subject_targets:
+            target_root = get_root_domain(target_dom)
+            if (
+                target_dom != df_clean
+                and not df_clean.endswith("." + target_dom)
+                and not target_dom.endswith("." + df_clean)
+                and target_root != root_domain
+            ):
+                return False
+
         conflicting_domains = set(re.findall(r"([a-z0-9\.-]+\." + re.escape(root_domain) + r")", corpus))
         # If the visiting domain itself is explicitly present in the email, it is an explicit match, not a conflict
         if df_clean not in conflicting_domains:
@@ -708,6 +722,12 @@ def extract_otp_from_thread(
             thread_text=thread_text,
             brand_hint=brand_hint,
         ):
+            # When a provider rule authoritatively extracts an explicit target domain
+            # (e.g. Cloudflare Access `for json.worldinspirelab.com`) and it does not
+            # match the requested domain_filter, reject the email outright instead of
+            # falling through to generic/universal rules.
+            if extracted_domain:
+                return None
             continue
 
         code_match = re.search(rule.code_regex, search_text)
