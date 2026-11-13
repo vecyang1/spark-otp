@@ -81,6 +81,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       race_guard_candidates: "Candidate codes",
       race_guard_resends: "Auto resends",
       race_guard_last_failure: "Last failure",
+      race_guard_resend_result: "Resend result",
+      race_guard_tolerance: "Stale tolerance",
       race_guard_none: "No login request captured yet (using conservative page fallback)",
       block_current_site: "Block Current Site",
       unblock_current_site: "Unblock Current Site",
@@ -149,6 +151,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       race_guard_candidates: "候选验证码",
       race_guard_resends: "自动重发",
       race_guard_last_failure: "最后失败原因",
+      race_guard_resend_result: "重发结果",
+      race_guard_tolerance: "陈旧判定容差",
       race_guard_none: "尚未采集到登录请求（使用保守的页面兜底下界）",
       block_current_site: "一键禁用当前网站",
       unblock_current_site: "解除当前网站禁用",
@@ -490,6 +494,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       : "--";
     const failureVal = raceGuard.last_failed_reason || (raceGuard.last_failed_at_iso ? fmt(raceGuard.last_failed_at_iso) : "--");
     const resendVal = `${raceGuard.resend_count || 0} / ${raceGuard.resend_limit || 2}`;
+    const resendTrace = (raceGuard && raceGuard.resend) || {};
+    const resendResultVal = `${resendTrace.last_resend_result || raceGuard.last_resend_result || "--"}${resendTrace.confirmed === true ? " (confirmed)" : ""}`;
+    const toleranceVal = `${raceGuard.stale_tolerance_ms || 0} ms`;
     const html = `
       <div class="race-guard-header">${t("race_guard_title")}</div>
       <div class="race-guard-row"><span class="race-guard-k">Domain</span><span class="race-guard-v">${raceGuard.domain || "--"}</span></div>
@@ -498,6 +505,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       <div class="race-guard-row"><span class="race-guard-k">${t("race_guard_since")}</span><span class="race-guard-v">${sinceVal}</span></div>
       ${candHtml}
       <div class="race-guard-row"><span class="race-guard-k">${t("race_guard_resends")}</span><span class="race-guard-v">${resendVal}</span></div>
+      <div class="race-guard-row"><span class="race-guard-k">${t("race_guard_resend_result")}</span><span class="race-guard-v">${resendResultVal}</span></div>
+      <div class="race-guard-row"><span class="race-guard-k">${t("race_guard_tolerance")}</span><span class="race-guard-v">${toleranceVal}</span></div>
       <div class="race-guard-row"><span class="race-guard-k">${t("race_guard_last_failure")}</span><span class="race-guard-v">${failureVal}</span></div>
     `;
     inspectorRaceGuard.innerHTML = html;

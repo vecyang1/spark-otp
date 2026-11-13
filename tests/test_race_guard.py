@@ -207,6 +207,27 @@ function runCase(src) {
   const nonAuth = ctx.planAutoResend(D, { hasError: true, reason: 'url_param' }, sandbox.__clock() + 90000);
   out.nonAuthPlan = nonAuth.action;
 
+  // --- A5: 5s stale tolerance (defensive; never minute-level) ---
+  const tolBase = sandbox.__clock() + 1000;
+  // Fresh login attempt: clear the legacy blacklist/lastFailedAt rules so only rule 0 applies.
+  const tolState = ctx.getAuthState(D);
+  tolState.lastFailedAt = 0;
+  tolState.failedCodes = [];
+  tolState.failedMessageIds = [];
+  tolState.submissionCounts = {};
+  tolState.lastSubmittedCode = null;
+  tolState.lastSubmittedMsgId = null;
+  ctx.saveAuthState(tolState, D);
+  ctx.recordLoginRequest(D, 'button_click', tolBase);
+  out.tolerance = {
+    within: ctx.isCodeRejected('aaaaaa', 'm-tol-within', tolBase - 3000, D),   // bound-3s
+    beyond: ctx.isCodeRejected('bbbbbb', 'm-tol-beyond', tolBase - 6000, D),   // bound-6s
+    withinVerdict: ctx.recordRaceCandidate(D, { code: 'aaaaaa', message_id: 'm-tol-within', received_at_ms: tolBase - 3000 }).verdict,
+    beyondVerdict: ctx.recordRaceCandidate(D, { code: 'bbbbbb', message_id: 'm-tol-beyond', received_at_ms: tolBase - 6000 }).verdict,
+    reportTolerance: ctx.getRaceGuardReport(D).stale_tolerance_ms,
+    reportResend: ctx.getRaceGuardReport(D).resend
+  };
+
   // --- B2: no resend control -> manual_required, nothing clicked ---
   const sb2 = makeSandbox([{ text: 'Cancel' }, { text: 'Sign out' }]);
   const ctx2 = vm.createContext(sb2);
@@ -517,6 +538,289 @@ class TestProgrammaticResendClickGuard(unittest.TestCase):
         self.assertEqual(self.data["ext"], self.data["user"], "userscript SSOT drifted from extension behavior")
 
 
+class TestRaceGuardStaleTolerance(unittest.TestCase):
+    """F-OTP-2 defence: <=5s granularity tolerance must not re-open the stale-code race."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.data = _run_race_scenario()
+
+    def _check(self, target):
+        r = self.data[target]["tolerance"]
+        self.assertFalse(r["within"], f"{target}: candidate 3s before bound must be accepted (within 5s tolerance)")
+        self.assertTrue(r["beyond"], f"{target}: candidate 6s before bound must be excluded")
+        self.assertEqual(r["withinVerdict"], "accepted", target)
+        self.assertEqual(r["beyondVerdict"], "excluded_stale", target)
+        self.assertEqual(r["reportTolerance"], 5000, f"{target}: tolerance must be 5s, never minute-level")
+        self.assertIn("last_resend_result", r["reportResend"], target)
+        self.assertIn("confirm_window_ms", r["reportResend"], target)
+
+    def test_tolerance_extension(self):
+        self._check("ext")
+
+    def test_tolerance_userscript_parity(self):
+        self._check("user")
+        self.assertEqual(self.data["ext"]["tolerance"], self.data["user"]["tolerance"])
+
+
+
+_RESEND_HONESTY_SCENARIO_JS = r"""
+const vm = require('vm');
+const contentJs = __CONTENT_JS__;
+const userJs = __USER_JS__;
+
+function extractSsot(src) {
+  const s = '// === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===';
+  const e = '// === END CORE DOM DETECTION ENGINE (SSOT) ===';
+  const start = src.indexOf(s);
+  const end = src.indexOf(e, start);
+  if (start === -1 || end === -1) throw new Error('SSOT markers missing');
+  return src.slice(start + s.length, end);
+}
+
+function extractFunc(src, name) {
+  const re = new RegExp('function ' + name + '\\s*\\(');
+  const m = re.exec(src);
+  if (!m) throw new Error(name + ' not found');
+  let depth = 0;
+  let started = false;
+  for (let i = m.index; i < src.length; i++) {
+    const c = src[i];
+    if (c === '{') { depth += 1; started = true; }
+    else if (c === '}') { depth -= 1; if (started && depth === 0) return src.slice(m.index, i + 1); }
+  }
+  throw new Error('unclosed ' + name);
+}
+
+const T0 = 1700000000000;
+
+function makeEnv(src) {
+  let clock = T0;
+  const RealDate = Date;
+  function FakeDate(...args) {
+    if (!(this instanceof FakeDate)) return new RealDate(...args);
+    if (args.length === 0) return new RealDate(clock);
+    return new RealDate(...args);
+  }
+  FakeDate.now = () => clock;
+  FakeDate.prototype = RealDate.prototype;
+
+  const storage = {};
+  const notifs = { pills: [], clicks: 0, programmatic: null, stopped: 0, listening: 0, timers: [] };
+  const emailInput = {
+    value: '', tagName: 'INPUT', type: 'email', events: [],
+    focus() {},
+    dispatchEvent(e) { this.events.push(e.type); },
+    getAttribute() { return null; },
+    closest() { return null; }
+  };
+  const sandbox = {
+    window: {
+      HTMLInputElement: { prototype: {} },
+      location: { hostname: 'app.example.com', pathname: '/login', search: '', hash: '', href: 'https://app.example.com/login' },
+      sessionStorage: {
+        getItem(k) { return Object.prototype.hasOwnProperty.call(storage, k) ? storage[k] : null; },
+        setItem(k, v) { storage[k] = String(v); },
+        removeItem(k) { delete storage[k]; }
+      },
+      getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' })
+    },
+    document: {
+      title: 'Sign in', body: { innerText: '' }, readyState: 'complete',
+      addEventListener() {}, querySelector() { return null; }, querySelectorAll() { return []; }
+    },
+    Event: class Event { constructor(type) { this.type = type; } },
+    URL, console, CSS: { escape: (x) => x }, NodeFilter: { SHOW_ELEMENT: 1 }, Date: FakeDate
+  };
+  sandbox.window.top = sandbox.window;
+  sandbox.window.self = sandbox.window;
+  sandbox.__advance = (ms) => { clock += ms; };
+  sandbox.__clock = () => clock;
+  sandbox.__notifs = notifs;
+  sandbox.__emailInput = emailInput;
+
+  const ctx = vm.createContext(sandbox);
+  vm.runInContext(extractSsot(src), ctx);
+  vm.runInContext("let autoResendInFlight = false; let resendGraceUntil = 0; let activeCode = null; let selectedAccount = ''; let defaultEmail = ''; let activeTeardown = null;", ctx);
+  vm.runInContext(extractFunc(src, 'attemptAutoResend'), ctx);
+
+  const record = (state, data) => notifs.pills.push({ state, data });
+  ctx.renderPill = record;
+  ctx.renderRacePill = record;
+  ctx.stopListening = () => { notifs.stopped += 1; };
+  ctx.startListening = () => { notifs.listening += 1; };
+  ctx.start = () => { notifs.listening += 1; };
+  ctx.detectPageError = () => ({ hasError: true, reason: 'dom_text', text: 'That account does not have access.' });
+  ctx.setTimeout = (fn, ms) => { notifs.timers.push({ fn, ms }); return notifs.timers.length; };
+  ctx.clearTimeout = () => {};
+  const control = {
+    textContent: 'Send login code',
+    click() { notifs.clicks += 1; notifs.programmatic = ctx.isProgrammaticResendClickActive(); }
+  };
+  notifs.control = control;
+  ctx.planAutoResend = () => ({ action: 'resend', control, resend_count: 1, resend_limit: 2 });
+  ctx.findEmailInput = () => emailInput;
+  ctx.findEmailOnPage = () => '';
+  return { ctx, notifs, sandbox, emailInput };
+}
+
+function runCase(src) {
+  const D = 'app.example.com';
+  const pageErr = { hasError: true, reason: 'dom_text', text: 'That account does not have access.' };
+  const out = {};
+
+  // 1) email step + remembered email: fill, dispatch, exactly one *guarded* click
+  {
+    const env = makeEnv(src);
+    env.ctx.setStorageItem('spark_otp_last_email_' + D, 'me@example.com');
+    const st = env.ctx.getAuthState(D);
+    st.lastFailedAt = env.sandbox.__clock() + 1000;
+    env.ctx.saveAuthState(st, D);
+    const r = env.ctx.attemptAutoResend(D, pageErr);
+    const state = env.ctx.getAuthState(D);
+    const report = env.ctx.getRaceGuardReport(D);
+    out.emailKnown = {
+      result: r,
+      clicks: env.notifs.clicks,
+      programmatic: env.notifs.programmatic,
+      emailValue: env.emailInput.value,
+      events: env.emailInput.events.slice(),
+      resendCount: state.resendCount,
+      resendForFailedAt: state.resendForFailedAt,
+      lastFailedAt: state.lastFailedAt,
+      lastResendResult: state.lastResendResult,
+      pills: env.notifs.pills.map((p) => ({ state: p.state, reason: p.data && p.data.reason })),
+      timerMs: env.notifs.timers.map((t) => t.ms),
+      reportResend: report.resend,
+      reportTolerance: report.stale_tolerance_ms
+    };
+    // 45s honesty window expires with the page still rejecting -> downgrade, never click again
+    env.sandbox.__advance(46000);
+    env.notifs.timers[env.notifs.timers.length - 1].fn();
+    const state2 = env.ctx.getAuthState(D);
+    const lastPill = env.notifs.pills[env.notifs.pills.length - 1];
+    out.confirmTimeout = {
+      clicks: env.notifs.clicks,
+      lastPill: { state: lastPill.state, reason: lastPill.data && lastPill.data.reason },
+      lastResendResult: state2.lastResendResult,
+      reportResend: env.ctx.getRaceGuardReport(D).resend
+    };
+    env.notifs.timers[env.notifs.timers.length - 1].fn();
+    out.confirmTimeoutAgain = { clicks: env.notifs.clicks };
+  }
+
+  // 2) email step but no email anywhere -> no click, manual_required(email_unknown)
+  {
+    const env = makeEnv(src);
+    const st = env.ctx.getAuthState(D);
+    st.lastFailedAt = env.sandbox.__clock() + 1000;
+    env.ctx.saveAuthState(st, D);
+    const r = env.ctx.attemptAutoResend(D, pageErr);
+    const state = env.ctx.getAuthState(D);
+    out.emailUnknown = {
+      result: r,
+      clicks: env.notifs.clicks,
+      resendCount: state.resendCount,
+      resendForFailedAt: state.resendForFailedAt,
+      lastFailedAt: state.lastFailedAt,
+      lastResendResult: state.lastResendResult,
+      pills: env.notifs.pills.map((p) => ({ state: p.state, reason: p.data && p.data.reason }))
+    };
+  }
+
+  // 3) fresh eligible candidate inside the window confirms the resend (no downgrade)
+  {
+    const env = makeEnv(src);
+    env.ctx.setStorageItem('spark_otp_last_email_' + D, 'me@example.com');
+    const st = env.ctx.getAuthState(D);
+    st.lastFailedAt = env.sandbox.__clock() + 1000;
+    env.ctx.saveAuthState(st, D);
+    env.ctx.attemptAutoResend(D, pageErr);
+    env.ctx.recordRaceCandidate(D, { code: '445566', message_id: 'm-new', received_at_ms: env.sandbox.__clock() + 1000 });
+    const confirmEval = env.ctx.evaluateResendConfirmation(D, { hasError: true }, env.sandbox.__clock() + 5000);
+    env.sandbox.__advance(46000);
+    env.notifs.timers[env.notifs.timers.length - 1].fn();
+    out.confirmedPath = {
+      confirmEval,
+      clicks: env.notifs.clicks,
+      manualPills: env.notifs.pills.filter((p) => p.state === 'manual_required').length,
+      reportResend: env.ctx.getRaceGuardReport(D).resend
+    };
+  }
+
+  return out;
+}
+
+console.log(JSON.stringify({ ext: runCase(contentJs), user: runCase(userJs) }));
+"""
+
+
+def _run_resend_honesty_scenario():
+    content_js = (REPO_ROOT / "extension" / "content.js").read_text(encoding="utf-8")
+    user_js = (REPO_ROOT / "userscript" / "spark-otp.user.js").read_text(encoding="utf-8")
+    js_code = _RESEND_HONESTY_SCENARIO_JS.replace("__CONTENT_JS__", json.dumps(content_js)).replace("__USER_JS__", json.dumps(user_js))
+    proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+    if proc.returncode != 0:
+        raise AssertionError(f"Node resend-honesty scenario failed: {proc.stderr}")
+    return json.loads(proc.stdout)
+
+
+class TestResendHonesty(unittest.TestCase):
+    """F-OTP-1: auto-resend must fill the email step before clicking and must not over-claim."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.data = _run_resend_honesty_scenario()
+
+    def _check(self, target):
+        r = self.data[target]
+        # 1) email step: fill first, then exactly one click through the programmatic guard
+        ek = r["emailKnown"]
+        self.assertTrue(ek["result"]["attempted"], target)
+        self.assertEqual(ek["clicks"], 1, f"{target}: expected exactly one resend click")
+        self.assertTrue(ek["programmatic"], f"{target}: resend click must go through runProgrammaticClick")
+        self.assertEqual(ek["emailValue"], "me@example.com", f"{target}: email step must be filled first")
+        self.assertEqual(ek["events"], ["input", "change"], f"{target}: filled email must dispatch input+change")
+        self.assertEqual(ek["resendCount"], 1, target)
+        self.assertEqual(ek["resendForFailedAt"], ek["lastFailedAt"], target)
+        self.assertEqual(ek["lastResendResult"], "email_filled", target)
+        self.assertEqual(ek["pills"][0]["state"], "resend_sent", target)
+        self.assertEqual(ek["timerMs"], [1500, 45050], f"{target}: one restart timer + one 45s honesty timer")
+        self.assertEqual(ek["reportResend"]["last_resend_result"], "email_filled", target)
+        self.assertEqual(ek["reportTolerance"], 5000, target)
+        # 2) confirmation window expires, still rejected -> manual_required(resend_unconfirmed), no second click
+        ct = r["confirmTimeout"]
+        self.assertEqual(ct["clicks"], 1, f"{target}: confirmation timeout must never click again")
+        self.assertEqual(ct["lastPill"]["state"], "manual_required", target)
+        self.assertEqual(ct["lastPill"]["reason"], "resend_unconfirmed", target)
+        self.assertEqual(ct["lastResendResult"], "unconfirmed", target)
+        self.assertEqual(ct["reportResend"]["last_resend_result"], "unconfirmed", target)
+        self.assertEqual(r["confirmTimeoutAgain"]["clicks"], 1, f"{target}: repeated timeout must not loop/click")
+        # 3) no email available -> nothing clicked, manual_required(email_unknown)
+        eu = r["emailUnknown"]
+        self.assertFalse(eu["result"]["attempted"], target)
+        self.assertEqual(eu["result"]["reason"], "email_unknown", target)
+        self.assertEqual(eu["clicks"], 0, f"{target}: must not click when email is unknown")
+        self.assertEqual(eu["resendCount"], 0, target)
+        self.assertEqual(eu["resendForFailedAt"], eu["lastFailedAt"], f"{target}: failure must be marked handled to avoid retry loops")
+        self.assertEqual(eu["lastResendResult"], "email_unknown", target)
+        self.assertEqual(eu["pills"][-1]["state"], "manual_required", target)
+        self.assertEqual(eu["pills"][-1]["reason"], "email_unknown", target)
+        # 4) fresh candidate inside window confirms; no manual downgrade
+        cp = r["confirmedPath"]
+        self.assertEqual(cp["confirmEval"]["action"], "confirmed", target)
+        self.assertEqual(cp["clicks"], 1, target)
+        self.assertEqual(cp["manualPills"], 0, f"{target}: confirmed resend must not downgrade to manual_required")
+        self.assertTrue(cp["reportResend"]["confirmed"], target)
+
+    def test_resend_honesty_extension(self):
+        self._check("ext")
+
+    def test_resend_honesty_userscript_parity(self):
+        self._check("user")
+        self.assertEqual(self.data["ext"], self.data["user"], "userscript resend-honesty behavior drifted")
+
+
 class TestRaceGuardUiAndContract(unittest.TestCase):
     def test_pill_states_and_i18n_exist_in_both_targets(self):
         for rel in ("extension/content.js", "userscript/spark-otp.user.js"):
@@ -540,11 +844,20 @@ class TestRaceGuardUiAndContract(unittest.TestCase):
         self.assertIn("inspector-race-guard", popup_html)
         self.assertIn("renderRaceGuard", popup_js)
         self.assertIn("race_guard", popup_js)
-        for field in ("since_time", "login_request_at", "resend_count", "last_failed_reason"):
+        for field in ("since_time", "login_request_at", "resend_count", "last_failed_reason", "last_resend_result", "stale_tolerance_ms"):
             self.assertIn(field, popup_js, f"popup must render race_guard.{field}")
         self.assertIn("RaceGuardReport", types)
+        self.assertIn("ResendTrace", types)
         self.assertIn("race_guard: RaceGuardReport", types)
         self.assertIn("since_source", types)
+        self.assertIn("stale_tolerance_ms", types)
+        # F-OTP-1 honesty wording: never claim "re-sent" for a merely requested resend.
+        for rel in ("extension/content.js", "userscript/spark-otp.user.js"):
+            src = (REPO_ROOT / rel).read_text(encoding="utf-8")
+            self.assertNotIn("auto re-sent a new login code", src, f"{rel}: over-claiming resend title")
+            self.assertNotIn("已自动重新发送登录验证码", src, f"{rel}: over-claiming resend title (zh)")
+            self.assertIn("requested a new login code", src, f"{rel}: must state the code was requested")
+            self.assertIn("已请求发送新的登录验证码", src, f"{rel}: zh requested wording missing")
 
 
 class TestDiagnoseSinceTimeEngine(unittest.TestCase):

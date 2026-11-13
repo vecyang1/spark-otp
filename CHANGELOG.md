@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] - 2026-11-13
+
+### Fixed
+- **F-OTP-2 (HIGH) — `received_at` loses seconds on the `fetch_thread()` fallback, wrongly excluding fresh codes**: The race guard compares `received_at` against the login-request lower bound, but the full-thread fallback text carries a minute-granular `Date:` line, so an OTPResult built from it reported `received_at` truncated to `:00` (real: 20:19:36 → returned 20:19:00). A fresh code received later in the bound's own minute could therefore be classified stale and never submitted. Fix: the database row is now the timing SSOT — `SparkClient._stamp_row_precision()` overwrites `received_at` (`datetime.fromtimestamp(row_received_ts)`), `expires_at` (received_at + TTL), `message_id` and `time_remaining_seconds` on every OTPResult branch of the SQLite and Apple Mail fast paths (short-body hit, expired variants, and all `fetch_thread` full-thread fallbacks). Regression: `tests/test_received_at_precision.py` (proven red on the pre-fix code, then green), covering client + `/api/otp`.
+- **Defensive 5s stale tolerance (never minute-level)**: `isCodeRejected()` rule 0 and `recordRaceCandidate()` now classify as stale only when `received_at < since_time - 5s` (`RACE_STALE_TOLERANCE_MS`), exposed as `stale_tolerance_ms` in the race-guard report and popup. This absorbs small timestamp granularity without re-opening the 36s stale-code race.
+- **F-OTP-1 (LOW/MED) — auto-resend no longer over-claims**: When the page bounces back to the email step, `attemptAutoResend()` now fills the email (from `findEmailOnPage() → spark_otp_last_email_<domain> → configured account/default email`) and dispatches input/change before the programmatic click; with no email available it does not click at all and shows `manual_required` (`email_unknown`). The pill wording changed from "auto re-sent a new login code" to "requested a new login code", and a one-shot 45s confirmation window downgrades to `manual_required` (`resend_unconfirmed`) when no fresh eligible code arrives — never clicking twice. The race-guard report and popup now expose `resend: {count, last_resend_at, last_resend_result, confirm_window...}` (`requested` / `email_filled` / `email_unknown` / `unconfirmed`), synced in `extension/types/contracts.d.ts`. Regression: `TestResendHonesty` (18 race-guard tests total).
+
+### Tests
+- `tests/test_received_at_precision.py` (3): short-body hit, `fetch_thread` minute-granular fallback, and `/api/otp` all keep `:56` seconds from the DB row.
+- `tests/test_race_guard.py` (18): previous 14 + 5s stale-tolerance + resend-honesty (email fill → exactly one guarded click; no email → 0 clicks + `email_unknown`; 45s window → `resend_unconfirmed` with no second click; confirmed path stays non-manual; extension/userscript parity).
+- `scripts/e2e_extension_smoke.py` and `pytest tests/ -q` re-run green.
+
 ## [1.7.0] - 2026-11-13
 
 ### Added

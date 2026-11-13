@@ -113,6 +113,19 @@ export interface RaceGuardCandidate {
   observed_at: number;
 }
 
+/** Honesty trace of the last auto-resend request (F-OTP-1). */
+export interface ResendTrace {
+  count: number;
+  last_resend_at: number;
+  last_resend_at_iso: string | null;
+  /** requested = click issued on the OTP step; email_filled = email step was filled first; email_unknown = no email to fill, nothing clicked; unconfirmed = no fresh code within the confirmation window */
+  last_resend_result: "requested" | "email_filled" | "email_unknown" | "unconfirmed" | null;
+  confirm_window_ms: number;
+  confirm_started_at: number | null;
+  confirm_deadline: number | null;
+  confirmed: boolean | null;
+}
+
 /** Per-domain login-attempt timeline rendered by the popup Page Detection Inspector. */
 export interface RaceGuardReport {
   domain: string;
@@ -136,6 +149,9 @@ export interface RaceGuardReport {
   /** Effective lower bound (epoch seconds) sent to /api/otp and /api/stream as since_time. */
   since_time: number;
   since_source: "login_request" | "resend" | "page_fallback";
+  /** Defensive timestamp granularity allowance (5s, never minutes) for stale classification. */
+  stale_tolerance_ms: number;
+  resend: ResendTrace;
   failed_codes: string[];
   last_observation: RaceGuardCandidate | null;
   candidates: RaceGuardCandidate[];

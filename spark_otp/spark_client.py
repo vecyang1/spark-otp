@@ -10,7 +10,7 @@ import re
 import glob
 import email
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from .models import EmailSummary, OTPResult
 from .config import config, DEFAULT_RULES
@@ -131,6 +131,54 @@ class SparkClient:
                 return m
         return None
 
+    @staticmethod
+    def _stamp_row_precision(res: Optional["OTPResult"], pk, received_ts, now: Optional[datetime] = None) -> Optional["OTPResult"]:
+        """Stamp an extraction result with the database row as the timing SSOT.
+
+        Root cause (F-OTP-2): the `fetch_thread()` full-thread fallback text carries a
+        minute-granular `Date:` line, so an OTPResult built from it used to report
+        `received_at` truncated to `:00`. The race guard compares `received_at` against
+        the login-request lower bound, so a truncated fresh code (e.g. 21:12:50 ->
+        21:12:00) would be misclassified as stale and never submitted. The database row
+        (`receivedDate`) is authoritative: overwrite `received_at`, `expires_at`
+        (received_at + TTL), `message_id` and `time_remaining_seconds` from it.
+        """
+        if res is None:
+            return None
+        try:
+            rec_dt = datetime.fromtimestamp(float(received_ts))
+        except Exception:
+            return res
+        try:
+            old_rec = None
+            old_exp = None
+            try:
+                old_rec = datetime.fromisoformat(res.received_at)
+            except Exception:
+                old_rec = None
+            try:
+                old_exp = datetime.fromisoformat(res.expires_at)
+            except Exception:
+                old_exp = None
+            ttl_seconds = None
+            if old_rec is not None and old_exp is not None:
+                delta = (old_exp - old_rec).total_seconds()
+                if delta > 0:
+                    ttl_seconds = delta
+            if ttl_seconds is None:
+                rule = next((r for r in config.rules if r.name == res.service), None)
+                ttl_seconds = float(getattr(rule, "default_ttl_seconds", 600) or 600) if rule else 600.0
+            exp_dt = rec_dt + timedelta(seconds=ttl_seconds)
+            ref = now or datetime.now()
+            res.received_at = rec_dt.isoformat()
+            res.expires_at = exp_dt.isoformat()
+            res.message_id = str(pk)
+            res.time_remaining_seconds = max(0, int((exp_dt - ref).total_seconds()))
+            res.is_expired = exp_dt <= ref
+        except Exception:
+            return res
+        return res
+
     def _get_otp_from_apple_mail(
         self,
         domain: Optional[str],
@@ -247,6 +295,7 @@ class SparkClient:
                 brand_hint=brand_hint,
             )
             if res:
+                res = self._stamp_row_precision(res, pk, received_ts, current_time)
                 if (not exclude_codes_set or res.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res.message_id not in exclude_msg_ids_set):
                     return res
             elif include_expired and first_expired_otp is None:
@@ -260,6 +309,7 @@ class SparkClient:
                     brand_hint=brand_hint,
                 )
                 if res_exp:
+                    res_exp = self._stamp_row_precision(res_exp, pk, received_ts, current_time)
                     if (not exclude_codes_set or res_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_exp.message_id not in exclude_msg_ids_set):
                         first_expired_otp = res_exp
 
@@ -295,6 +345,7 @@ class SparkClient:
                         brand_hint=brand_hint,
                     )
                     if res_full:
+                        res_full = self._stamp_row_precision(res_full, pk, received_ts, current_time)
                         if (not exclude_codes_set or res_full.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full.message_id not in exclude_msg_ids_set):
                             return res_full
                     elif include_expired and first_expired_otp is None:
@@ -308,6 +359,7 @@ class SparkClient:
                             brand_hint=brand_hint,
                         )
                         if res_full_exp:
+                            res_full_exp = self._stamp_row_precision(res_full_exp, pk, received_ts, current_time)
                             if (not exclude_codes_set or res_full_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full_exp.message_id not in exclude_msg_ids_set):
                                 first_expired_otp = res_full_exp
 
@@ -592,6 +644,7 @@ class SparkClient:
                         )
                         if res_cb and res_cb.callback_url:
                             res = res_cb
+                res = self._stamp_row_precision(res, pk, received_ts, current_time)
                 if (not exclude_codes_set or res.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res.message_id not in exclude_msg_ids_set):
                     return res
             elif include_expired and first_expired_otp is None:
@@ -620,6 +673,7 @@ class SparkClient:
                             )
                             if res_exp_cb and res_exp_cb.callback_url:
                                 res_exp = res_exp_cb
+                    res_exp = self._stamp_row_precision(res_exp, pk, received_ts, current_time)
                     if (not exclude_codes_set or res_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_exp.message_id not in exclude_msg_ids_set):
                         first_expired_otp = res_exp
 
@@ -654,6 +708,7 @@ class SparkClient:
                             brand_hint=brand_hint,
                         )
                         if res_full:
+                            res_full = self._stamp_row_precision(res_full, pk, received_ts, current_time)
                             if (not exclude_codes_set or res_full.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full.message_id not in exclude_msg_ids_set):
                                 return res_full
                         elif include_expired and first_expired_otp is None:
@@ -667,6 +722,7 @@ class SparkClient:
                                 brand_hint=brand_hint,
                             )
                             if res_full_exp:
+                                res_full_exp = self._stamp_row_precision(res_full_exp, pk, received_ts, current_time)
                                 if (not exclude_codes_set or res_full_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full_exp.message_id not in exclude_msg_ids_set):
                                     first_expired_otp = res_full_exp
 

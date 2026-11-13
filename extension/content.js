@@ -62,14 +62,16 @@
       disableSite: "Disable on this site",
       raceGuardedTitle: "Race guard active · only accepting codes requested after login",
       raceGuardedSubtitle: "Code requested at {time} · older emails are excluded",
-      resendSentTitle: "Rejected code · auto re-sent a new login code",
-      resendSentSubtitle: "Attempt {attempt}/{max} · waiting for the fresh email",
+      resendSentTitle: "Rejected code · requested a new login code",
+      resendSentSubtitle: "Attempt {attempt}/{max} · waiting for the fresh email to arrive",
       waitingNewCodeTitle: "Old code excluded · waiting for the new email",
       waitingNewCodeSubtitle: "Candidate received at {time} is older than the login request bound",
       manualRequiredTitle: "Verification rejected · manual action required",
       manualRequiredSubtitle: "{reason} · please click Send login code yourself",
       manualRequiredNoControl: "No resend control found",
       manualRequiredLimit: "Auto-resend limit reached",
+      manualRequiredEmailUnknown: "No email available to fill on the email step",
+      manualRequiredResendUnconfirmed: "Resend not confirmed (no new code arrived)",
     },
     zh: {
       watchingTitle: "已检测到验证码输入框",
@@ -101,14 +103,16 @@
       disableSite: "在此网站禁用",
       raceGuardedTitle: "竞态守卫已生效 · 只接受本次登录之后收到的验证码",
       raceGuardedSubtitle: "验证码请求于 {time} · 更早的邮件已被排除",
-      resendSentTitle: "验证码被拒 · 已自动重新发送登录验证码",
-      resendSentSubtitle: "第 {attempt}/{max} 次自动重发 · 正在等待新邮件",
+      resendSentTitle: "验证码被拒 · 已请求发送新的登录验证码",
+      resendSentSubtitle: "第 {attempt}/{max} 次请求 · 等待新邮件送达确认",
       waitingNewCodeTitle: "已排除旧验证码 · 正在等待新邮件",
       waitingNewCodeSubtitle: "候选邮件收取于 {time}，早于本次登录请求时间下界",
       manualRequiredTitle: "验证被拒 · 需人工操作",
       manualRequiredSubtitle: "{reason} · 请手动点击「发送登录验证码」",
       manualRequiredNoControl: "未找到重发控件",
       manualRequiredLimit: "自动重发次数已达上限",
+      manualRequiredEmailUnknown: "email 步骤没有可填写的邮箱",
+      manualRequiredResendUnconfirmed: "重发未确认（尚未收到新验证码）",
     }
   };
 
@@ -291,6 +295,7 @@
           resendCount: Number(parsed.resendCount) || 0,
           resendForFailedAt: Number(parsed.resendForFailedAt) || 0,
           lastResendReason: parsed.lastResendReason || null,
+          lastResendResult: parsed.lastResendResult || null,
           lastFailedReason: parsed.lastFailedReason || null
         };
       }
@@ -309,6 +314,7 @@
       resendCount: 0,
       resendForFailedAt: 0,
       lastResendReason: null,
+      lastResendResult: null,
       lastFailedReason: null
     };
   }
@@ -371,6 +377,13 @@
   const RACE_GUARD_FALLBACK_LOOKBACK_MS = 300 * 1000; // 5 min conservative fallback
   const RACE_RESEND_COOLDOWN_MS = 20 * 1000;          // >= 20s between auto resends
   const RACE_RESEND_MAX = 2;                          // hard cap per page session
+  // F-OTP-2 defence: tolerate <=5s of timestamp granularity between the login-request
+  // bound and the mail store. Deliberately NOT minute-level — that would re-open the
+  // 36s stale-code race the guard exists to close. The primary fix is DB-authoritative
+  // `received_at` stamping in SparkClient.
+  const RACE_STALE_TOLERANCE_MS = 5 * 1000;
+  const RESEND_CONFIRM_WINDOW_MS = 45 * 1000;         // one-shot honesty window after a resend request
+  let resendConfirmationState = null;                 // {domain, attempt, startedAt, deadline, confirmed}
   const pageLoadAtMs = Date.now();                    // assistant injected on code page fallback anchor
   let lastRaceObservation = null;
   let raceGuardCandidates = [];
@@ -411,11 +424,13 @@
     state.resendCount = 0;
     state.lastResendAt = 0;
     state.resendForFailedAt = 0;
+    state.lastResendResult = null;
+    resendConfirmationState = null;
     saveAuthState(state, d);
     return state;
   }
 
-  function recordResend(domain, reason, nowMs) {
+  function recordResend(domain, reason, nowMs, result) {
     const d = domain || detectTargetDomain();
     const now = Number(nowMs) || Date.now();
     const state = getAuthState(d);
@@ -423,6 +438,19 @@
     state.resendCount = (Number(state.resendCount) || 0) + 1;
     state.resendForFailedAt = Number(state.lastFailedAt) || 0;
     state.lastResendReason = reason || "auto";
+    state.lastResendResult = result || "requested";
+    saveAuthState(state, d);
+    return state;
+  }
+
+  // Record only the *honesty* verdict of a resend attempt (no budget change).
+  function recordResendResult(domain, result, options) {
+    const d = domain || detectTargetDomain();
+    const state = getAuthState(d);
+    state.lastResendResult = result || null;
+    if (options && options.markFailureHandled) {
+      state.resendForFailedAt = Number(state.lastFailedAt) || 0;
+    }
     saveAuthState(state, d);
     return state;
   }
@@ -467,7 +495,7 @@
     const sinceMs = getRaceGuardSinceMs(d);
     let verdict = c.verdict;
     if (!verdict) {
-      if (receivedMs > 0 && receivedMs < sinceMs) {
+      if (receivedMs > 0 && receivedMs < sinceMs - RACE_STALE_TOLERANCE_MS) {
         verdict = "excluded_stale";
       } else if (c.rejected) {
         verdict = "rejected";
@@ -487,6 +515,9 @@
       since_time: Math.floor(sinceMs / 1000),
       observed_at: Date.now()
     };
+    if (verdict === "accepted") {
+      markResendConfirmed(d);
+    }
     lastRaceObservation = record;
     raceGuardCandidates.unshift(record);
     if (raceGuardCandidates.length > 5) {
@@ -525,6 +556,17 @@
       since_time_ms: sinceMs,
       since_time: Math.floor(sinceMs / 1000),
       since_source: getRaceGuardSource(d),
+      stale_tolerance_ms: RACE_STALE_TOLERANCE_MS,
+      resend: {
+        count: resendCount,
+        last_resend_at: lastResendAt,
+        last_resend_at_iso: iso(lastResendAt),
+        last_resend_result: state.lastResendResult || null,
+        confirm_window_ms: RESEND_CONFIRM_WINDOW_MS,
+        confirm_started_at: resendConfirmationState ? resendConfirmationState.startedAt : null,
+        confirm_deadline: resendConfirmationState ? resendConfirmationState.deadline : null,
+        confirmed: resendConfirmationState ? Boolean(resendConfirmationState.confirmed) : null
+      },
       failed_codes: (state.failedCodes || []).slice(-5),
       last_observation: lastRaceObservation,
       candidates: raceGuardCandidates.slice(0, 5)
@@ -630,6 +672,115 @@
       resend_count: resendCount + 1,
       resend_limit: RACE_RESEND_MAX
     };
+  }
+
+  // === Resend honesty (F-OTP-1): fill the email step before clicking, and never
+  // claim "re-sent" without a confirmation window. All decisions are pure/injectable-clock
+  // so they can be tested without sleeping. ===
+  function resolveResendEmail(domain, extras) {
+    const d = domain || detectTargetDomain();
+    let found = "";
+    try {
+      found = (typeof findEmailOnPage === "function" && findEmailOnPage()) || "";
+    } catch (e) {}
+    if (found) return found;
+    const remembered = d ? getStorageItem("spark_otp_last_email_" + d) : null;
+    if (remembered) return String(remembered);
+    for (const candidate of (extras || [])) {
+      if (candidate && typeof candidate === "string" && candidate.includes("@")) return candidate;
+    }
+    return "";
+  }
+
+  function fillEmailForResend(domain, extras) {
+    const emailInput = typeof findEmailInput === "function" ? findEmailInput() : null;
+    if (!emailInput) {
+      // OTP / verify-code step: nothing to fill.
+      return { ok: true, step: "otp", email: null };
+    }
+    const email = resolveResendEmail(domain, extras);
+    if (!email) {
+      return { ok: false, step: "email", email: null, reason: "email_unknown" };
+    }
+    let usedSetter = false;
+    try {
+      if (typeof setInputValueWithReactSupport === "function") {
+        usedSetter = true;
+        setInputValueWithReactSupport(emailInput, email);
+      } else if (typeof setInputValue === "function") {
+        usedSetter = true;
+        setInputValue(emailInput, email);
+      }
+      // Exotic/DOM-mocked inputs may reject the prototype setter; guarantee the value lands.
+      if (emailInput && emailInput.value !== email) {
+        emailInput.value = email;
+      }
+      // The shared setter already dispatches input/change; only add them on the fallback path.
+      if (!usedSetter && typeof emailInput.dispatchEvent === "function" && typeof Event === "function") {
+        emailInput.dispatchEvent(new Event("input", { bubbles: true }));
+        emailInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    } catch (e) {}
+    return { ok: true, step: "email", email };
+  }
+
+  function startResendConfirmation(domain, attempt, nowMs) {
+    const d = domain || detectTargetDomain();
+    const now = Number(nowMs) || Date.now();
+    resendConfirmationState = {
+      domain: d,
+      attempt: Number(attempt) || 0,
+      startedAt: now,
+      deadline: now + RESEND_CONFIRM_WINDOW_MS,
+      confirmed: false,
+      result: "pending"
+    };
+    return resendConfirmationState;
+  }
+
+  function markResendConfirmed(domain) {
+    const d = domain || detectTargetDomain();
+    if (resendConfirmationState && resendConfirmationState.domain === d) {
+      resendConfirmationState.confirmed = true;
+      resendConfirmationState.result = "confirmed";
+    }
+    return resendConfirmationState;
+  }
+
+  function clearResendConfirmation(domain) {
+    if (!domain || !resendConfirmationState || resendConfirmationState.domain === domain) {
+      resendConfirmationState = null;
+    }
+  }
+
+  // Pure decision (injectable clock): "confirmed" | "wait" | "manual_required" | "none".
+  // At deadline with no fresh candidate and the page still showing a rejection, the
+  // resend is downgraded to `resend_unconfirmed` + manual_required — never clicked again.
+  function evaluateResendConfirmation(domain, pageErr, nowMs) {
+    const d = domain || detectTargetDomain();
+    const now = Number(nowMs) || Date.now();
+    if (!resendConfirmationState || resendConfirmationState.domain !== d) {
+      return { action: "none" };
+    }
+    if (resendConfirmationState.confirmed) {
+      return { action: "confirmed", attempt: resendConfirmationState.attempt };
+    }
+    if (now < resendConfirmationState.deadline) {
+      return {
+        action: "wait",
+        deadline: resendConfirmationState.deadline,
+        remaining_ms: resendConfirmationState.deadline - now
+      };
+    }
+    const stillRejected = Boolean(pageErr && pageErr.hasError);
+    resendConfirmationState.result = "unconfirmed";
+    const st = getAuthState(d);
+    st.lastResendResult = "unconfirmed";
+    saveAuthState(st, d);
+    if (stillRejected) {
+      return { action: "manual_required", reason: "resend_unconfirmed", attempt: resendConfirmationState.attempt };
+    }
+    return { action: "none", reason: "window_elapsed_without_rejection" };
   }
 
   function installLoginRequestCapture(domain) {
@@ -764,6 +915,7 @@
     // 0. Race guard (A): a candidate received before this login attempt's lower bound
     // is stale by definition — a later "Send login code" invalidated it server-side.
     const recMs = Number(receivedAtMs) || 0;
+    const staleToleranceMs = typeof RACE_STALE_TOLERANCE_MS === "number" ? RACE_STALE_TOLERANCE_MS : 5000;
     let guardSinceMs = 0;
     if (opts.sinceTimeMs !== undefined) {
       guardSinceMs = Number(opts.sinceTimeMs) || 0;
@@ -772,7 +924,7 @@
     } else if (state.lastFailedAt) {
       guardSinceMs = state.lastFailedAt; // legacy isolated-harness fallback
     }
-    if (recMs > 0 && guardSinceMs > 0 && recMs < guardSinceMs) {
+    if (recMs > 0 && guardSinceMs > 0 && recMs < guardSinceMs - staleToleranceMs) {
       return true;
     }
 
@@ -2530,7 +2682,13 @@
       } else if (state === "manual_required") {
         titleKey = "manualRequiredTitle";
         subtitleKey = "manualRequiredSubtitle";
-        const reasonText = data.reason === "resend_limit" ? t("manualRequiredLimit") : t("manualRequiredNoControl");
+        const reasonKeyMap = {
+          resend_limit: "manualRequiredLimit",
+          no_resend_control: "manualRequiredNoControl",
+          email_unknown: "manualRequiredEmailUnknown",
+          resend_unconfirmed: "manualRequiredResendUnconfirmed"
+        };
+        const reasonText = t(reasonKeyMap[data.reason] || "manualRequiredNoControl");
         vars = { reason: reasonText };
         icon = ICONS.alert;
       }
@@ -2798,10 +2956,26 @@
   function attemptAutoResend(domain, pageErr) {
     if (autoResendInFlight) return { attempted: false, reason: "inflight" };
     const plan = planAutoResend(domain, pageErr, Date.now());
+    const emailFallbackChain = [selectedAccount, defaultEmail];
     if (plan.action === "resend" && plan.control) {
       autoResendInFlight = true;
-      const email = findEmailOnPage() || getStorageItem("spark_otp_last_email_" + domain) || selectedAccount || "";
-      recordResend(domain, "auto");
+      // Honesty (F-OTP-1): if the page bounced back to the email step, fill the email first —
+      // otherwise a programmatic "Send login code" click is blocked by form validation and
+      // nothing is actually sent while the pill would claim otherwise.
+      const prepared = fillEmailForResend(domain, emailFallbackChain);
+      if (!prepared.ok) {
+        renderPill("manual_required", {
+          reason: "email_unknown",
+          domain,
+          account: resolveResendEmail(domain, emailFallbackChain)
+        });
+        recordResendResult(domain, "email_unknown", { markFailureHandled: true });
+        autoResendInFlight = false;
+        stopListening();
+        return { attempted: false, reason: "email_unknown", clicks: 0 };
+      }
+      const email = prepared.email || resolveResendEmail(domain, emailFallbackChain);
+      recordResend(domain, "auto", undefined, prepared.step === "email" ? "email_filled" : "requested");
       runProgrammaticClick(plan.control);
       resendGraceUntil = Date.now() + RACE_RESEND_COOLDOWN_MS;
       activeCode = null;
@@ -2809,14 +2983,32 @@
         attempt: plan.resend_count,
         max: plan.resend_limit,
         domain,
-        account: email
+        account: email,
+        email_filled: prepared.step === "email",
+        last_resend_result: prepared.step === "email" ? "email_filled" : "requested"
       });
+      startResendConfirmation(domain, plan.resend_count, Date.now());
       stopListening();
       setTimeout(() => {
         autoResendInFlight = false;
         try { startListening(); } catch (e) {}
       }, 1500);
-      return { attempted: true, attempt: plan.resend_count };
+      // One-shot honesty window (no polling): confirm a fresh eligible code or downgrade to
+      // manual_required(resend_unconfirmed). Never clicks the resend control again.
+      setTimeout(() => {
+        try {
+          const verdict = evaluateResendConfirmation(domain, detectPageError(), Date.now());
+          if (verdict.action === "manual_required") {
+            renderPill("manual_required", {
+              reason: verdict.reason,
+              domain,
+              account: resolveResendEmail(domain, emailFallbackChain)
+            });
+            stopListening();
+          }
+        } catch (e) {}
+      }, RESEND_CONFIRM_WINDOW_MS + 50);
+      return { attempted: true, attempt: plan.resend_count, clicks: 1 };
     }
     if (plan.action === "manual_required") {
       const email = findEmailOnPage() || getStorageItem("spark_otp_last_email_" + domain) || selectedAccount || "";
