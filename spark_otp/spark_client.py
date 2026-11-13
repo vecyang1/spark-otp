@@ -1274,6 +1274,7 @@ process.stdout.write(JSON.stringify(res));
         dom_sample: Optional[Any] = None,
         brand_hint: Optional[str] = None,
         strict_account: bool = False,
+        since_time: Optional[float] = None,
     ) -> Dict[str, Any]:
         """
         Diagnostic-First reconciliation engine.
@@ -1293,8 +1294,12 @@ process.stdout.write(JSON.stringify(res));
                     "account": None,
                     "brand_hint": brand_hint,
                     "allow_expired": allow_expired,
+                    "since_time": since_time,
                     "diagnosed_at": current_time.isoformat(),
                 },
+                "since_time": since_time,
+                "excluded_by_since_time_count": 0,
+                "excluded_by_since_time_reason": None,
                 "environment": {
                     "spark_bin": self.spark_bin,
                 },
@@ -1491,6 +1496,14 @@ process.stdout.write(JSON.stringify(res));
                                 "extracted_code": extracted_code,
                                 "callback_url": callback_url,
                                 "is_expired": is_expired,
+                                "excluded_by_since_time": bool(
+                                    since_time is not None and rec_date and float(rec_date) < float(since_time)
+                                ),
+                                "since_time_verdict": (
+                                    "excluded_stale"
+                                    if (since_time is not None and rec_date and float(rec_date) < float(since_time))
+                                    else "eligible"
+                                ),
                                 "status": status,
                                 "failure_reason": failure_reason,
                             })
@@ -1503,11 +1516,13 @@ process.stdout.write(JSON.stringify(res));
             domain=domain,
             account=account,
             allow_expired=allow_expired,
+            since_time=since_time,
             now=current_time,
             brand_hint=brand_hint,
             strict_account=strict_account,
         )
 
+        excluded_stale_candidates = [c for c in candidates if c.get("excluded_by_since_time")]
         if resolved_otp:
             matching_cand = next((c for c in candidates if c["message_id"] == resolved_otp.message_id), None)
             if matching_cand and not matching_cand["account_match"]:
@@ -1516,6 +1531,16 @@ process.stdout.write(JSON.stringify(res));
             else:
                 verdict = f"SUCCESS: Active code '{resolved_otp.code}' resolved for service '{resolved_otp.service}' ({resolved_otp.time_remaining_seconds}s left)."
                 recommendation = "Autofill ready to proceed."
+        elif excluded_stale_candidates:
+            since_iso = datetime.fromtimestamp(float(since_time)).isoformat() if since_time else None
+            verdict = (
+                f"STALE_CANDIDATES_EXCLUDED: {len(excluded_stale_candidates)} candidate email(s) were received "
+                f"before the login-attempt lower bound (since_time={since_time} / {since_iso}) and are excluded as stale."
+            )
+            recommendation = (
+                "Wait for (or trigger) a new login code so a fresh email arrives after the login request; "
+                "the extension auto-resends at most twice and then asks for manual action."
+            )
         elif candidates:
             expired_cands = [c for c in candidates if c["status"] == "EXPIRED"]
             acc_mismatch = [c for c in candidates if c["status"] == "ACCOUNT_MISMATCH"]
@@ -1544,6 +1569,7 @@ process.stdout.write(JSON.stringify(res));
                 "strict_account": strict_account,
                 "brand_hint": brand_hint,
                 "allow_expired": allow_expired,
+                "since_time": since_time,
                 "diagnosed_at": current_time.isoformat(),
             },
             "environment": {
@@ -1558,6 +1584,14 @@ process.stdout.write(JSON.stringify(res));
             },
             "dom_sample_diagnosis": dom_diag,
             "candidates_count": len(candidates),
+            "since_time": since_time,
+            "excluded_by_since_time_count": len(excluded_stale_candidates),
+            "excluded_by_since_time_reason": (
+                f"{len(excluded_stale_candidates)} candidate email(s) received before since_time={since_time} "
+                f"(excluded as stale; a later 'Send login code' invalidates older codes)"
+                if excluded_stale_candidates
+                else None
+            ),
             "candidates": candidates,
             "resolved_otp": resolved_otp.to_dict() if resolved_otp else None,
             "verdict": verdict,

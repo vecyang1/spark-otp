@@ -270,6 +270,20 @@ OPENAPI_SPEC: Dict[str, Any] = {
                         "required": False,
                         "schema": {"type": "string"},
                         "description": "Optional page brand or heading hint for custom self-hosted domains"
+                    },
+                    {
+                        "name": "since_time",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "number", "format": "double"},
+                        "description": "Epoch-seconds lower bound of the current login attempt; candidates received before it are reported as excluded_stale"
+                    },
+                    {
+                        "name": "strict_account",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "boolean"},
+                        "description": "Only consider emails from the requested account"
                     }
                 ],
                 "responses": {

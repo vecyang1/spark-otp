@@ -18,6 +18,26 @@ class MockClient:
     def get_accounts(self):
         return ["dev.team@example.com", "alex.turner@example.com"]
 
+    def diagnose(self, target="", account=None, allow_expired=False, dom_sample=None, brand_hint=None, since_time=None):
+        excluded = 1 if since_time is not None else 0
+        return {
+            "query": {
+                "target": target,
+                "domain": target or None,
+                "account": account,
+                "allow_expired": allow_expired,
+                "since_time": since_time,
+            },
+            "since_time": since_time,
+            "excluded_by_since_time_count": excluded,
+            "excluded_by_since_time_reason": (
+                f"{excluded} candidate email(s) received before since_time={since_time}" if excluded else None
+            ),
+            "candidates": [],
+            "resolved_otp": None,
+            "verdict": "MOCK_STALE_CANDIDATES_EXCLUDED" if excluded else "MOCK_OK",
+        }
+
     def get_latest_otp(self, domain=None, max_age_seconds=None, account=None):
         return OTPResult(
             code="181174",
@@ -69,6 +89,7 @@ class TestContracts(unittest.TestCase):
         self.assertIn("domain", diag_param_names)
         self.assertIn("account", diag_param_names)
         self.assertIn("allow_expired", diag_param_names)
+        self.assertIn("since_time", diag_param_names, "diagnose must expose the login-attempt lower bound")
 
     def test_schema_endpoint(self):
         """GET /api/schema returns all component schemas."""
@@ -123,6 +144,18 @@ class TestContracts(unittest.TestCase):
             self.assertIn(field, data, f"Missing required field '{field}' in Accounts payload")
         self.assertEqual(data["count"], 2)
         self.assertEqual(len(data["accounts"]), 2)
+
+    def test_diagnose_since_time_contract(self):
+        """GET /api/diagnose?since_time=... echoes the lower bound and the excluded-stale count."""
+        url = f"http://127.0.0.1:{self.port}/api/diagnose?domain=status.example.com&since_time=1700000000"
+        req = urllib.request.urlopen(url)
+        self.assertEqual(req.getcode(), 200)
+        data = json.loads(req.read().decode("utf-8"))
+        self.assertEqual(data["query"]["since_time"], 1700000000.0)
+        self.assertEqual(data["since_time"], 1700000000.0)
+        self.assertEqual(data["excluded_by_since_time_count"], 1)
+        self.assertIn("since_time", data["excluded_by_since_time_reason"])
+        self.assertEqual(data["verdict"], "MOCK_STALE_CANDIDATES_EXCLUDED")
 
     def test_health_response_schema_conformance(self):
         """GET /api/health payload matches HealthResponse schema."""

@@ -60,6 +60,16 @@
       sparkLogin: "Spark Login",
       forceFill: "Force Fill",
       disableSite: "Disable on this site",
+      raceGuardedTitle: "Race guard active · only accepting codes requested after login",
+      raceGuardedSubtitle: "Code requested at {time} · older emails are excluded",
+      resendSentTitle: "Rejected code · auto re-sent a new login code",
+      resendSentSubtitle: "Attempt {attempt}/{max} · waiting for the fresh email",
+      waitingNewCodeTitle: "Old code excluded · waiting for the new email",
+      waitingNewCodeSubtitle: "Candidate received at {time} is older than the login request bound",
+      manualRequiredTitle: "Verification rejected · manual action required",
+      manualRequiredSubtitle: "{reason} · please click Send login code yourself",
+      manualRequiredNoControl: "No resend control found",
+      manualRequiredLimit: "Auto-resend limit reached",
     },
     zh: {
       watchingTitle: "已检测到验证码输入框",
@@ -89,6 +99,16 @@
       sparkLogin: "Spark 登录",
       forceFill: "强制填充",
       disableSite: "在此网站禁用",
+      raceGuardedTitle: "竞态守卫已生效 · 只接受本次登录之后收到的验证码",
+      raceGuardedSubtitle: "验证码请求于 {time} · 更早的邮件已被排除",
+      resendSentTitle: "验证码被拒 · 已自动重新发送登录验证码",
+      resendSentSubtitle: "第 {attempt}/{max} 次自动重发 · 正在等待新邮件",
+      waitingNewCodeTitle: "已排除旧验证码 · 正在等待新邮件",
+      waitingNewCodeSubtitle: "候选邮件收取于 {time}，早于本次登录请求时间下界",
+      manualRequiredTitle: "验证被拒 · 需人工操作",
+      manualRequiredSubtitle: "{reason} · 请手动点击「发送登录验证码」",
+      manualRequiredNoControl: "未找到重发控件",
+      manualRequiredLimit: "自动重发次数已达上限",
     }
   };
 
@@ -263,7 +283,15 @@
           failedCodes: Array.isArray(parsed.failedCodes) ? parsed.failedCodes : [],
           failedMessageIds: Array.isArray(parsed.failedMessageIds) ? parsed.failedMessageIds : [],
           submissionCounts: parsed.submissionCounts || {},
-          lastFailedAt: parsed.lastFailedAt || 0
+          lastFailedAt: parsed.lastFailedAt || 0,
+          // --- Race guard fields (A/B): per-domain login-request timeline ---
+          loginRequestAt: Number(parsed.loginRequestAt) || 0,
+          loginRequestSource: parsed.loginRequestSource || null,
+          lastResendAt: Number(parsed.lastResendAt) || 0,
+          resendCount: Number(parsed.resendCount) || 0,
+          resendForFailedAt: Number(parsed.resendForFailedAt) || 0,
+          lastResendReason: parsed.lastResendReason || null,
+          lastFailedReason: parsed.lastFailedReason || null
         };
       }
     } catch (e) {}
@@ -274,7 +302,14 @@
       failedCodes: [],
       failedMessageIds: [],
       submissionCounts: {},
-      lastFailedAt: 0
+      lastFailedAt: 0,
+      loginRequestAt: 0,
+      loginRequestSource: null,
+      lastResendAt: 0,
+      resendCount: 0,
+      resendForFailedAt: 0,
+      lastResendReason: null,
+      lastFailedReason: null
     };
   }
 
@@ -304,7 +339,7 @@
     saveAuthState(state, domain);
   }
 
-  function recordCodeFailed(code, messageId, domain) {
+  function recordCodeFailed(code, messageId, domain, reason) {
     const state = getAuthState(domain);
     const c = code ? String(code).trim() : (state.lastSubmittedCode || null);
     const m = messageId ? String(messageId).trim() : (state.lastSubmittedMsgId || null);
@@ -320,8 +355,344 @@
     if (isNewFailure || !state.lastFailedAt) {
       state.lastFailedAt = Date.now();
     }
+    if (reason) {
+      state.lastFailedReason = String(reason);
+    }
     saveAuthState(state, domain);
     return state;
+  }
+
+  // === Race Guard (A/B): first-query time lower bound + bounded auto-resend ===
+  // Root cause: Cloudflare Access invalidates every previously issued code each time
+  // "Send login code" is clicked. A first query without since_time can therefore
+  // submit a stale code. The engine below records the exact login-request instant
+  // per domain, derives a since_time lower bound from it, and — after an explicit
+  // page rejection — re-triggers one resend with a hard cap so no loop can form.
+  const RACE_GUARD_FALLBACK_LOOKBACK_MS = 300 * 1000; // 5 min conservative fallback
+  const RACE_RESEND_COOLDOWN_MS = 20 * 1000;          // >= 20s between auto resends
+  const RACE_RESEND_MAX = 2;                          // hard cap per page session
+  const pageLoadAtMs = Date.now();                    // assistant injected on code page fallback anchor
+  let lastRaceObservation = null;
+  let raceGuardCandidates = [];
+  let programmaticResendClickActive = false;
+
+  // A programmatic `.click()` on a resend control bubbles through the document-capture
+  // login-request listener below exactly like a real user click. Without this guard it
+  // would be misread as a *new* login attempt and reset the auto-resend budget
+  // (resendCount / lastResendAt / resendForFailedAt), re-opening the loop the hard cap
+  // exists to prevent. DOM `.click()` dispatch is synchronous, so a flag held only for
+  // the duration of the call is exact — and it cannot swallow a real user click.
+  function isProgrammaticResendClickActive() {
+    return programmaticResendClickActive === true;
+  }
+
+  function runProgrammaticClick(control) {
+    if (!control || typeof control.click !== "function") return false;
+    programmaticResendClickActive = true;
+    try {
+      control.click();
+    } catch (e) {
+    } finally {
+      programmaticResendClickActive = false;
+    }
+    return true;
+  }
+
+  function recordLoginRequest(domain, source, nowMs, options = {}) {
+    const d = domain || detectTargetDomain();
+    const now = Number(nowMs) || Date.now();
+    const state = getAuthState(d);
+    if (options && options.onlyIfUnset && state.loginRequestAt > 0) {
+      return state;
+    }
+    state.loginRequestAt = now;
+    state.loginRequestSource = source || "unknown";
+    // A brand-new login request resets the auto-resend budget of the previous attempt.
+    state.resendCount = 0;
+    state.lastResendAt = 0;
+    state.resendForFailedAt = 0;
+    saveAuthState(state, d);
+    return state;
+  }
+
+  function recordResend(domain, reason, nowMs) {
+    const d = domain || detectTargetDomain();
+    const now = Number(nowMs) || Date.now();
+    const state = getAuthState(d);
+    state.lastResendAt = now;
+    state.resendCount = (Number(state.resendCount) || 0) + 1;
+    state.resendForFailedAt = Number(state.lastFailedAt) || 0;
+    state.lastResendReason = reason || "auto";
+    saveAuthState(state, d);
+    return state;
+  }
+
+  function getRaceGuardSinceMs(domain, nowMs) {
+    const d = domain || detectTargetDomain();
+    const state = getAuthState(d);
+    const loginAt = Number(state.loginRequestAt) || 0;
+    const resendAt = Number(state.lastResendAt) || 0;
+    const fallback = pageLoadAtMs - RACE_GUARD_FALLBACK_LOOKBACK_MS;
+    return Math.max(loginAt, resendAt, fallback);
+  }
+
+  function getRaceGuardSource(domain, nowMs) {
+    const d = domain || detectTargetDomain();
+    const state = getAuthState(d);
+    const loginAt = Number(state.loginRequestAt) || 0;
+    const resendAt = Number(state.lastResendAt) || 0;
+    const since = Math.max(loginAt, resendAt, pageLoadAtMs - RACE_GUARD_FALLBACK_LOOKBACK_MS);
+    if (resendAt > 0 && resendAt >= since) return "resend";
+    if (loginAt > 0 && loginAt >= since) return "login_request";
+    return "page_fallback";
+  }
+
+  function resetRaceGuard(domain) {
+    const d = domain || detectTargetDomain();
+    const state = getAuthState(d);
+    state.loginRequestAt = 0;
+    state.loginRequestSource = null;
+    state.lastResendAt = 0;
+    state.resendCount = 0;
+    state.resendForFailedAt = 0;
+    state.lastResendReason = null;
+    saveAuthState(state, d);
+    return state;
+  }
+
+  function recordRaceCandidate(domain, candidate) {
+    const d = domain || detectTargetDomain();
+    const c = candidate && typeof candidate === "object" ? candidate : {};
+    const receivedMs = Number(c.received_at_ms) || 0;
+    const sinceMs = getRaceGuardSinceMs(d);
+    let verdict = c.verdict;
+    if (!verdict) {
+      if (receivedMs > 0 && receivedMs < sinceMs) {
+        verdict = "excluded_stale";
+      } else if (c.rejected) {
+        verdict = "rejected";
+      } else {
+        verdict = "accepted";
+      }
+    }
+    const record = {
+      code: c.code ? String(c.code) : null,
+      message_id: c.message_id ? String(c.message_id) : null,
+      received_at: receivedMs > 0 ? new Date(receivedMs).toISOString() : (c.received_at || null),
+      received_at_ms: receivedMs,
+      received_at_human: receivedMs > 0 ? new Date(receivedMs).toISOString().replace("T", " ").slice(0, 19) : null,
+      verdict,
+      reason: c.reason || null,
+      since_time_ms: sinceMs,
+      since_time: Math.floor(sinceMs / 1000),
+      observed_at: Date.now()
+    };
+    lastRaceObservation = record;
+    raceGuardCandidates.unshift(record);
+    if (raceGuardCandidates.length > 5) {
+      raceGuardCandidates = raceGuardCandidates.slice(0, 5);
+    }
+    return record;
+  }
+
+  function getRaceGuardReport(domain) {
+    const d = domain || detectTargetDomain();
+    const state = getAuthState(d);
+    const sinceMs = getRaceGuardSinceMs(d);
+    const iso = (ms) => (Number(ms) > 0 ? new Date(Number(ms)).toISOString() : null);
+    const email = typeof findEmailOnPage === "function" ? (findEmailOnPage() || null) : null;
+    const resendCount = Number(state.resendCount) || 0;
+    const lastResendAt = Number(state.lastResendAt) || 0;
+    const cooldownRemainingMs = lastResendAt > 0 ? Math.max(0, RACE_RESEND_COOLDOWN_MS - (Date.now() - lastResendAt)) : 0;
+    return {
+      domain: d,
+      email: email || getStorageItem("spark_otp_last_email_" + d) || null,
+      login_request_at: Number(state.loginRequestAt) || 0,
+      login_request_at_iso: iso(state.loginRequestAt),
+      login_request_source: state.loginRequestSource || null,
+      last_resend_at: lastResendAt,
+      last_resend_at_iso: iso(lastResendAt),
+      last_resend_reason: state.lastResendReason || null,
+      resend_count: resendCount,
+      resend_limit: RACE_RESEND_MAX,
+      resend_cooldown_ms: RACE_RESEND_COOLDOWN_MS,
+      resend_cooldown_remaining_ms: cooldownRemainingMs,
+      last_failed_at: Number(state.lastFailedAt) || 0,
+      last_failed_at_iso: iso(state.lastFailedAt),
+      last_failed_reason: state.lastFailedReason || null,
+      page_load_at_ms: pageLoadAtMs,
+      page_fallback_ms: pageLoadAtMs - RACE_GUARD_FALLBACK_LOOKBACK_MS,
+      since_time_ms: sinceMs,
+      since_time: Math.floor(sinceMs / 1000),
+      since_source: getRaceGuardSource(d),
+      failed_codes: (state.failedCodes || []).slice(-5),
+      last_observation: lastRaceObservation,
+      candidates: raceGuardCandidates.slice(0, 5)
+    };
+  }
+
+  function isAuthRejectionError(pageErr) {
+    const e = pageErr && typeof pageErr === "object" ? pageErr : {};
+    if (!e.hasError) return false;
+    const blob = [e.reason, e.text].filter(Boolean).join(" ");
+    if (/unauthorized|does\s+not\s+have\s+access|access_denied|__cf_access_message|incorrect|invalid|expired/i.test(blob)) {
+      return true;
+    }
+    try {
+      const search = (typeof window !== "undefined" && window.location && window.location.search) || "";
+      const hash = (typeof window !== "undefined" && window.location && window.location.hash) || "";
+      if (/unauthorized|__cf_access_message|access_denied/i.test(search + " " + hash)) return true;
+    } catch (err) {}
+    return false;
+  }
+
+  function findResendControl() {
+    if (typeof document === "undefined" || !document.querySelectorAll) return null;
+    const selectors = 'button, a[href], [role="button"], input[type="button"], input[type="submit"]';
+    const positive = /(?:re-?send|send\s+(?:a\s+)?(?:new\s+|login\s+)?(?:code|passcode|verification\s+code)|send\s+code|new\s+(?:login\s+)?code|send\s+again|request\s+(?:a\s+)?new\s+code|重新发送|再发送|重发|发送验证码|再次发送|获取验证码|发送新验证码)/i;
+    const negative = /(?:log\s*out|sign\s*out|delete|remove|cancel|back|close|dismiss|disable|revoke|deny|block|report|pay|purchase|buy|subscribe|upgrade|sign\s*up|register|返回|取消|关闭|删除|移除|禁用|退出|注销|支付|购买|订阅|升级|注册)/i;
+    let nodes = [];
+    try {
+      nodes = Array.from(document.querySelectorAll(selectors));
+    } catch (e) {
+      return null;
+    }
+    for (const el of nodes) {
+      if (!el || el.disabled) continue;
+      if (el.closest && el.closest("#spark-otp-pill-container")) continue;
+      let label = "";
+      try {
+        label = ((el.textContent || "") + " " + (el.value || "")).replace(/\s+/g, " ").trim();
+        if (typeof el.getAttribute === "function") {
+          const aria = el.getAttribute("aria-label") || el.getAttribute("title") || "";
+          if (aria) label = (label + " " + aria).replace(/\s+/g, " ").trim();
+        }
+      } catch (e) {
+        continue;
+      }
+      if (!label || label.length > 100) continue;
+      if (negative.test(label)) continue;
+      if (positive.test(label)) return el;
+    }
+    return null;
+  }
+
+  function planAutoResend(domain, pageErr, nowMs) {
+    const d = domain || detectTargetDomain();
+    const now = Number(nowMs) || Date.now();
+    const state = getAuthState(d);
+    if (!isAuthRejectionError(pageErr)) {
+      return { action: "none", reason: "not_auth_rejection" };
+    }
+    const resendCount = Number(state.resendCount) || 0;
+    const lastResendAt = Number(state.lastResendAt) || 0;
+    const lastFailedAt = Number(state.lastFailedAt) || 0;
+    const resendForFailedAt = Number(state.resendForFailedAt) || 0;
+    if (lastFailedAt > 0 && resendForFailedAt === lastFailedAt) {
+      return {
+        action: "wait",
+        reason: "already_resent_for_this_failure",
+        resend_count: resendCount,
+        resend_limit: RACE_RESEND_MAX,
+        last_resend_at: lastResendAt
+      };
+    }
+    if (resendCount >= RACE_RESEND_MAX) {
+      return {
+        action: "manual_required",
+        reason: "resend_limit",
+        resend_count: resendCount,
+        resend_limit: RACE_RESEND_MAX
+      };
+    }
+    if (lastResendAt > 0 && now - lastResendAt < RACE_RESEND_COOLDOWN_MS) {
+      return {
+        action: "wait",
+        reason: "cooldown",
+        resend_count: resendCount,
+        resend_limit: RACE_RESEND_MAX,
+        cooldown_remaining_ms: RACE_RESEND_COOLDOWN_MS - (now - lastResendAt)
+      };
+    }
+    const control = findResendControl();
+    if (!control) {
+      return {
+        action: "manual_required",
+        reason: "no_resend_control",
+        resend_count: resendCount,
+        resend_limit: RACE_RESEND_MAX
+      };
+    }
+    return {
+      action: "resend",
+      reason: "auth_rejection",
+      control,
+      resend_count: resendCount + 1,
+      resend_limit: RACE_RESEND_MAX
+    };
+  }
+
+  function installLoginRequestCapture(domain) {
+    if (typeof document === "undefined" || !document.addEventListener) return false;
+    if (document.__sparkOtpLoginCaptureInstalled === true) return true;
+    if (document.__sparkOtpLoginCaptureInstalled === undefined) {
+      try {
+        Object.defineProperty(document, "__sparkOtpLoginCaptureInstalled", { value: false, configurable: true });
+      } catch (e) {
+        document.__sparkOtpLoginCaptureInstalled = false;
+      }
+    }
+    if (document.__sparkOtpLoginCaptureInstalled === true) return true;
+    document.__sparkOtpLoginCaptureInstalled = true;
+    const d = domain || detectTargetDomain();
+    const positive = /(?:send\s+(?:a\s+)?(?:new\s+|login\s+)?(?:code|passcode)|send\s+code|resend|re-send|send\s+again|request\s+(?:a\s+)?(?:new\s+)?code|continue\s+with\s+email|email\s+me\s+(?:a\s+)?(?:login\s+)?code|get\s+code|发送(?:登录)?验证码|重新发送|再发送|重发|获取验证码|用邮箱登录|邮箱登录)/i;
+    const negative = /(?:log\s*out|sign\s*out|delete|remove|cancel|back|close|返回|取消|关闭|删除|移除|退出|注销)/i;
+    const isLoginRequestTrigger = (el) => {
+      if (!el) return false;
+      if (el.closest && el.closest("#spark-otp-pill-container")) return false;
+      try {
+        const label = ((el.textContent || "") + " " + (el.value || "") + " " + (typeof el.getAttribute === "function" ? (el.getAttribute("aria-label") || el.getAttribute("title") || "") : "")).replace(/\s+/g, " ").trim();
+        if (!label || label.length > 120) return false;
+        if (negative.test(label)) return false;
+        return positive.test(label);
+      } catch (e) {
+        return false;
+      }
+    };
+    document.addEventListener("click", (evt) => {
+      if (programmaticResendClickActive) return;
+      try {
+        const target = evt && evt.target;
+        if (!target) return;
+        const btn = (target.closest && target.closest('button, a[href], [role="button"], input[type="button"], input[type="submit"]')) || target;
+        if (isLoginRequestTrigger(btn)) {
+          recordLoginRequest(d, "button_click");
+        }
+      } catch (e) {}
+    }, true);
+    document.addEventListener("keydown", (evt) => {
+      try {
+        if (!evt || evt.key !== "Enter") return;
+        const target = evt.target;
+        if (!target || !target.tagName) return;
+        const type = String(target.type || "").toLowerCase();
+        if (type === "email") {
+          recordLoginRequest(d, "email_enter");
+        }
+      } catch (e) {}
+    }, true);
+    document.addEventListener("submit", (evt) => {
+      if (programmaticResendClickActive) return;
+      try {
+        const form = evt && evt.target;
+        if (!form) return;
+        const emailInput = form.querySelector ? form.querySelector('input[type="email"], input[name*="email" i], input[autocomplete="email"]') : null;
+        if (emailInput || (typeof findEmailOnPage === "function" && findEmailOnPage())) {
+          recordLoginRequest(d, "form_submit");
+        }
+      } catch (e) {}
+    }, true);
+    return true;
   }
 
   function detectPageError() {
@@ -382,12 +753,28 @@
     return { hasError: false };
   }
 
-  function isCodeRejected(code, messageId, receivedAtMs, domain) {
+  function isCodeRejected(code, messageId, receivedAtMs, domain, options) {
+    const opts = options || {};
     if (!code) return true;
     const cleanCode = String(code).trim();
     const cleanMsgId = messageId ? String(messageId).trim() : null;
     const state = getAuthState(domain);
     const pageErr = detectPageError();
+
+    // 0. Race guard (A): a candidate received before this login attempt's lower bound
+    // is stale by definition — a later "Send login code" invalidated it server-side.
+    const recMs = Number(receivedAtMs) || 0;
+    let guardSinceMs = 0;
+    if (opts.sinceTimeMs !== undefined) {
+      guardSinceMs = Number(opts.sinceTimeMs) || 0;
+    } else if (typeof getRaceGuardSinceMs === "function") {
+      guardSinceMs = getRaceGuardSinceMs(domain);
+    } else if (state.lastFailedAt) {
+      guardSinceMs = state.lastFailedAt; // legacy isolated-harness fallback
+    }
+    if (recMs > 0 && guardSinceMs > 0 && recMs < guardSinceMs) {
+      return true;
+    }
 
     // 1. Explicitly rejected/failed code (case-insensitive)
     if (state.failedCodes && state.failedCodes.some(fc => fc.toUpperCase() === cleanCode.toUpperCase())) {
@@ -413,7 +800,6 @@
     }
 
     // 5. Error banner guardrail: if error is on page, reject any code received before or at failure time
-    const recMs = Number(receivedAtMs) || 0;
     if (pageErr.hasError) {
       const failureTime = state.lastFailedAt || Date.now();
       if (recMs > 0 && recMs <= failureTime) {
@@ -455,8 +841,18 @@
     if (state.failedMessageIds && state.failedMessageIds.length > 0) {
       q += `&exclude_message_ids=${encodeURIComponent(state.failedMessageIds.join(","))}`;
     }
-    if (state.lastFailedAt && state.lastFailedAt > 0) {
-      const sinceSec = Math.floor(state.lastFailedAt / 1000);
+    // First query MUST carry a lower bound: the next code only exists after the
+    // login request / resend click (Cloudflare Access invalidates older codes).
+    let sinceMs = 0;
+    if (options && options.sinceTimeMs !== undefined) {
+      sinceMs = Number(options.sinceTimeMs) || 0;
+    } else if (typeof getRaceGuardSinceMs === "function") {
+      sinceMs = getRaceGuardSinceMs(domain);
+    } else if (state.lastFailedAt) {
+      sinceMs = state.lastFailedAt; // legacy isolated-harness fallback
+    }
+    if (sinceMs > 0) {
+      const sinceSec = Math.floor(sinceMs / 1000);
       q += `&since_time=${encodeURIComponent(sinceSec)}`;
     }
     return q;
@@ -1834,6 +2230,9 @@
     const domain = detectTargetDomain();
     if (domain) {
       setStorageItem("spark_otp_last_email_" + domain, email);
+      // The auto-email path is a real login request: capture the exact instant so the
+      // *first* OTP query is bounded by it rather than accepting a stale code.
+      recordLoginRequest(domain, "auto_email");
     }
     const setValueFn = (typeof setInputValueWithReactSupport === "function") ? setInputValueWithReactSupport : setInputValue;
     setValueFn(input, email);
@@ -2010,6 +2409,7 @@
       page_rule_id: pageRuleId,
       verdict: pageVerdict,
       page_verdict: pageVerdict,
+      race_guard: getRaceGuardReport(domain),
       candidates: candidateDiagnostics
     };
   }
@@ -2100,6 +2500,69 @@
       return;
     }
     container.style.display = "block";
+
+    if (state === "race_guarded" || state === "resend_sent" || state === "waiting_new_code" || state === "manual_required") {
+      if (watchingTimer) {
+        clearInterval(watchingTimer);
+        watchingTimer = null;
+      }
+      const fmt = (ms) => {
+        if (!ms) return "--:--:--";
+        try {
+          const dt = new Date(Number(ms));
+          return `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}:${String(dt.getSeconds()).padStart(2, "0")}`;
+        } catch (e) { return "--:--:--"; }
+      };
+      let titleKey = "raceGuardedTitle";
+      let subtitleKey = "raceGuardedSubtitle";
+      let vars = { time: fmt(data.since_at_ms) };
+      let icon = ICONS.loader;
+      if (state === "resend_sent") {
+        titleKey = "resendSentTitle";
+        subtitleKey = "resendSentSubtitle";
+        vars = { attempt: data.attempt || 1, max: data.max || RACE_RESEND_MAX };
+        icon = ICONS.mail;
+      } else if (state === "waiting_new_code") {
+        titleKey = "waitingNewCodeTitle";
+        subtitleKey = "waitingNewCodeSubtitle";
+        vars = { time: data.candidate_time || "--:--:--" };
+        icon = ICONS.alert;
+      } else if (state === "manual_required") {
+        titleKey = "manualRequiredTitle";
+        subtitleKey = "manualRequiredSubtitle";
+        const reasonText = data.reason === "resend_limit" ? t("manualRequiredLimit") : t("manualRequiredNoControl");
+        vars = { reason: reasonText };
+        icon = ICONS.alert;
+      }
+      container.innerHTML = `
+        <div class="spark-otp-card">
+          <div class="spark-otp-icon-wrap ${state === "manual_required" ? "warning" : "pulse"}">${icon}</div>
+          <div class="spark-otp-content">
+            <div class="spark-otp-title">${t(titleKey)}</div>
+            <div class="spark-otp-subtitle">${t(subtitleKey, vars)}${data.domain ? ` <span class="spark-otp-meta-badge">${data.domain}</span>` : ""}</div>
+          </div>
+          <div class="spark-otp-actions">
+            <button class="spark-otp-btn spark-otp-btn-secondary" id="spark-btn-poll-now">${t("refresh")}</button>
+            <button class="spark-otp-btn spark-otp-btn-ghost" id="spark-btn-dismiss-race" title="×">×</button>
+          </div>
+        </div>
+      `;
+      const refreshBtn = document.getElementById("spark-btn-poll-now");
+      if (refreshBtn) {
+        refreshBtn.addEventListener("click", () => {
+          refreshBtn.textContent = "...";
+          pollOnce(data.domain || detectTargetDomain(), refreshBtn);
+        });
+      }
+      const dismissBtn = document.getElementById("spark-btn-dismiss-race");
+      if (dismissBtn) {
+        dismissBtn.addEventListener("click", () => {
+          stopListening();
+          renderPill("hidden");
+        });
+      }
+      return;
+    }
 
     if (state === "email_ready") {
       const targetEmail = (data.email || "").trim();
@@ -2306,6 +2769,64 @@
     }
   }
 
+  let resendGraceUntil = 0;
+  let autoResendInFlight = false;
+
+  function renderRaceCandidateOutcome(domain, account, candidate) {
+    const receivedMs = Number(candidate.received_at_ms) || 0;
+    const rejected = typeof isCodeRejected === "function"
+      ? isCodeRejected(candidate.code, candidate.message_id, receivedMs, domain)
+      : true;
+    const rec = recordRaceCandidate(domain, {
+      code: candidate.code,
+      message_id: candidate.message_id,
+      received_at_ms: receivedMs,
+      rejected
+    });
+    if (rec.verdict === "excluded_stale") {
+      renderPill("waiting_new_code", {
+        candidate_time: rec.received_at_human,
+        domain,
+        account
+      });
+    } else {
+      renderPill("code_failed", { code: candidate.code, domain, account });
+    }
+    return rec;
+  }
+
+  function attemptAutoResend(domain, pageErr) {
+    if (autoResendInFlight) return { attempted: false, reason: "inflight" };
+    const plan = planAutoResend(domain, pageErr, Date.now());
+    if (plan.action === "resend" && plan.control) {
+      autoResendInFlight = true;
+      const email = findEmailOnPage() || getStorageItem("spark_otp_last_email_" + domain) || selectedAccount || "";
+      recordResend(domain, "auto");
+      runProgrammaticClick(plan.control);
+      resendGraceUntil = Date.now() + RACE_RESEND_COOLDOWN_MS;
+      activeCode = null;
+      renderPill("resend_sent", {
+        attempt: plan.resend_count,
+        max: plan.resend_limit,
+        domain,
+        account: email
+      });
+      stopListening();
+      setTimeout(() => {
+        autoResendInFlight = false;
+        try { startListening(); } catch (e) {}
+      }, 1500);
+      return { attempted: true, attempt: plan.resend_count };
+    }
+    if (plan.action === "manual_required") {
+      const email = findEmailOnPage() || getStorageItem("spark_otp_last_email_" + domain) || selectedAccount || "";
+      renderPill("manual_required", { reason: plan.reason, domain, account: email });
+      stopListening();
+      return { attempted: false, reason: plan.reason };
+    }
+    return { attempted: false, reason: plan.reason };
+  }
+
   function startListening() {
     if (isListening) return;
     const domain = detectTargetDomain();
@@ -2319,9 +2840,17 @@
     const pageErr = detectPageError();
     const authState = getAuthState(domain);
 
+    const raceSinceMs = getRaceGuardSinceMs(domain);
+    const raceSource = getRaceGuardSource(domain);
     if (pageErr.hasError) {
-      const lastBadCode = authState.failedCodes.length > 0 ? authState.failedCodes[authState.failedCodes.length - 1] : (authState.lastSubmittedCode || "");
-      renderPill("code_failed", { code: lastBadCode, domain, account: effectiveAccount });
+      if (Date.now() < resendGraceUntil) {
+        // Keep the resend_sent feedback visible while the fresh email is in flight.
+      } else {
+        const lastBadCode = authState.failedCodes.length > 0 ? authState.failedCodes[authState.failedCodes.length - 1] : (authState.lastSubmittedCode || "");
+        renderPill("code_failed", { code: lastBadCode, domain, account: effectiveAccount });
+      }
+    } else if (raceSource === "login_request" || raceSource === "resend") {
+      renderPill("race_guarded", { since_at_ms: raceSinceMs, domain, account: effectiveAccount });
     } else {
       renderPill("watching", { domain, account: effectiveAccount });
     }
@@ -2344,13 +2873,19 @@
             }
             const receivedMs = data.received_at ? (new Date(data.received_at).getTime() || 0) : 0;
             if (isCodeRejected(data.code, data.message_id, receivedMs, domain)) {
-              renderPill("code_failed", {
+              renderRaceCandidateOutcome(domain, effectiveAccount, {
                 code: data.code,
-                domain,
-                account: effectiveAccount
+                message_id: data.message_id,
+                received_at_ms: receivedMs
               });
               return;
             }
+            recordRaceCandidate(domain, {
+              code: data.code,
+              message_id: data.message_id,
+              received_at_ms: receivedMs,
+              verdict: "accepted"
+            });
 
             if (data.code !== activeCode) {
               activeCode = data.code;
@@ -2432,13 +2967,19 @@
             }
             const receivedMs = data.otp.received_at ? (new Date(data.otp.received_at).getTime() || 0) : 0;
             if (isCodeRejected(data.otp.code, data.otp.message_id, receivedMs, domain)) {
-              renderPill("code_failed", {
+              renderRaceCandidateOutcome(domain, effectiveAccount, {
                 code: data.otp.code,
-                domain,
-                account: effectiveAccount
+                message_id: data.otp.message_id,
+                received_at_ms: receivedMs
               });
               return;
             }
+            recordRaceCandidate(domain, {
+              code: data.otp.code,
+              message_id: data.otp.message_id,
+              received_at_ms: receivedMs,
+              verdict: "accepted"
+            });
             if (data.otp.code !== activeCode) {
               activeCode = data.otp.code;
               if (autoDirectJump && data.otp.callback_url) {
@@ -2485,10 +3026,10 @@
           }
           const receivedMs = data.otp.received_at ? (new Date(data.otp.received_at).getTime() || 0) : 0;
           if (isCodeRejected(data.otp.code, data.otp.message_id, receivedMs, d)) {
-            renderPill("code_failed", {
+            renderRaceCandidateOutcome(d, effectiveAccount, {
               code: data.otp.code,
-              domain: d,
-              account: effectiveAccount
+              message_id: data.otp.message_id,
+              received_at_ms: receivedMs
             });
             if (btn) {
               btn.textContent = t("excludedOldCode");
@@ -2496,6 +3037,12 @@
             }
             return;
           }
+          recordRaceCandidate(d, {
+            code: data.otp.code,
+            message_id: data.otp.message_id,
+            received_at_ms: receivedMs,
+            verdict: "accepted"
+          });
           activeCode = data.otp.code;
           if (autoDirectJump && data.otp.callback_url) {
             window.location.href = data.otp.callback_url;
@@ -2529,6 +3076,9 @@
     const domain = detectTargetDomain();
     if (isDomainDisabled(domain)) return;
     if (getStorageItem("spark_otp_dismissed_" + domain) === "1") return;
+    // (A) Capture the exact instant of the login request: button click, form submit,
+    // email input Enter, and (as a DOM fallback) the email-step -> OTP-step transition.
+    installLoginRequestCapture(domain);
     const pageErr = detectPageError();
     let authState = getAuthState(domain);
 
@@ -2550,6 +3100,12 @@
       } else if (!authState.lastFailedAt) {
         authState.lastFailedAt = Date.now();
         saveAuthState(authState, domain);
+      }
+      // (B) A real page rejection with a resend control: re-trigger exactly once
+      // per failure, with >=20s cooldown and a hard cap of RACE_RESEND_MAX.
+      const resendResult = attemptAutoResend(domain, pageErr);
+      if (resendResult && resendResult.attempted) {
+        return;
       }
     }
 
@@ -2591,6 +3147,11 @@
           return;
         }
         const foundOtp = findOtpInputs();
+        const emailStepNow = findEmailInput();
+        if (foundOtp.length > 0 && emailStepNow) {
+          // Fallback (3): email step switched to OTP step without us seeing the click.
+          recordLoginRequest(domain, "step_transition", Date.now(), { onlyIfUnset: true });
+        }
         if (foundOtp.length > 0 && !isListening && !activeCode) {
           startListening();
         } else if (foundOtp.length === 0 && isListening) {

@@ -72,7 +72,14 @@ Scope: project-local
 ### 7. Evidence Rule
 - "没人跑的检查不算证据": Every architectural invariant and code path is protected by automated tests (186/186 passing) with verifiable stdout/stderr receipts and Playwright browser E2E verification.
 
-### 8. Strict Email-Only DOM Gating & UI Observability ("能读、能试、能调")
+### 8. Login-Intent Time Lower Bound (Race Guard) & Bounded Auto-Resend
+- **Root cause contract**: Cloudflare Access (and similar e-mail OTP providers) invalidates every previously issued code whenever "Send login code" is clicked. A first query without `since_time` can therefore resolve a stale code and submit it after it was invalidated. The fix is contractual, not heuristic: **the first query always carries a lower bound = the current login-request instant**.
+- **`loginRequestAt` capture (per domain, `sessionStorage`)**: auto-e-mail submit; document-capture clicks on `Send login code / Resend / Continue with email / 发送验证码 / 重新发送`; form submits and email-input `Enter`; email-step → OTP-step DOM transition (only if unset); conservative fallback `pageLoadAt - 300s` when the assistant is injected directly on the code page.
+- **Effective lower bound** (`raceGuardSinceMs`): `max(loginRequestAt, lastResendAt, pageLoadAt - 300s)`; rendered into `since_time` (epoch seconds) on `/api/otp`, `/api/stream`, and `/api/diagnose`. Candidates received before it are `excluded_stale` and never submitted.
+- **Bounded auto-resend**: on a confirmed page rejection (`__cf_access_message=unauthorized` / "That account does not have access." / incorrect-code alert) with a resend control present, the orchestrator clicks it once per distinct failure, `>= 20s` cooldown, hard cap of `2` auto-resends per page session, then escalates to `manual_required`. Dangerous buttons (`Sign out`, `Delete`, `Cancel`, ...) and the pill's own controls are never matched; repeated submission of failed codes stays blocked by `isCodeRejected` / `submissionCounts`.
+- **Observability**: pill states `race_guarded` / `resend_sent` / `waiting_new_code` / `manual_required`; `diagnosePageDom().race_guard` (login request, effective bound, candidate verdicts, resend budget, last failure) powers the Popup "Login Attempt / Race Guard" inspector block; `/api/diagnose?since_time=` reports `excluded_by_since_time_count` with an explicit reason.
+
+### 9. Strict Email-Only DOM Gating & UI Observability ("能读、能试、能调")
 - **Priority Gates A/B/C/D in `isDisqualifiedInput(el)`**: Evaluated strictly before `maxlength="1"`, `autocomplete="one-time-code"`, or `data-input-otp="true"` shortcuts so Credit/Debit Card forms (CVV / `Security code*` on LinkedIn Checkout), Authenticator App (TOTP / Google Authenticator / 1Password / Passkey) modals, Phone/SMS login or verification prompts (`sms_only_field`, `sms_only_companion_field` when a sibling phone number input is present in the enclosing login panel such as Xiaohongshu's `手机号登录` modal, and `sms_only_context` unconditionally because Spark Mail & Apple Mail have zero phone SMS capability), graphic captchas (`图形验证码`), and `type="email"` fields never falsely trigger the Email OTP floating pill.
 - **Passwordless Email-OTP Step 1 & Self-Hosted Subdomain Reconciliation**: `findEmailInput()` detects passwordless email login steps (Step 1) across SPA client-side redirects, while `detectPageBrandHint()` + `get_domain_tokens()` + `_expand_phonetic_brand_variants()` reconcile self-hosted subdomains (`multika.*`) with third-party SMTP relay senders and phonetic brand variants (`Multica`).
 - **Diagnostic-First SSOT (`diagnoseDomInput`, `diagnoseSyntheticSample`, `diagnosePageDom`)**: Shared across Chrome Extension Popup, Tampermonkey Userscript, Python CLI (`spark-otp diagnose --dom-sample`), and HTTP bridge (`GET /api/diagnose?dom_sample=...`).
@@ -84,14 +91,14 @@ Scope: project-local
 - `spark_otp/contracts.py`: OpenAPI 3.0.3 and JSON Schema contract definitions.
 - `spark_otp/telemetry.py`: Privacy-masked latency percentiles, hit rates, and rotating audit logging.
 - `spark_otp/config.py`: Service detection rules, regex patterns, and environment configuration (`SPARK_OTP_SQLITE_PATH`, `SPARK_OTP_PORT`).
-- `spark_otp/cli.py`: Unified CLI (`get`, `serve`, `watch`, `accounts`, `health`).
+- `spark_otp/cli.py`: Unified CLI (`get`, `serve`, `watch`, `accounts`, `health`, `diagnose --since-time`, `sync`).
 - `extension/`: Chrome Extension (Manifest V3) content script, floating pill UI, and popup with reactive storage sync.
 - `userscript/`: Standalone Violentmonkey / Tampermonkey userscript maintaining 100% feature parity with the extension.
 
 ## Data And Storage
 - **Source of Truth**: macOS Spark Desktop local mailbox CoreData cache (`messages.sqlite`).
 - **Local Bridge**: In-memory ephemeral evaluation, zero disk persistence of credentials.
-- **Session Blacklist**: Domain-scoped `sessionStorage` tracking `failedCodes`, `failedMessageIds`, and `lastFailedAt` to prevent submission loops.
+- **Session Blacklist + Race Guard State**: Domain-scoped `sessionStorage` (`spark_otp_auth_<domain>`) tracking `failedCodes`, `failedMessageIds`, `lastFailedAt` to prevent submission loops, plus the login-attempt timeline `loginRequestAt` / `loginRequestSource` / `lastResendAt` / `resendCount` / `resendForFailedAt` / `lastResendReason` / `lastFailedReason` that derives the `since_time` lower bound.
 - **Chrome Storage**: Port and auto-submit preferences in `chrome.storage.sync`.
 
 ## Runtime And Deployment

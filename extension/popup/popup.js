@@ -25,6 +25,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const inspectorDomain = document.getElementById("inspector-domain");
   const inspectorChannelBadge = document.getElementById("inspector-channel-badge");
   const inspectorVerdict = document.getElementById("inspector-verdict");
+  const inspectorRaceGuard = document.getElementById("inspector-race-guard");
   const inspectorBackendReconcile = document.getElementById("inspector-backend-reconcile");
   const btnFillInspectedCode = document.getElementById("btn-fill-inspected-code");
   const btnBlockCurrentSite = document.getElementById("btn-block-current-site");
@@ -74,6 +75,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       channel_site_disabled: "Site Disabled",
       inspector_waiting: "Inspecting active tab DOM...",
       inspector_no_tab: "No inspectable web tab active",
+      race_guard_title: "Login Attempt / Race Guard",
+      race_guard_login_at: "Login requested at",
+      race_guard_since: "since_time lower bound",
+      race_guard_candidates: "Candidate codes",
+      race_guard_resends: "Auto resends",
+      race_guard_last_failure: "Last failure",
+      race_guard_none: "No login request captured yet (using conservative page fallback)",
       block_current_site: "Block Current Site",
       unblock_current_site: "Unblock Current Site",
       fill_on_page: "Fill on Page",
@@ -135,6 +143,13 @@ document.addEventListener("DOMContentLoaded", async () => {
       channel_site_disabled: "当前站点已禁用",
       inspector_waiting: "正在扫描当前标签页 DOM...",
       inspector_no_tab: "当前标签页无可用网页上下文",
+      race_guard_title: "登录尝试 / 竞态守卫",
+      race_guard_login_at: "登录请求时刻",
+      race_guard_since: "since_time 时间下界",
+      race_guard_candidates: "候选验证码",
+      race_guard_resends: "自动重发",
+      race_guard_last_failure: "最后失败原因",
+      race_guard_none: "尚未采集到登录请求（使用保守的页面兜底下界）",
       block_current_site: "一键禁用当前网站",
       unblock_current_site: "解除当前网站禁用",
       fill_on_page: "一键填入页面",
@@ -441,6 +456,54 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  function renderRaceGuard(raceGuard) {
+    if (!inspectorRaceGuard) return;
+    if (!raceGuard || typeof raceGuard !== "object") {
+      inspectorRaceGuard.style.display = "none";
+      inspectorRaceGuard.innerHTML = "";
+      return;
+    }
+    const fmt = (iso) => {
+      if (!iso) return "--";
+      try {
+        return String(iso).replace("T", " ").replace(/\..*$/, "").replace("Z", " UTC");
+      } catch (e) { return String(iso); }
+    };
+    const verdictBadge = (verdict) => {
+      const v = String(verdict || "unknown");
+      const cls = v === "accepted" ? "badge online" : (v === "excluded_stale" ? "badge checking" : "badge blocked");
+      return `<span class="${cls}">${v}</span>`;
+    };
+    const candidates = Array.isArray(raceGuard.candidates) ? raceGuard.candidates : [];
+    let candHtml = "";
+    if (candidates.length === 0) {
+      candHtml = `<div class="race-guard-row race-guard-muted">${t("race_guard_none")}</div>`;
+    } else {
+      candHtml = candidates.slice(0, 5).map(c => {
+        const mid = c.message_id ? `msg ${c.message_id}` : "msg ?";
+        const at = c.received_at ? fmt(c.received_at) : "--";
+        return `<div class="race-guard-row"><span class="race-guard-k">${t("race_guard_candidates")}</span><span class="race-guard-v">${mid} · ${at} ${verdictBadge(c.verdict)}</span></div>`;
+      }).join("");
+    }
+    const sinceVal = raceGuard.since_time !== undefined && raceGuard.since_time !== null
+      ? `${raceGuard.since_time} (${fmt(raceGuard.since_time_iso || (raceGuard.since_time_ms ? new Date(raceGuard.since_time_ms).toISOString() : null))}, ${raceGuard.since_source || "?"})`
+      : "--";
+    const failureVal = raceGuard.last_failed_reason || (raceGuard.last_failed_at_iso ? fmt(raceGuard.last_failed_at_iso) : "--");
+    const resendVal = `${raceGuard.resend_count || 0} / ${raceGuard.resend_limit || 2}`;
+    const html = `
+      <div class="race-guard-header">${t("race_guard_title")}</div>
+      <div class="race-guard-row"><span class="race-guard-k">Domain</span><span class="race-guard-v">${raceGuard.domain || "--"}</span></div>
+      <div class="race-guard-row"><span class="race-guard-k">Email</span><span class="race-guard-v">${raceGuard.email || "--"}</span></div>
+      <div class="race-guard-row"><span class="race-guard-k">${t("race_guard_login_at")}</span><span class="race-guard-v">${fmt(raceGuard.login_request_at_iso)}${raceGuard.login_request_source ? ` (${raceGuard.login_request_source})` : ""}</span></div>
+      <div class="race-guard-row"><span class="race-guard-k">${t("race_guard_since")}</span><span class="race-guard-v">${sinceVal}</span></div>
+      ${candHtml}
+      <div class="race-guard-row"><span class="race-guard-k">${t("race_guard_resends")}</span><span class="race-guard-v">${resendVal}</span></div>
+      <div class="race-guard-row"><span class="race-guard-k">${t("race_guard_last_failure")}</span><span class="race-guard-v">${failureVal}</span></div>
+    `;
+    inspectorRaceGuard.innerHTML = html;
+    inspectorRaceGuard.style.display = "block";
+  }
+
   function renderInspectorReport(report) {
     lastInspectorReport = report;
     if (!inspectorDomain || !inspectorChannelBadge || !inspectorVerdict) return;
@@ -449,6 +512,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       inspectorChannelBadge.className = "badge neutral";
       inspectorChannelBadge.textContent = t("channel_none");
       inspectorVerdict.textContent = t("inspector_no_tab");
+      renderRaceGuard(null);
       if (inspectorBackendReconcile) inspectorBackendReconcile.style.display = "none";
       if (btnFillInspectedCode) btnFillInspectedCode.style.display = "none";
       return;
@@ -481,6 +545,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       inspectorChannelBadge.className = "badge neutral";
       inspectorChannelBadge.textContent = t("channel_none");
     }
+
+    renderRaceGuard(report.race_guard);
 
     const candidates = Array.isArray(report.candidates) ? report.candidates : [];
     const topMatch = candidates.find(c => c.qualified) || candidates.find(c => c.disqualified && c.rule_id !== "no_otp_signal") || candidates[0];

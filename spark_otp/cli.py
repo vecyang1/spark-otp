@@ -77,6 +77,7 @@ def main():
     diag_parser.add_argument("--hint", help="Optional page brand/title hint for custom self-hosted domains")
     diag_parser.add_argument("--dom-sample", help="JSON or text sample of a DOM input/form to evaluate against the SSOT DOM detection engine")
     diag_parser.add_argument("--allow-expired", action="store_true", help="Include expired codes in resolution")
+    diag_parser.add_argument("--since-time", type=float, default=None, help="Epoch-seconds lower bound of the current login attempt (candidates before it are excluded as stale)")
     diag_parser.add_argument("--json", action="store_true", help="Output full JSON diagnosis")
 
     args = parser.parse_args()
@@ -213,10 +214,18 @@ def main():
         brand_hint = getattr(args, "hint", None)
         dom_sample = getattr(args, "dom_sample", None)
         allow_expired = args.allow_expired
+        since_time = getattr(args, "since_time", None)
         as_json = args.json
 
         client = SparkClient()
-        diag = client.diagnose(target=target, account=account, allow_expired=allow_expired, dom_sample=dom_sample, brand_hint=brand_hint)
+        diag = client.diagnose(
+            target=target,
+            account=account,
+            allow_expired=allow_expired,
+            dom_sample=dom_sample,
+            brand_hint=brand_hint,
+            since_time=since_time,
+        )
 
         if as_json:
             print(json.dumps(diag, indent=2))
@@ -232,7 +241,12 @@ def main():
             cache_status = f"Available ({env['cache_sqlite_db']})" if env.get('cache_sqlite_available') else "Unavailable"
             print(f"SQLite Store: {sqlite_status}")
             print(f"Cache Store:  {cache_status}")
-            print(f"Accounts:     {env.get('accounts_count', 0)} configured in Spark\n")
+            print(f"Accounts:     {env.get('accounts_count', 0)} configured in Spark")
+            if q.get("since_time") is not None:
+                print(f"Since Time:   {q.get('since_time')} (login-attempt lower bound; earlier candidates excluded as stale)")
+            if diag.get("excluded_by_since_time_count"):
+                print(f"Stale Excl.:  {diag.get('excluded_by_since_time_count')} candidate(s) — {diag.get('excluded_by_since_time_reason')}")
+            print()
 
             if diag.get("dom_sample_diagnosis"):
                 dd = diag["dom_sample_diagnosis"]

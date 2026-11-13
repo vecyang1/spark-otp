@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-11-13
+
+### Added
+- **Race Guard — First-Query Time Lower Bound (`loginRequestAt`)**: The first `/api/otp` and `/api/stream` query now always carries `since_time`, derived as `max(loginRequestAt, lastResendAt, pageLoadAt - 300s)` instead of only being added after a failure. Captures the exact login-request instant from (1) the `autoEmail` auto-fill submit path, (2) document-capture clicks on `Send login code / Resend / Continue with email / 发送验证码 / 重新发送`, form submits and email-input `Enter`, and (3) the email-step → OTP-step DOM transition as a fallback; if the assistant is injected on the code page with no record, it degrades to the conservative `pageLoadAt - 300s` bound. New per-domain session state: `loginRequestAt`, `loginRequestSource`, `lastResendAt`, `resendCount`, `resendForFailedAt`, `lastResendReason`, `lastFailedReason` (extends the existing `spark_otp_auth_<domain>` state, backward compatible).
+- **Bounded Auto-Resend After Rejection**: When `detectPageError()` confirms a real auth rejection (`__cf_access_message=unauthorized` / "That account does not have access." / incorrect-code banners) and a resend control exists, the extension/userscript clicks it once, records `lastResendAt`/`resendCount`, and restarts listening with the click instant as the new lower bound. Hard limits: `>= 20s` cooldown, at most `2` auto-resends per page session, one resend per distinct failure timestamp, no resend when no control exists — then it stops and shows "manual action required". Dangerous buttons (`Sign out`, `Delete`, `Cancel`, `返回`, ...) and the pill's own buttons are never matched.
+- **Race Guard UI**: Four new floating-pill states — `race_guarded`, `resend_sent`, `waiting_new_code`, `manual_required` — with full English/Chinese i18n via the existing `t()` system.
+- **Popup "Login Attempt / Race Guard" Inspector Block**: Shows target domain, email, `loginRequestAt` (+ source), effective `since_time` bound (+ source), candidate codes with `message_id` + `received_at` + verdict (`accepted` / `excluded_stale` / `rejected`), auto-resend count/limit and last failure reason. Fed by `race_guard` in the existing `SPARK_OTP_DIAGNOSE_PAGE` report; `extension/types/contracts.d.ts` now ships `RaceGuardReport`, `RaceGuardCandidate` and `PageDiagnosisReport`.
+- **Diagnostic-First `since_time`**: `/api/diagnose?since_time=` now reports `since_time`, `excluded_by_since_time_count` and an explanatory `excluded_by_since_time_reason`, marks each candidate with `excluded_by_since_time` / `since_time_verdict`, and never resolves a code received before the bound. `spark-otp diagnose --since-time <epoch>` prints the same summary; OpenAPI contract updated.
+
+### Fixed
+- **Cloudflare Access stale-code race**: A stale code requested before the current login attempt (e.g. `19:48`'s `262007` submitted at `19:59:39` after the `19:59` re-send) can no longer be picked up by a first query; it is excluded as `excluded_stale` and the UI waits for the fresh email instead of submitting it.
+- `isCodeRejected()` gained an explicit race-guard rule 0 (candidate older than the login-attempt bound) that runs before the blacklist/`lastFailedAt` rules.
+- **Programmatic auto-resend click no longer resets the auto-resend budget**: the document-capture login-request listener now ignores the code-driven `.click()` on the resend control via a synchronous `runProgrammaticClick()` guard, so `resendCount` / `resendForFailedAt` / the 20s cooldown survive the auto-resend — the two-resend hard cap and one-resend-per-failure rule can no longer be bypassed by the programmatic click bubbling back through capture. A genuine user click still registers a new login request and resets the budget (intended). Regression tests: `TestProgrammaticResendClickGuard` in `tests/test_race_guard.py`.
+
+### Tests
+- `tests/test_race_guard.py`: 12 new conformance tests via the existing Node vm harness (first query bound, stale exclusion, resend forward-bound, cooldown/cap/one-per-failure, no-control manual escalation, dangerous-button filtering, pill/i18n parity, popup/type contracts, diagnose-engine stale counting).
+- `tests/test_contracts.py`: `/api/diagnose` `since_time` parameter + echo/excluded-count contract.
+- `extension/content.js` ↔ `userscript/spark-otp.user.js` SSOT parity enforced by `python3 scripts/sync_engine.py --check`.
+- `scripts/e2e_extension_smoke.py`: one-command real-browser smoke E2E (Chrome for Testing + unpacked extension from repo root + mock Cloudflare login page) asserting the first `/api/stream` query carries `since_time == floor(loginRequestAt/1000)` and the pill renders `race_guarded`; SKIPs when no Chromium build is available. Usage: `python3 scripts/e2e_extension_smoke.py --chrome-bin <path>`.
+
 ## [2026-11-13] - 2026-11-13
 
 ### Fixes

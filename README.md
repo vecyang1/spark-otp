@@ -250,6 +250,9 @@ python3 -m pytest tests/ -v
 - `tests/test_e2e_flow.py`: 7 tests validating full end-to-end integration and streaming delivery.
 - `tests/test_contracts.py`: 6 tests validating OpenAPI 3.0.3 and JSON Schema compliance.
 - `tests/test_telemetry.py`: 4 tests validating masked metrics and JSONL persistence.
+- `tests/test_race_guard.py`: 12 tests validating the first-query time lower bound (`since_time = floor(loginRequestAt/1000)`), stale-code exclusion, bounded auto-resend (cooldown / hard cap / one resend per failure / no-control escalation), pill i18n and popup/type contracts.
+- `scripts/e2e_extension_smoke.py`: one-command **real-browser** smoke E2E — launches Chrome for Testing with `--load-extension=<repo root>`, injects a Cloudflare-Access-style mock login page, clicks "Send login code", and asserts the real `/api/stream` request carries `since_time == floor(loginRequestAt/1000)` plus the `race_guarded` pill. Missing Chromium build → `SKIP` (exit 0), not FAIL. Usage:
+  `python3 scripts/e2e_extension_smoke.py [--chrome-bin <path>] [--keep]`.
 
 ---
 

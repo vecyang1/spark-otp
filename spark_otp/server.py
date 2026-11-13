@@ -159,6 +159,13 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
         brand_hint = params.get("hint", params.get("brand_hint", [None]))[0]
         allow_expired_param = params.get("allow_expired", [None])[0]
         allow_expired = allow_expired_param.lower() in ("1", "true", "yes") if allow_expired_param else False
+        since_time_raw = params.get("since_time", [None])[0]
+        since_time = None
+        if since_time_raw:
+            try:
+                since_time = float(since_time_raw)
+            except (ValueError, TypeError):
+                since_time = None
 
         diag_result = {}
         if self.client and hasattr(self.client, "diagnose"):
@@ -172,6 +179,8 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
                     diag_kwargs["dom_sample"] = dom_sample
                 if brand_hint is not None:
                     diag_kwargs["brand_hint"] = brand_hint
+                if since_time is not None:
+                    diag_kwargs["since_time"] = since_time
                 diag_result = self.client.diagnose(**diag_kwargs)
             except TypeError:
                 diag_result = self.client.diagnose(
