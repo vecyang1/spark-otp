@@ -61,13 +61,14 @@ class MockSparkClient:
         self.last_kwargs = dict(kwargs)
         return self.mock_otp
 
-    def diagnose(self, target="", account=None, allow_expired=False):
+    def diagnose(self, target="", account=None, allow_expired=False, strict_account=False, **kwargs):
         return {
             "query": {
                 "target": target,
                 "domain": target,
                 "account": account,
                 "allow_expired": allow_expired,
+                "strict_account": strict_account,
                 "diagnosed_at": "2026-10-07T12:00:00"
             },
             "environment": {
@@ -341,6 +342,14 @@ class TestServer(unittest.TestCase):
         self.assertEqual(data["query"]["target"], "test.domain.com")
         self.assertEqual(data["query"]["account"], "alex.turner@example.com")
         self.assertTrue(data["query"]["allow_expired"])
+
+    def test_diagnose_endpoint_strict_account_forwarding(self):
+        """Test that /api/diagnose forwards strict_account=1 to client.diagnose."""
+        url = f"http://127.0.0.1:{self.port}/api/diagnose?target=test.domain.com&account=alex.turner@example.com&strict_account=1"
+        req = urllib.request.urlopen(url)
+        self.assertEqual(req.status, 200)
+        data = json.loads(req.read().decode("utf-8"))
+        self.assertTrue(data["query"]["strict_account"])
 
     def test_diagnose_endpoint_client_without_diagnose(self):
         """Test fallback error response when client lacks diagnose capability."""

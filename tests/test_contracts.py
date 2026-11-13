@@ -77,10 +77,12 @@ class TestContracts(unittest.TestCase):
         otp_param_names = [p["name"] for p in OPENAPI_SPEC["paths"]["/api/otp"]["get"]["parameters"]]
         self.assertIn("domain", otp_param_names)
         self.assertIn("allow_expired", otp_param_names)
+        self.assertIn("strict_account", otp_param_names)
         self.assertIn("/api/stream", OPENAPI_SPEC["paths"])
         stream_param_names = [p["name"] for p in OPENAPI_SPEC["paths"]["/api/stream"]["get"]["parameters"]]
         self.assertIn("domain", stream_param_names)
         self.assertIn("allow_expired", stream_param_names)
+        self.assertIn("strict_account", stream_param_names)
         self.assertIn("/api/telemetry", OPENAPI_SPEC["paths"])
         self.assertIn("/api/schema", OPENAPI_SPEC["paths"])
         self.assertIn("/api/openapi.json", OPENAPI_SPEC["paths"])

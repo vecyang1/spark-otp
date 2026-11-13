@@ -24,6 +24,7 @@ def main():
     get_parser.add_argument("--max-age", "-a", type=int, default=600, help="Max code age in seconds (default: 600)")
     get_parser.add_argument("--allow-expired", action="store_true", help="Allow returning expired OTP codes")
     get_parser.add_argument("--no-fallback-expired", action="store_false", dest="fallback_expired", default=True, help="Disable fallback to expired OTP when domain is queried")
+    get_parser.add_argument("--strict-account", action="store_true", help="Only match emails addressed to --account (disable cross-mailbox fallback)")
     get_parser.add_argument("--json", action="store_true", help="Output full JSON result")
 
     # Command: serve
@@ -38,6 +39,7 @@ def main():
     watch_parser.add_argument("--hint", help="Optional page brand/title hint for custom self-hosted domains")
     watch_parser.add_argument("--interval", "-i", type=float, default=2.0, help="Check interval in seconds")
     watch_parser.add_argument("--allow-expired", action="store_true", help="Allow returning expired OTP codes")
+    watch_parser.add_argument("--strict-account", action="store_true", help="Only match emails addressed to --account (disable cross-mailbox fallback)")
     watch_parser.add_argument("--exit-on-match", "-1", action="store_true", help="Exit immediately upon first match")
     watch_parser.add_argument("--json", action="store_true", help="Output as JSON stream / object")
 
@@ -77,6 +79,7 @@ def main():
     diag_parser.add_argument("--hint", help="Optional page brand/title hint for custom self-hosted domains")
     diag_parser.add_argument("--dom-sample", help="JSON or text sample of a DOM input/form to evaluate against the SSOT DOM detection engine")
     diag_parser.add_argument("--allow-expired", action="store_true", help="Include expired codes in resolution")
+    diag_parser.add_argument("--strict-account", action="store_true", help="Only match emails addressed to --account (disable cross-mailbox fallback)")
     diag_parser.add_argument("--since-time", type=float, default=None, help="Epoch-seconds lower bound of the current login attempt (candidates before it are excluded as stale)")
     diag_parser.add_argument("--json", action="store_true", help="Output full JSON diagnosis")
 
@@ -90,6 +93,7 @@ def main():
         as_json = getattr(args, "json", False)
         allow_expired = getattr(args, "allow_expired", False)
         fallback_expired = getattr(args, "fallback_expired", True)
+        strict_account = getattr(args, "strict_account", False)
 
         client = SparkClient()
         if not client.is_available():
@@ -103,6 +107,7 @@ def main():
             allow_expired=allow_expired,
             fallback_expired=fallback_expired if domain else False,
             brand_hint=brand_hint,
+            strict_account=strict_account,
         )
         if not otp:
             if as_json:
@@ -138,9 +143,16 @@ def main():
             print(f"Watching for OTP codes (domain: {args.domain or 'all'}, account: {account or 'all'})... Press Ctrl+C to stop.")
         last_id = None
         allow_expired = getattr(args, "allow_expired", False)
+        strict_account = getattr(args, "strict_account", False)
         try:
             while True:
-                otp = client.get_latest_otp(domain=args.domain, max_age_seconds=600, account=account, allow_expired=allow_expired)
+                otp = client.get_latest_otp(
+                    domain=args.domain,
+                    max_age_seconds=600,
+                    account=account,
+                    allow_expired=allow_expired,
+                    strict_account=strict_account,
+                )
                 if otp and otp.message_id != last_id:
                     last_id = otp.message_id
                     if as_json:
@@ -214,6 +226,7 @@ def main():
         brand_hint = getattr(args, "hint", None)
         dom_sample = getattr(args, "dom_sample", None)
         allow_expired = args.allow_expired
+        strict_account = getattr(args, "strict_account", False)
         since_time = getattr(args, "since_time", None)
         as_json = args.json
 
@@ -224,6 +237,7 @@ def main():
             allow_expired=allow_expired,
             dom_sample=dom_sample,
             brand_hint=brand_hint,
+            strict_account=strict_account,
             since_time=since_time,
         )
 

@@ -10,7 +10,7 @@ OPENAPI_SPEC: Dict[str, Any] = {
     "info": {
         "title": "Spark OTP Bridge API",
         "description": "Local zero-LLM high-speed OTP extraction bridge for Spark Desktop",
-        "version": "1.6.3"
+        "version": "1.7.1"
     },
     "servers": [
         {"url": "http://127.0.0.1:9428", "description": "Localhost Daemon"}
@@ -105,6 +105,13 @@ OPENAPI_SPEC: Dict[str, Any] = {
                         "required": False,
                         "schema": {"type": "string"},
                         "description": "Optional page brand or heading hint for custom self-hosted domains"
+                    },
+                    {
+                        "name": "strict_account",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "boolean", "default": False},
+                        "description": "Only consider emails addressed to the requested account; prevents cross-mailbox fallback"
                     }
                 ],
                 "responses": {
@@ -180,6 +187,13 @@ OPENAPI_SPEC: Dict[str, Any] = {
                         "required": False,
                         "schema": {"type": "string"},
                         "description": "Optional page brand or heading hint for custom self-hosted domains"
+                    },
+                    {
+                        "name": "strict_account",
+                        "in": "query",
+                        "required": False,
+                        "schema": {"type": "boolean", "default": False},
+                        "description": "Only consider emails addressed to the requested account; prevents cross-mailbox fallback"
                     }
                 ],
                 "responses": {
