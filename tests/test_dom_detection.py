@@ -2662,6 +2662,189 @@ class TestDomDetection(unittest.TestCase):
             self.assertIn("strict_account=1", r["queryStrict"])
             self.assertIn("allow_expired=0", r["queryDefault"])
 
+
+class TestEmailStepPillFailSafe(unittest.TestCase):
+    """D1 regression guard (2026-11-13): the email_ready pill must paint before any
+    daemon round-trip on a dual-IdP Cloudflare Access page (inline Google + email form).
+    """
+
+    @staticmethod
+    def _extract_fn(src: str, name: str) -> str:
+        start = src.index("function " + name + "(")
+        i = src.index("{", start)
+        depth = 0
+        quote = None
+        j = i
+        while j < len(src):
+            ch = src[j]
+            if quote:
+                if ch == "\\":
+                    j += 2
+                    continue
+                if ch == quote:
+                    quote = None
+            else:
+                if ch in "\"'`":
+                    quote = ch
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return src[start:j + 1]
+            j += 1
+        raise AssertionError(f"unbalanced function: {name}")
+
+    def _node(self, js_code: str) -> dict:
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"node failed: {proc.stderr}")
+        return json.loads(proc.stdout)
+
+    def test_dual_idp_dom_detects_inline_email_input_and_google_only_does_not(self):
+        content = (REPO_ROOT / "extension" / "content.js").read_text(encoding="utf-8")
+        # findEmailInput contains a regex with an apostrophe ("we'll") that confuses a plain
+        # quote/brace scanner, so cut it at the next SSOT function boundary instead.
+        start = content.index("function findEmailInput(")
+        end = content.index("\n\n  function setInputValue", start)
+        find_email_fn = content[start:end].rstrip()
+        self.assertTrue(find_email_fn.endswith("}"), "findEmailInput extraction boundary drifted")
+        js_code = f"""
+        const fn = {json.dumps(find_email_fn)};
+        eval(fn);
+        const emailEl = {{
+            name: "email", id: "email", placeholder: "example@email.com",
+            offsetParent: {{}}, getAttribute: (k) => k === "autocomplete" ? "off" : null
+        }};
+        const formEl = {{}};
+        global.window = {{ location: {{ hostname: "veecccc.cloudflareaccess.com" }} }};
+        global.document = {{
+            title: "Sign in ・ Cloudflare Access",
+            body: {{}},
+            getElementById: () => null,
+            querySelector: (sel) => sel.indexOf("form[") === 0 ? formEl : null,
+            querySelectorAll: (sel) => sel === "input#email" ? [emailEl] : []
+        }};
+        const dual = findEmailInput();
+        document.querySelectorAll = () => [];
+        document.querySelector = () => null;
+        const googleOnly = findEmailInput();
+        console.log(JSON.stringify({{ dualId: dual && dual.id, dualFound: dual === emailEl, googleOnlyNull: googleOnly === null }}));
+        """
+        data = self._node(js_code)
+        self.assertTrue(data["dualFound"], "dual-IdP Access DOM must expose its inline #email input")
+        self.assertEqual(data["dualId"], "email")
+        self.assertTrue(data["googleOnlyNull"], "Google-button-only DOM must not expose an email input")
+
+    def test_email_ready_pill_paints_before_daemon_resolves_and_hydrates_hint(self):
+        content = (REPO_ROOT / "extension" / "content.js").read_text(encoding="utf-8")
+        handle_fn = self._extract_fn(content, "handleEmailStep")
+        js_code = f"""
+        let isListening = false, activeCode = false, autoEmail = false, domain = "json.worldinspirelab.com";
+        let currentPillState = "hidden";
+        let rendered = [], fills = [], bound = 0, resolveCalls = 0;
+        let KNOWN = "", RESULT = null, INPUT = {{ value: "" }};
+        function knownPreferredEmail() {{ return KNOWN; }}
+        function bindEmailStepCapture() {{ bound++; }}
+        function renderPill(state, data) {{ currentPillState = state; rendered.push({{ state, data: data || {{}} }}); }}
+        function fillEmailAndSubmit(email) {{ fills.push(email); }}
+        function findOtpInputs() {{ return []; }}
+        function findEmailInput() {{ return INPUT; }}
+        function detectTargetDomain() {{ return domain; }}
+        function resolvePreferredEmail() {{ resolveCalls++; return RESULT; }}
+        const document = {{ getElementById: (id) => id === "spark-otp-pill-container" ? {{}} : null }};
+        let unhandled = false;
+        process.on("unhandledRejection", () => {{ unhandled = true; }});
+        eval({json.dumps(handle_fn)});
+
+        // A) dual-IdP email step, daemon /api/accounts never settles -> pill paints synchronously.
+        RESULT = new Promise(() => {{}});
+        handleEmailStep(INPUT);
+        const a = {{ rendered: rendered.slice(), bound, resolveCalls }};
+
+        setTimeout(() => {{
+          // B) daemon resolves later -> hint hydrates into the already-painted pill.
+          rendered = []; fills = []; bound = 0; resolveCalls = 0; currentPillState = "hidden";
+          KNOWN = ""; INPUT = {{ value: "" }};
+          RESULT = Promise.resolve("auto@example.com");
+          handleEmailStep(INPUT);
+          const bImmediate = rendered.slice();
+          setTimeout(() => {{
+            const bHydrated = rendered.slice();
+            // C) a known hint (defaultEmail/selectedAccount/last email) needs no daemon call.
+            rendered = []; fills = []; resolveCalls = 0; currentPillState = "hidden"; KNOWN = "known@x.com";
+            handleEmailStep(INPUT);
+            const c = {{ immediate: rendered.slice(), resolveCalls }};
+            // D) autoEmail + known hint still auto-fills instead of painting (unchanged).
+            rendered = []; fills = []; bound = 0; currentPillState = "hidden";
+            autoEmail = true; KNOWN = "known@x.com"; INPUT = {{ value: "" }};
+            handleEmailStep(INPUT);
+            const d = {{ fills: fills.slice(), rendered: rendered.slice() }};
+            // E) autoEmail + daemon-only hint: paint first, then auto-fill after hydrate.
+            rendered = []; fills = []; resolveCalls = 0; currentPillState = "hidden";
+            autoEmail = true; KNOWN = ""; INPUT = {{ value: "" }};
+            RESULT = Promise.resolve("auto2@example.com");
+            handleEmailStep(INPUT);
+            const eImmediate = rendered.slice();
+            setTimeout(() => {{
+              console.log(JSON.stringify({{
+                a, bImmediate, bHydrated, c, d, eImmediate,
+                eFills: fills.slice(), eRendered: rendered.slice(), unhandled
+              }}));
+            }}, 80);
+          }}, 80);
+        }}, 300);
+        """
+        data = self._node(js_code)
+        self.assertEqual([r["state"] for r in data["a"]["rendered"]], ["email_ready"],
+                         "pill must paint before the daemon round-trip settles")
+        self.assertEqual(data["a"]["rendered"][0]["data"]["email"], "")
+        self.assertEqual(data["a"]["bound"], 1)
+        self.assertEqual(data["a"]["resolveCalls"], 1)
+        self.assertEqual([r["state"] for r in data["bImmediate"]], ["email_ready"])
+        self.assertEqual(len(data["bHydrated"]), 2, "hydrate must re-render the email hint once it resolves")
+        self.assertEqual(data["bHydrated"][1]["data"]["email"], "auto@example.com")
+        self.assertEqual(data["c"]["resolveCalls"], 0, "a known email hint must not trigger a daemon call")
+        self.assertEqual(data["c"]["immediate"][0]["data"]["email"], "known@x.com")
+        self.assertEqual(data["d"]["rendered"], [], "autoEmail + known hint keeps the previous fill-only behavior")
+        self.assertEqual(data["d"]["fills"], ["known@x.com"])
+        self.assertEqual([r["state"] for r in data["eImmediate"]], ["email_ready"])
+        self.assertEqual(data["eFills"], ["auto2@example.com"], "autoEmail must still auto-fill after hydrate")
+        self.assertFalse(data["unhandled"], "hydrate failures must be caught (no unhandled rejection)")
+
+    def test_checkpage_dispatch_never_enters_email_branch_on_google_only_dom(self):
+        content = (REPO_ROOT / "extension" / "content.js").read_text(encoding="utf-8")
+        snippet = (
+            "    if (otpInputs.length > 0) {\n"
+            "      startListening();\n"
+            "    } else if (emailInput) {\n"
+            "      handleEmailStep(emailInput);\n"
+            "    }\n"
+        )
+        self.assertIn(snippet, content, "checkPage email/OTP dispatch snippet changed; update this harness")
+        js_code = f"""
+        function scenario(otpInputs, emailInput) {{
+          let started = 0, handled = 0;
+          function startListening() {{ started++; }}
+          function handleEmailStep() {{ handled++; }}
+        {snippet}
+          return {{ started, handled }};
+        }}
+        const dual = scenario([], {{}});
+        const googleOnly = scenario([], null);
+        const otpPage = scenario([{{}}], null);
+        console.log(JSON.stringify({{
+          dual, googleOnly, otpPage,
+          googleOnlyRejected: googleOnly.started === 0 && googleOnly.handled === 0
+        }}));
+        """
+        data = self._node(js_code)
+        self.assertEqual(data["dual"]["handled"], 1, "dual-IdP email step must enter handleEmailStep")
+        self.assertEqual(data["dual"]["started"], 0)
+        self.assertTrue(data["googleOnlyRejected"],
+                         "Google-button-only DOM (no email input, no OTP input) must render no email pill")
+        self.assertEqual(data["otpPage"]["started"], 1)
+        self.assertEqual(data["otpPage"]["handled"], 0)
+
 if __name__ == "__main__":
     unittest.main()
 

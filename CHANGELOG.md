@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.2] - 2026-11-13
+
+### Fixed
+- **D1 (HIGH for helper UX) — email-step pill could stay missing for the whole first paint on the dual-IdP Cloudflare Access page**: `handleEmailStep()` painted `email_ready` only *after* `await resolvePreferredEmail()`, and that path can fall through to `/api/accounts` through the extension service-worker proxy with no timeout. A cold service worker measured up to **26s** for that round-trip in one Ego Lite profile, so the page showed no email target hint, no Send Code shortcut and never started OTP listening at the usual check moment. The pill now renders **synchronously** on the email step using only local hints (`defaultEmail` / `selectedAccount` / remembered `spark_otp_last_email_<domain>` / `resolvedAutoEmail`); when the hint is still unknown it shows the existing non-email-specific "Passwordless email login detected — enter email or click Send Code" state. The daemon-only email lookup is now a bounded (`EMAIL_RESOLVE_TIMEOUT_MS = 2500`) async hydration step that re-renders the hint only while the pill is still current, and its failures are caught (no unhandled rejection). `autoEmail` auto-fill and OTP-listening behavior are unchanged.
+- `daemonFetchJson()` gained an optional hard timeout so a half-open `chrome.runtime.sendMessage` channel or a stalled `fetch` can no longer block a caller forever; calls without a timeout keep the old behavior.
+
+### Tests
+- New `TestEmailStepPillFailSafe` node-vm harness in `tests/test_dom_detection.py`: dual-IdP-like Access DOM (Google `js-idp` button + inline `#email` / `#totp-form`) detects the email input; `email_ready` paints immediately even when `/api/accounts` never resolves; the hint hydrates once it does; a known hint never calls the daemon; `autoEmail` fill/fill-after-hydrate paths stay green; and the `checkPage` dispatch enters no email branch at all on Google-button-only DOM (no email input, no OTP input).
+- `python3 -m pytest tests/ -q` green; `python3 scripts/sync_engine.py --check` green (SSOT untouched); extension/userscript parity maintained.
+
 ## [1.7.1] - 2026-11-13
 
 ### Fixed

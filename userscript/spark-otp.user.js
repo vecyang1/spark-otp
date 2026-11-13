@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Spark OTP Autofill
 // @namespace    https://github.com/vecyang1/spark-otp
-// @version      1.7.1
+// @version      1.7.2
 // @description  Automatically extracts and autofills verification codes from Spark Desktop via local daemon across all websites
 // @author       V
 // @match        http://*/*

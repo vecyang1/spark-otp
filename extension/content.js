@@ -2568,13 +2568,27 @@
 
   // === END CORE DOM DETECTION ENGINE (SSOT) ===
 
+  // D1 fail-safe (2026-11-13): the email_ready pill must paint before any daemon
+  // round-trip. A cold extension service worker measured 26s for /api/accounts on the
+  // dual-IdP Cloudflare Access page, which hid the pill entirely at the 6s mark.
+  const EMAIL_RESOLVE_TIMEOUT_MS = 2500;
+
   let resolvedAutoEmail = "";
   let currentPillState = "hidden";
 
-  async function daemonFetchJson(url) {
+  async function daemonFetchJson(url, timeoutMs) {
+    // When timeoutMs > 0, never let a half-open extension message channel or a stalled
+    // fetch keep the caller (and its first paint) waiting forever.
+    const bounded = (promise) => {
+      if (!(timeoutMs > 0)) return promise;
+      return Promise.race([
+        promise,
+        new Promise((resolve) => setTimeout(() => resolve(null), timeoutMs))
+      ]);
+    };
     if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.sendMessage === "function") {
       try {
-        const proxyRes = await new Promise((resolve) => {
+        const proxyRes = await bounded(new Promise((resolve) => {
           chrome.runtime.sendMessage({ type: "SPARK_OTP_PROXY_FETCH", url }, (resp) => {
             if (chrome.runtime && chrome.runtime.lastError) {
               resolve(null);
@@ -2582,29 +2596,45 @@
             }
             resolve(resp || null);
           });
-        });
+        }));
         if (proxyRes && proxyRes.ok && proxyRes.data) {
           return { ok: true, data: proxyRes.data };
         }
       } catch (e) {}
     }
-    const res = await fetch(url, { cache: "no-store" });
-    if (res.ok) {
-      const data = await res.json();
-      return { ok: true, data };
+    let res = null;
+    try {
+      res = await bounded(fetch(url, { cache: "no-store" }));
+    } catch (e) {
+      if (timeoutMs > 0) return { ok: false, data: null };
+      throw e;
+    }
+    if (res && res.ok) {
+      try {
+        const data = await bounded(res.json());
+        if (data) return { ok: true, data };
+      } catch (e) {}
     }
     return { ok: false, data: null };
   }
 
-  async function resolvePreferredEmail(domain) {
+  function knownPreferredEmail(domain) {
+    // Synchronous hint sources only — never touches the daemon, so callers can paint
+    // the email_ready pill immediately.
     const d = domain || detectTargetDomain();
     const remembered = d ? getStorageItem("spark_otp_last_email_" + d) : null;
     if (defaultEmail) return defaultEmail;
     if (selectedAccount) return selectedAccount;
     if (remembered) return remembered;
     if (resolvedAutoEmail) return resolvedAutoEmail;
+    return "";
+  }
+
+  async function resolvePreferredEmail(domain, timeoutMs = EMAIL_RESOLVE_TIMEOUT_MS) {
+    const known = knownPreferredEmail(domain);
+    if (known) return known;
     try {
-      const res = await daemonFetchJson(`http://127.0.0.1:${serverPort}/api/accounts`);
+      const res = await daemonFetchJson(`http://127.0.0.1:${serverPort}/api/accounts`, timeoutMs);
       if (res.ok && res.data && Array.isArray(res.data.accounts) && res.data.accounts.length > 0) {
         resolvedAutoEmail = res.data.accounts[0];
         return resolvedAutoEmail;
@@ -3304,16 +3334,34 @@
     const otpInputs = findOtpInputs();
     const emailInput = findEmailInput();
 
-    async function handleEmailStep(inp) {
+    function handleEmailStep(inp) {
       if (!inp || isListening || activeCode) return;
-      bindEmailStepCapture(inp, domain);
-      const preferredEmail = await resolvePreferredEmail(domain);
-      if (isListening || activeCode || findOtpInputs().length > 0) return;
-      if (autoEmail && preferredEmail && !inp.value) {
-        fillEmailAndSubmit(preferredEmail);
-      } else {
-        renderPill("email_ready", { email: preferredEmail });
+      const domainNow = domain || detectTargetDomain();
+      bindEmailStepCapture(inp, domainNow);
+      // D1 fail-safe: paint email_ready synchronously. The first paint must never wait on
+      // /api/accounts (cold service-worker round-trips measured up to 26s); hydrate the
+      // email hint asynchronously instead and only re-render while the pill is still current.
+      const knownEmail = knownPreferredEmail(domainNow);
+      if (autoEmail && knownEmail && !inp.value) {
+        fillEmailAndSubmit(knownEmail);
+        return;
       }
+      renderPill("email_ready", { email: knownEmail });
+      if (knownEmail) return;
+      resolvePreferredEmail(domainNow).then((email) => {
+        if (!email || isListening || activeCode) return;
+        if (findOtpInputs().length > 0) return;
+        if (currentPillState !== "email_ready") return;
+        const inpNow = findEmailInput();
+        if (!inpNow) return;
+        if (autoEmail && !inpNow.value) {
+          fillEmailAndSubmit(email);
+          return;
+        }
+        if (document.getElementById("spark-otp-pill-container")) {
+          renderPill("email_ready", { email });
+        }
+      }).catch(() => {});
     }
 
     if (otpInputs.length > 0) {
