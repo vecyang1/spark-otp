@@ -17,14 +17,17 @@ import threading
 import time
 import unittest
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from spark_otp.server import create_server
 from spark_otp.spark_client import SparkClient
 from tests.test_sqlite_backend import create_mock_spark_sqlite, insert_mock_message
 
-NOW = datetime(2026, 11, 13, 21, 12, 21)          # login-request lower bound instant
-RECEIVED_TS = int(datetime(2026, 11, 13, 21, 11, 56).timestamp())  # :56 seconds
+RECEIVED_DT = (datetime.now() - timedelta(minutes=1)).replace(second=56, microsecond=0)
+NOW = RECEIVED_DT + timedelta(seconds=25)          # login-request lower bound instant
+RECEIVED_TS = int(RECEIVED_DT.timestamp())  # :56 seconds
+DATE_MINUTE_STR = RECEIVED_DT.strftime("%Y-%m-%d %H:%M")
+EXPECTED_TIME_STR = RECEIVED_DT.strftime("%H:%M:56")
 
 
 class TestReceivedAtPrecision(unittest.TestCase):
@@ -69,7 +72,7 @@ class TestReceivedAtPrecision(unittest.TestCase):
         client = self._client()
         otp = client.get_latest_otp(domain="bandwagonhost.com", allow_expired=True, now=NOW, max_age_seconds=600)
         self.assertIsNotNone(otp)
-        self.assertIn("21:11:56", otp.received_at, f"received_at lost DB precision: {otp.received_at}")
+        self.assertIn(EXPECTED_TIME_STR, otp.received_at, f"received_at lost DB precision: {otp.received_at}")
         self.assertEqual(otp.message_id, "740001")
         # expires_at must be re-derived from received_at + TTL, keeping second precision
         exp = datetime.fromisoformat(otp.expires_at)
@@ -84,14 +87,14 @@ class TestReceivedAtPrecision(unittest.TestCase):
             f"ID: {message_id}\nSubject: Device verification\n"
             "From: Bandwagon Host <noreply@64clouds.com>\n"
             "To: dev.team@example.com\n"
-            "Date: 2026-11-13 21:11\n\n"
+            f"Date: {DATE_MINUTE_STR}\n\n"
             "Your device verification code: 445566. It is valid for 1 hour.\n"
         )
         otp = client.get_latest_otp(domain="bandwagonhost.com", allow_expired=True, now=NOW, max_age_seconds=600)
         self.assertIsNotNone(otp)
         self.assertEqual(otp.code, "445566")
-        self.assertIn("21:11:56", otp.received_at, f"fetch_thread fallback kept minute-truncated date: {otp.received_at}")
-        self.assertNotIn("21:11:00", otp.received_at)
+        self.assertIn(EXPECTED_TIME_STR, otp.received_at, f"fetch_thread fallback kept minute-truncated date: {otp.received_at}")
+        self.assertNotIn(RECEIVED_DT.strftime("%H:%M:00"), otp.received_at)
         self.assertEqual(otp.message_id, "740002")
 
     def test_api_otp_endpoint_keeps_second_precision(self):
@@ -102,7 +105,7 @@ class TestReceivedAtPrecision(unittest.TestCase):
             f"ID: {message_id}\nSubject: Device verification\n"
             "From: Bandwagon Host <noreply@64clouds.com>\n"
             "To: dev.team@example.com\n"
-            "Date: 2026-11-13 21:11\n\n"
+            f"Date: {DATE_MINUTE_STR}\n\n"
             "Your device verification code: 445566. It is valid for 1 hour.\n"
         )
         server = create_server(host="127.0.0.1", port=0, client=client)
@@ -117,7 +120,7 @@ class TestReceivedAtPrecision(unittest.TestCase):
                 data = json.loads(r.read().decode("utf-8"))
             self.assertTrue(data.get("success"))
             received = data["otp"]["received_at"]
-            self.assertIn("21:11:56", received, f"/api/otp lost DB precision: {received}")
+            self.assertIn(EXPECTED_TIME_STR, received, f"/api/otp lost DB precision: {received}")
             self.assertEqual(data["otp"]["message_id"], "740002")
         finally:
             server.shutdown()

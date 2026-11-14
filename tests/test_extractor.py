@@ -1160,16 +1160,16 @@ This code will expire in 15 minutes.
 
     def test_cloudflare_cross_domain_with_brand_hint_isolation(self):
         """
-        Regression: Cloudflare Access email for json.worldinspirelab.com must NEVER fall
+        Regression: Cloudflare Access email for app.example.com must NEVER fall
         through to generic_otp or extract_universal_otp when querying status.xomoair.com
         even if brand_hint contains 'Sign in ・ Cloudflare Access'.
         """
         now = datetime(2026, 11, 13, 19, 3, 38)
         raw_cf_other_app = """
 ID: 738595
-Subject: Cloudflare Access login code for json.worldinspirelab.com
+Subject: Cloudflare Access login code for app.example.com
 From: Cloudflare <noreply@notify.cloudflare.com>
-To: yanghxmail@gmail.com
+To: user@example.com
 Date: 2026-11-13 11:24:24
 Type: Email
 
@@ -1189,9 +1189,9 @@ This code expires after 10 minutes or if you request a new code.
         # Also test non-rule generic login email explicitly naming another domain in 'for <domain>'
         raw_generic_other = """
 ID: 738596
-Subject: Login code for json.worldinspirelab.com
+Subject: Login code for app.example.com
 From: Auth Service <noreply@auth-relay.example.org>
-To: yanghxmail@gmail.com
+To: user@example.com
 Date: 2026-11-13 19:02:00
 Type: Email
 

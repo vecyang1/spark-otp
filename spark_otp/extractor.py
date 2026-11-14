@@ -723,7 +723,7 @@ def extract_otp_from_thread(
             brand_hint=brand_hint,
         ):
             # When a provider rule authoritatively extracts an explicit target domain
-            # (e.g. Cloudflare Access `for json.worldinspirelab.com`) and it does not
+            # (e.g. Cloudflare Access `for app.example.com`) and it does not
             # match the requested domain_filter, reject the email outright instead of
             # falling through to generic/universal rules.
             if extracted_domain:

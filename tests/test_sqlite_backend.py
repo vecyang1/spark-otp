@@ -648,17 +648,17 @@ Date: {dt_str}
             self.db_path,
             pk=738674,
             sender="Cloudflare <noreply@notify.cloudflare.com>",
-            recipient="yanghxmail@gmail.com",
+            recipient="alice@example.com",
             subject="Cloudflare Access login code for status.xomoair.com",
             short_body="Your login code: 056957 Your Cloudflare Access code 056957",
             received_ts=ts_now - 30,
         )
         client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
 
-        # Strict mode for 123hxsmyxh@gmail.com must return None while waiting for 123hxsmyxh's own code
+        # Strict mode for bob@example.com must return None while waiting for bob's own code
         strict_res = client.get_latest_otp(
             domain="status.xomoair.com",
-            account="123hxsmyxh@gmail.com",
+            account="bob@example.com",
             strict_account=True,
             now=now,
         )
@@ -667,7 +667,7 @@ Date: {dt_str}
         # Legacy non-strict mode still permits fallback
         fallback_res = client.get_latest_otp(
             domain="status.xomoair.com",
-            account="123hxsmyxh@gmail.com",
+            account="bob@example.com",
             strict_account=False,
             now=now,
         )

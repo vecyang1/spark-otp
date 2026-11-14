@@ -2635,8 +2635,8 @@ class TestDomDetection(unittest.TestCase):
             sandbox.window.location.search = '?kid=0984ba';
             const errDom = ctx.detectPageError();
 
-            const queryStrict = ctx.buildApiQuery(domain, 'yanghxmail@gmail.com', { strictAccount: true, allowExpired: false });
-            const queryDefault = ctx.buildApiQuery(domain, 'yanghxmail@gmail.com');
+            const queryStrict = ctx.buildApiQuery(domain, 'user@example.com', { strictAccount: true, allowExpired: false });
+            const queryDefault = ctx.buildApiQuery(domain, 'user@example.com');
 
             return { domain, brandHint, errUrl, errDom, queryStrict, queryDefault };
         }
@@ -2712,7 +2712,7 @@ class TestEmailStepPillFailSafe(unittest.TestCase):
         const fn = {json.dumps(find_email_fn)};
         eval(fn);
         const emailEl = {{
-            name: "email", id: "email", placeholder: "example@email.com",
+            name: "email", id: "email", placeholder: "user@example.com",
             offsetParent: {{}}, getAttribute: (k) => k === "autocomplete" ? "off" : null
         }};
         const formEl = {{}};
@@ -2739,7 +2739,7 @@ class TestEmailStepPillFailSafe(unittest.TestCase):
         content = (REPO_ROOT / "extension" / "content.js").read_text(encoding="utf-8")
         handle_fn = self._extract_fn(content, "handleEmailStep")
         js_code = f"""
-        let isListening = false, activeCode = false, autoEmail = false, domain = "json.worldinspirelab.com";
+        let isListening = false, activeCode = false, autoEmail = false, domain = "app.example.com";
         let currentPillState = "hidden";
         let rendered = [], fills = [], bound = 0, resolveCalls = 0;
         let KNOWN = "", RESULT = null, INPUT = {{ value: "" }};
@@ -2771,12 +2771,12 @@ class TestEmailStepPillFailSafe(unittest.TestCase):
           setTimeout(() => {{
             const bHydrated = rendered.slice();
             // C) a known hint (defaultEmail/selectedAccount/last email) needs no daemon call.
-            rendered = []; fills = []; resolveCalls = 0; currentPillState = "hidden"; KNOWN = "known@x.com";
+            rendered = []; fills = []; resolveCalls = 0; currentPillState = "hidden"; KNOWN = "known@example.com";
             handleEmailStep(INPUT);
             const c = {{ immediate: rendered.slice(), resolveCalls }};
             // D) autoEmail + known hint still auto-fills instead of painting (unchanged).
             rendered = []; fills = []; bound = 0; currentPillState = "hidden";
-            autoEmail = true; KNOWN = "known@x.com"; INPUT = {{ value: "" }};
+            autoEmail = true; KNOWN = "known@example.com"; INPUT = {{ value: "" }};
             handleEmailStep(INPUT);
             const d = {{ fills: fills.slice(), rendered: rendered.slice() }};
             // E) autoEmail + daemon-only hint: paint first, then auto-fill after hydrate.
@@ -2804,9 +2804,9 @@ class TestEmailStepPillFailSafe(unittest.TestCase):
         self.assertEqual(len(data["bHydrated"]), 2, "hydrate must re-render the email hint once it resolves")
         self.assertEqual(data["bHydrated"][1]["data"]["email"], "auto@example.com")
         self.assertEqual(data["c"]["resolveCalls"], 0, "a known email hint must not trigger a daemon call")
-        self.assertEqual(data["c"]["immediate"][0]["data"]["email"], "known@x.com")
+        self.assertEqual(data["c"]["immediate"][0]["data"]["email"], "known@example.com")
         self.assertEqual(data["d"]["rendered"], [], "autoEmail + known hint keeps the previous fill-only behavior")
-        self.assertEqual(data["d"]["fills"], ["known@x.com"])
+        self.assertEqual(data["d"]["fills"], ["known@example.com"])
         self.assertEqual([r["state"] for r in data["eImmediate"]], ["email_ready"])
         self.assertEqual(data["eFills"], ["auto2@example.com"], "autoEmail must still auto-fill after hydrate")
         self.assertFalse(data["unhandled"], "hydrate failures must be caught (no unhandled rejection)")
