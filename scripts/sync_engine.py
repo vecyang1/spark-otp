@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -B
 """
 Single Source of Truth (SSOT) Synchronization Utility for Spark OTP.
 
@@ -9,6 +9,8 @@ zero ghost logic, and zero snippet rot across both targets.
 
 import sys
 from pathlib import Path
+
+sys.dont_write_bytecode = True
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONTENT_JS = REPO_ROOT / "extension" / "content.js"

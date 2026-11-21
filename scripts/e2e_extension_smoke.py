@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -B
 """
 Controlled Chrome extension smoke test for the Spark OTP race guard (v1.7.0+).
 
@@ -40,7 +40,19 @@ import threading
 import time
 from pathlib import Path
 
+sys.dont_write_bytecode = True
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
+CHROMIUM_ALLOWED_UNPACKED_UNDERSCORE_ENTRIES = frozenset({"_locales", "_platform_specific"})
+
+
+def check_unpacked_extension_filenames(root: Path) -> list[str]:
+    """Mirror Chromium UnpackedInstaller::CheckForIllegalFilenames (which --load-extension skips)."""
+    return [
+        entry.name
+        for entry in sorted(root.iterdir(), key=lambda p: p.name)
+        if entry.name.startswith("_") and entry.name not in CHROMIUM_ALLOWED_UNPACKED_UNDERSCORE_ENTRIES
+    ]
 
 MOCK_LOGIN_PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>Sign in</title></head>
@@ -241,6 +253,13 @@ def main():
     parser.add_argument("--keep", action="store_true", help="Keep the temporary Chrome profile for inspection")
     parser.add_argument("--timeout", type=int, default=90, help="Overall smoke test timeout in seconds")
     args = parser.parse_args()
+
+    illegal = check_unpacked_extension_filenames(REPO_ROOT)
+    if illegal:
+        return fail(
+            f"unpacked extension root {REPO_ROOT} contains Chromium-reserved '_' entries: {illegal} "
+            "(chrome://extensions Load Unpacked / Reload will reject this directory; remove them and run Python with -B)"
+        )
 
     if shutil.which("node") is None:
         print("SKIP: node is required to drive the CDP client (not found in PATH)")

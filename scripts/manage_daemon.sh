@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 export PYTHONUNBUFFERED=1
+export PYTHONDONTWRITEBYTECODE=1
 PID_FILE="/tmp/spark-otp.pid"
 LOG_FILE="/tmp/spark-otp.log"
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -48,7 +49,7 @@ case "$1" in
       exit 0
     fi
     echo "Starting spark-otp daemon on port 9428..."
-    nohup "$PYTHON_BIN" -u "$PROJECT_DIR/cli.py" serve --port 9428 > "$LOG_FILE" 2>&1 &
+    nohup "$PYTHON_BIN" -B -u "$PROJECT_DIR/cli.py" serve --port 9428 > "$LOG_FILE" 2>&1 &
     PID=$!
     echo $PID > "$PID_FILE"
     for i in {1..20}; do
@@ -67,7 +68,7 @@ case "$1" in
     ;;
   run)
     # Foreground runner for launchd / process supervisor
-    exec "$PYTHON_BIN" -u "$PROJECT_DIR/cli.py" serve --port 9428
+    exec "$PYTHON_BIN" -B -u "$PROJECT_DIR/cli.py" serve --port 9428
     ;;
   stop)
     echo "Stopping spark-otp daemon..."

@@ -1,4 +1,8 @@
 import os
+import sys
+
+sys.dont_write_bytecode = True
+
 import pytest
 from spark_otp.config import config
 

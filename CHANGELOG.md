@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-11-21] - 2026-11-21
+
+### Fixed
+- **Unpacked Chrome/Ego extension reload crash on root `__pycache__` (`DISABLE_RELOAD`)**: Because the repo root hosts `manifest.json` for live unpacked browser installations (`eoocpjcgdmnilcdpcaobcogaeiiebgad`), any top-level `__pycache__` directory breaks Chromium's `UnpackedInstaller::CheckForIllegalFilenames` (`Filenames starting with "_" are reserved for use by the system`), flipping the extension to disabled.
+- **Bytecode suppression across all Python entrypoints**: Enforced `-B` / `PYTHONDONTWRITEBYTECODE=1` / `sys.dont_write_bytecode = True` in `cli.py`, `scripts/manage_daemon.sh`, `scripts/e2e_extension_smoke.py`, `scripts/sync_engine.py`, `tests/conftest.py`, `package.json`, and `use-spark/scripts/get_otp.py`; scoped `pyproject.toml` `norecursedirs`.
+- **Rung-3 packaging & E2E gates**: Added `tests/test_extension_packaging.py` (enforces Chromium leading-`_` filename check on both repo root and `extension/`, manifest version/asset parity, and bytecode suppression contract) and added the same Chromium unpacked filename preflight to `scripts/e2e_extension_smoke.py` (closing the blind spot where `--load-extension` passed even when `chrome://extensions` reload failed).
+
+## [2026-11-16] - 2026-11-16
+
+### Maintenance
+- Virtualize test fixture emails/domains and make received_at precision test time-independent (`7b6b0e5`)
+
 ## [1.7.2] - 2026-11-13
 
 ### Fixed
