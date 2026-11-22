@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2026-11-22] - 2026-11-22
+
+### Fixed
+- **Production telemetry isolation & 5 MB rotation (`spark_otp/telemetry.py`, `tests/conftest.py`)**: Isolated `pytest` runs from production `~/.spark_otp/telemetry.jsonl` via `SPARK_OTP_LOG_PATH` / temp path redirection (eliminating 22.2% synthetic test noise in production metrics) and added atomic 5 MB file rotation (retaining the latest 5,000 entries); verified with 227/227 tests passing and 0 lines appended to production telemetry (`234a5d6`).
+
 ## [2026-11-21] - 2026-11-21
 
 ### Fixed
