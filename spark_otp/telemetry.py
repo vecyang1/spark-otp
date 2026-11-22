@@ -47,19 +47,25 @@ class TelemetryManager:
         log_file_path: Optional[str] = None,
         uptime_kuma_push_url: Optional[str] = None,
         sentry_dsn: Optional[str] = None,
-        enabled: bool = True
+        enabled: bool = True,
+        max_file_bytes: int = 5 * 1024 * 1024,
+        rotate_keep_lines: int = 5000,
     ):
         self.enabled = enabled
         self.max_in_memory = max_in_memory
+        self.max_file_bytes = max_file_bytes
+        self.rotate_keep_lines = rotate_keep_lines
         self.start_time = time.time()
         self._lock = threading.Lock()
+        self._file_lock = threading.Lock()
         self._events: deque = deque(maxlen=max_in_memory)
         self.uptime_kuma_push_url = uptime_kuma_push_url
         self.sentry_dsn = sentry_dsn
 
-        # Resolve log file path
-        if log_file_path:
-            self.log_file_path = Path(os.path.expanduser(log_file_path))
+        # Resolve log file path (explicit arg > SPARK_OTP_LOG_PATH env > default)
+        resolved_path = log_file_path or os.environ.get("SPARK_OTP_LOG_PATH")
+        if resolved_path:
+            self.log_file_path = Path(os.path.expanduser(resolved_path))
         else:
             self.log_file_path = Path.home() / ".spark_otp" / "telemetry.jsonl"
 
@@ -128,13 +134,33 @@ class TelemetryManager:
 
         return event
 
+    def _rotate_if_needed(self):
+        if self.max_file_bytes <= 0 or not self.log_file_path.is_file():
+            return
+        try:
+            if self.log_file_path.stat().st_size <= self.max_file_bytes:
+                return
+            tail = deque(maxlen=self.rotate_keep_lines)
+            with open(self.log_file_path, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    tail.append(line)
+            tmp_path = self.log_file_path.with_suffix(self.log_file_path.suffix + ".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.writelines(tail)
+            os.replace(tmp_path, self.log_file_path)
+        except Exception:
+            pass
+
     def _append_to_disk(self, event: TelemetryEvent):
         def _write():
-            try:
-                with open(self.log_file_path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(event.to_dict()) + "\n")
-            except Exception:
-                pass
+            with self._file_lock:
+                try:
+                    self.log_file_path.parent.mkdir(parents=True, exist_ok=True)
+                    with open(self.log_file_path, "a", encoding="utf-8") as f:
+                        f.write(json.dumps(event.to_dict()) + "\n")
+                    self._rotate_if_needed()
+                except Exception:
+                    pass
         t = threading.Thread(target=_write, daemon=True)
         t.start()
 

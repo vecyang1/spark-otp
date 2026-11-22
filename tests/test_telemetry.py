@@ -68,8 +68,9 @@ class TestTelemetry:
         logs = mgr.get_recent_logs(limit=2)
         assert len(logs) == 2
 
-    def test_kuma_push_graceful_on_invalid_url(self):
+    def test_kuma_push_graceful_on_invalid_url(self, tmp_path):
         mgr = TelemetryManager(
+            log_file_path=str(tmp_path / "kuma_test.jsonl"),
             uptime_kuma_push_url="http://127.0.0.1:1/nonexistent",
             enabled=True
         )
@@ -81,10 +82,31 @@ class TestTelemetry:
             code="654321"
         )
 
-    def test_sentry_graceful_without_sentry_sdk(self):
+    def test_sentry_graceful_without_sentry_sdk(self, tmp_path):
         mgr = TelemetryManager(
+            log_file_path=str(tmp_path / "sentry_test.jsonl"),
             sentry_dsn="https://fake@sentry.io/12345",
             enabled=True
         )
         # If sentry_sdk is not installed, it safely handles it without crashing
         assert isinstance(mgr.sentry_initialized, bool)
+
+    def test_pytest_isolates_production_telemetry_file(self):
+        from pathlib import Path
+        from spark_otp.telemetry import telemetry
+
+        prod_path = (Path.home() / ".spark_otp" / "telemetry.jsonl").resolve()
+        assert telemetry.log_file_path.resolve() != prod_path
+
+    def test_telemetry_rotation_caps_file_size(self, tmp_path):
+        log_file = tmp_path / "rotate.jsonl"
+        log_file.write_text('{"status":"hit"}\n' * 30, encoding="utf-8")
+        mgr = TelemetryManager(
+            log_file_path=str(log_file),
+            max_file_bytes=100,
+            rotate_keep_lines=5,
+            enabled=True,
+        )
+        mgr._rotate_if_needed()
+        lines = log_file.read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 5
