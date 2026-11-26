@@ -402,6 +402,106 @@ Emails in Unified Inbox (filter: from:64clouds.com OR from:bandwagonhost.com OR 
         self.assertIn("verdict", diag)
         self.assertIn("recommendation", diag)
 
+    def test_spark_sqlite_pure_alpha_otp_and_glued_account_strict_mode(self):
+        """
+        End-to-end SQLite + diagnose verification for pure uppercase alphabetic OTPs (SFXNRE/FWUOYO)
+        combined with DOM-glued account query strings under strict_account=True.
+        """
+        from datetime import datetime
+        now = datetime(2026, 11, 26, 16, 55, 0)
+        ts_now = int(now.timestamp())
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "messages.sqlite"
+            conn = sqlite3.connect(db_path)
+            conn.execute("""
+                CREATE TABLE messages (
+                    pk INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    accountPk INTEGER NOT NULL DEFAULT 1,
+                    receivedDate INTEGER NOT NULL,
+                    messageFrom TEXT,
+                    messageTo TEXT,
+                    subject TEXT,
+                    shortBody TEXT,
+                    unseen INTEGER NOT NULL DEFAULT 1
+                )
+            """)
+            conn.execute(
+                """
+                INSERT INTO messages (pk, accountPk, receivedDate, messageFrom, messageTo, subject, shortBody)
+                VALUES (?, 1, ?, ?, ?, ?, ?)
+                """,
+                (
+                    820001,
+                    ts_now - 360,
+                    "MailFlow <noreply@mailflow.example.com>",
+                    "user@example.com",
+                    "Your MailFlow Login Code",
+                    "Your Login Verification Code We received a request to sign in to your MailFlow account. Your login code is: SFXNRE This code will expire in 5 minutes.",
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO messages (pk, accountPk, receivedDate, messageFrom, messageTo, subject, shortBody)
+                VALUES (?, 1, ?, ?, ?, ?, ?)
+                """,
+                (
+                    820002,
+                    ts_now - 60,
+                    "MailFlow <noreply@mailflow.example.com>",
+                    "user@example.com",
+                    "Your MailFlow Login Code",
+                    "Your Login Verification Code We received a request to sign in to your MailFlow account. Your login code is: FWUOYO This code will expire in 5 minutes.",
+                ),
+            )
+            conn.commit()
+            conn.close()
+
+            client = SparkClient(sqlite_path=str(db_path), apple_mail_path="disabled", spark_bin="/usr/bin/false")
+
+            # 1. Malformed glued account under strict_account=True still resolves the active pure-alpha OTP
+            glued_user = "user@example.com" + "Verification"
+            glued_other = "other@example.com" + "Verification"
+            otp = client.get_latest_otp(
+                domain="app.mailflow.example.com",
+                account=glued_user,
+                strict_account=True,
+                now=now,
+            )
+            self.assertIsNotNone(otp)
+            self.assertEqual(otp.code, "FWUOYO")
+            self.assertEqual(otp.message_id, "820002")
+            self.assertFalse(otp.is_expired)
+            self.assertEqual(otp.time_remaining_seconds, 240)
+
+            # 2. Different mailbox with glued suffix is still strictly blocked under strict_account=True
+            otp_other = client.get_latest_otp(
+                domain="app.mailflow.example.com",
+                account=glued_other,
+                strict_account=True,
+                now=now,
+            )
+            self.assertIsNone(otp_other, "strict_account=True must block cross-mailbox access even after sanitization")
+
+            # 3. Diagnose normalizes glued account and reports accurate candidate codes
+            diag = client.diagnose(
+                target="app.mailflow.example.com",
+                account=glued_user,
+                strict_account=True,
+                allow_expired=True,
+                now=now,
+            )
+            self.assertEqual(diag["query"]["account"], "user@example.com")
+            self.assertIsNotNone(diag["resolved_otp"])
+            self.assertEqual(diag["resolved_otp"]["code"], "FWUOYO")
+            self.assertTrue(diag["verdict"].startswith("SUCCESS"))
+            by_id = {c["message_id"]: c for c in diag["candidates"]}
+            self.assertEqual(by_id["820002"]["extracted_code"], "FWUOYO")
+            self.assertEqual(by_id["820002"]["status"], "VALID_ACTIVE")
+            self.assertTrue(by_id["820002"]["account_match"])
+            self.assertEqual(by_id["820001"]["extracted_code"], "SFXNRE")
+            self.assertEqual(by_id["820001"]["status"], "EXPIRED")
+
 if __name__ == "__main__":
     unittest.main()
 

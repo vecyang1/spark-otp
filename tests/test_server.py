@@ -58,6 +58,7 @@ class MockSparkClient:
                     time_remaining_seconds=0
                 )
             return None
+        self.last_account = account
         self.last_kwargs = dict(kwargs)
         return self.mock_otp
 
@@ -310,6 +311,47 @@ class TestServer(unittest.TestCase):
         data = json.loads(req.read().decode("utf-8"))
         self.assertTrue(data["success"])
         self.assertTrue(getattr(self.mock_client, "last_kwargs", {}).get("strict_account"))
+
+    def test_endpoints_sanitize_glued_account_suffixes(self):
+        """Malformed DOM-concatenated accounts (e.g. '.com' + 'Verification') must be sanitized across /api/otp, /api/stream, and /api/diagnose."""
+        base_acc = "alex.turner@example.com"
+        missing_acc = "nonexistent@example.com"
+
+        # 1. /api/otp
+        url = f"http://127.0.0.1:{self.port}/api/otp?domain=test.domain.com&account={base_acc}Verification&strict_account=1"
+        req = urllib.request.urlopen(url)
+        self.assertEqual(req.status, 200)
+        data = json.loads(req.read().decode("utf-8"))
+        self.assertTrue(data["success"])
+        self.assertEqual(self.mock_client.last_account, base_acc)
+        self.assertTrue(self.mock_client.last_kwargs.get("strict_account"))
+
+        # Verify dot-glued suffix also sanitizes cleanly
+        url_dot = f"http://127.0.0.1:{self.port}/api/otp?domain=test.domain.com&account={base_acc}.Enter&strict_account=1"
+        req_dot = urllib.request.urlopen(url_dot)
+        self.assertEqual(req_dot.status, 200)
+        self.assertEqual(self.mock_client.last_account, base_acc)
+
+        # Verify nonexistent glued account still resolves to nonexistent@example.com (no false match)
+        url_bad = f"http://127.0.0.1:{self.port}/api/otp?domain=test.domain.com&account={missing_acc}Verification&strict_account=1"
+        req_bad = urllib.request.urlopen(url_bad)
+        data_bad = json.loads(req_bad.read().decode("utf-8"))
+        self.assertFalse(data_bad["success"])
+
+        # 2. /api/diagnose
+        url_diag = f"http://127.0.0.1:{self.port}/api/diagnose?target=test.domain.com&account={base_acc}VERIFICATION&strict_account=1"
+        req_diag = urllib.request.urlopen(url_diag)
+        data_diag = json.loads(req_diag.read().decode("utf-8"))
+        self.assertEqual(data_diag["query"]["account"], base_acc)
+        self.assertTrue(data_diag["query"]["strict_account"])
+
+        # 3. /api/stream
+        url_stream = f"http://127.0.0.1:{self.port}/api/stream?domain=test.domain.com&account={base_acc}Enter&strict_account=1"
+        req_stream = urllib.request.urlopen(url_stream, timeout=3)
+        event_line = req_stream.readline().decode("utf-8").strip()
+        self.assertEqual(event_line, "event: otp")
+        req_stream.close()
+        self.assertEqual(self.mock_client.last_account, base_acc)
 
     def test_diagnose_endpoint_success(self):
         """Test that /api/diagnose returns 200 with complete audit trail and metrics."""

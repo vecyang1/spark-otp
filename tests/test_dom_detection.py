@@ -2845,6 +2845,535 @@ class TestEmailStepPillFailSafe(unittest.TestCase):
         self.assertEqual(data["otpPage"]["started"], 1)
         self.assertEqual(data["otpPage"]["handled"], 0)
 
+
+class TestGluedEmailAndPureAlphaOtp(unittest.TestCase):
+    """Two-sided regression tests for DOM email gluing (e.g. 'user@example.org' + 'Verification')
+    and pure uppercase alphabetic / alphanumeric OTP detection & segmented/single filling."""
+
+    def test_find_email_on_page_glued_dom_and_tld_boundary_resilience(self):
+        content_js = (REPO_ROOT / "extension" / "content.js").read_text(encoding="utf-8")
+        user_js = (REPO_ROOT / "userscript" / "spark-otp.user.js").read_text(encoding="utf-8")
+
+        js_code = r"""
+        const vm = require('vm');
+        const contentJs = __CONTENT_JS__;
+        const userJs = __USER_JS__;
+
+        function extractSsot(src) {
+            const s = '// === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===';
+            const e = '// === END CORE DOM DETECTION ENGINE (SSOT) ===';
+            return src.slice(src.indexOf(s) + s.length, src.indexOf(e));
+        }
+
+        function runSuite(src) {
+            function makeCtx(doc) {
+                const storage = {};
+                const sandbox = {
+                    window: {
+                        location: { hostname: 'app.example.com', pathname: '/signup', search: '', hash: '', href: 'https://app.example.com/signup' },
+                        sessionStorage: {
+                            getItem(k) { return Object.prototype.hasOwnProperty.call(storage, k) ? storage[k] : null; },
+                            setItem(k, v) { storage[k] = String(v); }
+                        },
+                        getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' })
+                    },
+                    document: doc,
+                    URL,
+                    console
+                };
+                sandbox.window.top = sandbox.window;
+                sandbox.window.self = sandbox.window;
+                const ctx = vm.createContext(sandbox);
+                vm.runInContext(extractSsot(src), ctx);
+                return ctx;
+            }
+
+            // 1. Real DOM hierarchy where ancestor <div> appears before <p> in querySelectorAll
+            //    and raw textContent glues email + adjacent <label>Verification code</label>.
+            const spanEmail = { nodeType: 1, tagName: 'SPAN', children: [], childNodes: [{ nodeType: 3, nodeValue: 'alex.turner@example.org' }], textContent: 'alex.turner@example.org' };
+            const pSent = {
+                nodeType: 1, tagName: 'P', children: [spanEmail],
+                childNodes: [{ nodeType: 3, nodeValue: 'We sent a code to ' }, spanEmail],
+                textContent: 'We sent a code to alex.turner@example.org'
+            };
+            const h1 = { nodeType: 1, tagName: 'H1', children: [], childNodes: [{ nodeType: 3, nodeValue: 'Verify your email' }], textContent: 'Verify your email' };
+            const headerDiv = {
+                nodeType: 1, tagName: 'DIV', children: [h1, pSent],
+                childNodes: [h1, pSent],
+                textContent: 'Verify your emailWe sent a code to alex.turner@example.org'
+            };
+            const labelEl = { nodeType: 1, tagName: 'LABEL', children: [], childNodes: [{ nodeType: 3, nodeValue: 'Verification code' }], textContent: 'Verification code' };
+            const outerWrapper = {
+                nodeType: 1, tagName: 'DIV', children: [headerDiv, labelEl],
+                childNodes: [headerDiv, labelEl],
+                textContent: 'Verify your emailWe sent a code to alex.turner@example.org' + 'Verification code'
+            };
+            const docHierarchy = {
+                title: 'Verify Email',
+                body: { childNodes: [outerWrapper], textContent: outerWrapper.textContent },
+                querySelector: () => null,
+                querySelectorAll: (sel) => sel.includes('p,') ? [outerWrapper, headerDiv, h1, pSent, spanEmail] : []
+            };
+            const hierarchyEmail = makeCtx(docHierarchy).findEmailOnPage();
+
+            // 2. Flat textContent edge cases (no childNodes / no innerText, pure string glue)
+            function evalFlat(text) {
+                const doc = {
+                    title: 'Verify',
+                    body: { textContent: text },
+                    querySelector: () => null,
+                    querySelectorAll: (sel) => sel.includes('p,') ? [{ children: [], textContent: text }] : []
+                };
+                return makeCtx(doc).findEmailOnPage();
+            }
+
+            // 3. Adjacent inline elements <span>email</span><span>Verification</span>
+            const inlineEmail = { nodeType: 1, tagName: 'SPAN', children: [], childNodes: [{ nodeType: 3, nodeValue: 'alex.turner@example.org' }], textContent: 'alex.turner@example.org' };
+            const inlineSuffix = { nodeType: 1, tagName: 'SPAN', children: [], childNodes: [{ nodeType: 3, nodeValue: 'Verification' }], textContent: 'Verification' };
+            const inlineHost = {
+                nodeType: 1, tagName: 'P', children: [inlineEmail, inlineSuffix],
+                childNodes: [{ nodeType: 3, nodeValue: 'We sent a code to ' }, inlineEmail, inlineSuffix],
+                textContent: 'We sent a code to alex.turner@example.org' + 'Verification'
+            };
+            const inlineRes = makeCtx({
+                title: 'Verify',
+                body: { childNodes: [inlineHost], textContent: inlineHost.textContent },
+                querySelector: () => null,
+                querySelectorAll: (sel) => sel.includes('p,') ? [inlineHost] : []
+            }).findEmailOnPage();
+
+            // 4. Mock DOM with children[] only (no childNodes, no innerText)
+            const childrenOnlyDiv = {
+                tagName: 'DIV',
+                textContent: 'We sent a code to alex.turner@example.org' + 'Verification code',
+                children: [
+                    { tagName: 'P', textContent: 'We sent a code to alex.turner@example.org', children: [] },
+                    { tagName: 'LABEL', textContent: 'Verification code', children: [] }
+                ]
+            };
+            const childrenOnlyRes = makeCtx({
+                title: 'Verify',
+                body: { textContent: childrenOnlyDiv.textContent },
+                querySelector: () => null,
+                querySelectorAll: (sel) => sel.includes('p,') ? [childrenOnlyDiv] : []
+            }).findEmailOnPage();
+
+            // 5. Defensive buildApiQuery sanitization against glued account strings
+            const qCtx = makeCtx({ title: 'Verify', body: { textContent: '' }, querySelector: () => null, querySelectorAll: () => [] });
+            const qCamel = qCtx.buildApiQuery('app.example.com', 'alex.turner@example.org' + 'Verification', { strictAccount: true });
+            const qUpper = qCtx.buildApiQuery('app.example.com', 'alex.turner@example.org' + 'VERIFICATION', { strictAccount: true });
+            const qDot = qCtx.buildApiQuery('app.example.com', 'alex.turner@example.org' + '.Enter', { strictAccount: true });
+            const qCjk = qCtx.buildApiQuery('app.example.com', 'alex.turner@example.org' + '验证码', { strictAccount: true });
+            const qValidLong = qCtx.buildApiQuery('app.example.com', 'alex.turner@' + 'acme.company', { strictAccount: true });
+
+            return {
+                hierarchyEmail,
+                inlineRes,
+                childrenOnlyRes,
+                flatCamel: evalFlat('We sent a code to alex.turner@example.org' + 'Verification code'),
+                flatUpper: evalFlat('We sent a code to alex.turner@example.org' + 'VERIFICATION'),
+                flatEnter: evalFlat('Verification code sent to alex.turner@example.net' + 'Enter the 6-character code'),
+                flatDotEnter: evalFlat('We sent a code to alex.turner@example.org' + '.Enter the code below'),
+                flatDigitGlue: evalFlat('We sent a code to alex.turner@example.org' + '6-digit code'),
+                flatCjkGlue: evalFlat('We sent a code to alex.turner@example.org' + '验证码'),
+                flatAllCapsGlue: evalFlat('We sent a code to ALEX.TURNER@EXAMPLE.ORG' + 'VERIFICATION'),
+                flatCcTldGlue: evalFlat('We sent a code to alex.turner@' + 'mail.example.co.uk' + 'Verification'),
+                validCompany: evalFlat('We sent a code to alex.turner@' + 'acme.company'),
+                validCommunity: evalFlat('We sent a code to alex.turner@' + 'acme.community'),
+                validDesign: evalFlat('We sent a code to alex.turner@' + 'acme.design'),
+                validSolutions: evalFlat('We sent a code to alex.turner@' + 'acme.solutions'),
+                validCoUk: evalFlat('We sent a code to alex.turner@' + 'acme.co.uk'),
+                validComAu: evalFlat('We sent a code to alex.turner@' + 'acme.com.au'),
+                rejectNoreply: evalFlat('We sent a code from noreply@example.org'),
+                rejectSupport: evalFlat('Need help? Contact support@example.org'),
+                qCamel,
+                qUpper,
+                qDot,
+                qCjk,
+                qValidLong
+            };
+        }
+
+        console.log(JSON.stringify({ ext: runSuite(contentJs), user: runSuite(userJs) }));
+        """.replace("__CONTENT_JS__", json.dumps(content_js)).replace("__USER_JS__", json.dumps(user_js))
+
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        for target in ("ext", "user"):
+            r = data[target]
+            self.assertEqual(r["hierarchyEmail"], "alex.turner@example.org", f"{target}: hierarchy DOM must not glue label onto TLD")
+            self.assertEqual(r["inlineRes"], "alex.turner@example.org", f"{target}: adjacent inline spans must separate cleanly")
+            self.assertEqual(r["childrenOnlyRes"], "alex.turner@example.org", f"{target}: children-only mock DOM must separate cleanly")
+            self.assertEqual(r["flatCamel"], "alex.turner@example.org", f"{target}: CamelCase glued TLD suffix must be stripped")
+            self.assertEqual(r["flatUpper"], "alex.turner@example.org", f"{target}: uppercase glued TLD suffix must be stripped")
+            self.assertEqual(r["flatEnter"], "alex.turner@example.net", f"{target}: Enter glued suffix must be stripped")
+            self.assertEqual(r["flatDotEnter"], "alex.turner@example.org", f"{target}: dot-glued sentence word must be stripped")
+            self.assertEqual(r["flatDigitGlue"], "alex.turner@example.org", f"{target}: digit-glued suffix must be stripped")
+            self.assertEqual(r["flatCjkGlue"], "alex.turner@example.org", f"{target}: CJK-glued suffix must be stripped")
+            self.assertEqual(r["flatAllCapsGlue"], "ALEX.TURNER@EXAMPLE.ORG", f"{target}: all-caps glued UI suffix must be stripped")
+            self.assertEqual(r["flatCcTldGlue"], "alex.turner@" + "mail.example.co.uk", f"{target}: ccTLD glued suffix must preserve .co.uk")
+            # Adversarial preservation: legitimate TLDs must NEVER be truncated
+            self.assertEqual(r["validCompany"], "alex.turner@" + "acme.company", f"{target}: .company TLD must not be truncated")
+            self.assertEqual(r["validCommunity"], "alex.turner@" + "acme.community", f"{target}: .community TLD must not be truncated")
+            self.assertEqual(r["validDesign"], "alex.turner@" + "acme.design", f"{target}: .design TLD must not be truncated")
+            self.assertEqual(r["validSolutions"], "alex.turner@" + "acme.solutions", f"{target}: .solutions TLD must not be truncated")
+            self.assertEqual(r["validCoUk"], "alex.turner@" + "acme.co.uk", f"{target}: .co.uk TLD must be preserved")
+            self.assertEqual(r["validComAu"], "alex.turner@" + "acme.com.au", f"{target}: .com.au TLD must be preserved")
+            self.assertIsNone(r["rejectNoreply"], f"{target}: noreply@ must still be rejected")
+            self.assertIsNone(r["rejectSupport"], f"{target}: support@ must still be rejected")
+            # Defensive buildApiQuery assertions
+            self.assertIn("account=alex.turner%40example.org&", r["qCamel"], f"{target}: buildApiQuery must sanitize CamelCase glued email")
+            self.assertNotIn("Verification", r["qCamel"])
+            self.assertIn("account=alex.turner%40example.org&", r["qUpper"])
+            self.assertIn("account=alex.turner%40example.org&", r["qDot"])
+            self.assertIn("account=alex.turner%40example.org&", r["qCjk"])
+            self.assertIn("account=alex.turner%40" + "acme.company&", r["qValidLong"])
+
+    def test_pure_alpha_and_alphanumeric_otp_single_and_segmented_fill(self):
+        content_js = (REPO_ROOT / "extension" / "content.js").read_text(encoding="utf-8")
+        user_js = (REPO_ROOT / "userscript" / "spark-otp.user.js").read_text(encoding="utf-8")
+
+        js_code = r"""
+        const vm = require('vm');
+        const contentJs = __CONTENT_JS__;
+        const userJs = __USER_JS__;
+
+        function extractSsot(src) {
+            const s = '// === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===';
+            const e = '// === END CORE DOM DETECTION ENGINE (SSOT) ===';
+            return src.slice(src.indexOf(s) + s.length, src.indexOf(e));
+        }
+
+        function makeSandbox(src, doc, urlOpts) {
+            const storage = {};
+            const listeners = { click: [], keydown: [], submit: [] };
+            doc.addEventListener = (type, fn) => { (listeners[type] = listeners[type] || []).push(fn); };
+            if (!doc.getElementById) doc.getElementById = () => null;
+            const sandbox = {
+                window: {
+                    HTMLInputElement: { prototype: {} },
+                    location: Object.assign({
+                        hostname: 'app.example.com',
+                        pathname: '/signup',
+                        search: '',
+                        hash: '',
+                        href: 'https://app.example.com/signup'
+                    }, urlOpts || {}),
+                    sessionStorage: {
+                        getItem(k) { return Object.prototype.hasOwnProperty.call(storage, k) ? storage[k] : null; },
+                        setItem(k, v) { storage[k] = String(v); }
+                    },
+                    getComputedStyle: () => ({ display: 'block', visibility: 'visible', opacity: '1' })
+                },
+                document: doc,
+                Event: class Event { constructor(type, opts) { this.type = type; Object.assign(this, opts || {}); } },
+                InputEvent: class InputEvent { constructor(type, opts) { this.type = type; Object.assign(this, opts || {}); } },
+                KeyboardEvent: class KeyboardEvent { constructor(type, opts) { this.type = type; Object.assign(this, opts || {}); } },
+                ClipboardEvent: class ClipboardEvent { constructor(type, opts) { this.type = type; Object.assign(this, opts || {}); } },
+                DataTransfer: class DataTransfer {
+                    constructor() { this._m = {}; }
+                    setData(k, v) { this._m[k] = v; }
+                    getData(k) { return this._m[k] || ''; }
+                },
+                setTimeout: (fn) => fn(),
+                clearTimeout: () => {},
+                URL,
+                console
+            };
+            sandbox.window.top = sandbox.window;
+            sandbox.window.self = sandbox.window;
+            sandbox.__listeners = listeners;
+            const ctx = vm.createContext(sandbox);
+            vm.runInContext(extractSsot(src), ctx);
+            return { ctx, sandbox, listeners, storage };
+        }
+
+        function runSuite(src) {
+            const now = Date.now();
+
+            // --- Case A: Single input-otp (data-input-otp="true", inputMode="text", maxLength="6") ---
+            let verifyClicksA = 0;
+            let resendClicksA = 0;
+            let backClicksA = 0;
+            const otpEventsA = [];
+            const verifyBtnA = { tagName: 'BUTTON', textContent: 'Verify', disabled: false, offsetParent: {}, click() { verifyClicksA++; } };
+            const backBtnA = { tagName: 'BUTTON', textContent: 'Back', disabled: false, offsetParent: {}, click() { backClicksA++; } };
+            const resendBtnA = { tagName: 'BUTTON', textContent: 'Resend code', disabled: false, offsetParent: {}, click() { resendClicksA++; } };
+            const otpInputA = {
+                tagName: 'INPUT', type: 'text', id: 'confirmation-code', name: '', placeholder: '',
+                value: '', disabled: false, readOnly: false, offsetParent: {},
+                focus() {},
+                dispatchEvent(e) { otpEventsA.push(e.type); },
+                getBoundingClientRect() { return { width: 280, height: 48, top: 200, left: 100 }; },
+                getAttribute(k) {
+                    const m = { id: 'confirmation-code', autocomplete: 'one-time-code', 'data-input-otp': 'true', maxlength: '6', inputmode: 'text' };
+                    return Object.prototype.hasOwnProperty.call(m, k) ? m[k] : null;
+                },
+                closest(sel) {
+                    if (sel.includes('main')) return mainA;
+                    return null;
+                }
+            };
+            const spanEmailA = { nodeType: 1, tagName: 'SPAN', children: [], childNodes: [{ nodeType: 3, nodeValue: 'alex.turner@example.org' }], textContent: 'alex.turner@example.org' };
+            const pSentA = { nodeType: 1, tagName: 'P', children: [spanEmailA], childNodes: [{ nodeType: 3, nodeValue: 'We sent a code to ' }, spanEmailA], textContent: 'We sent a code to alex.turner@example.org' };
+            const labelA = { nodeType: 1, tagName: 'LABEL', className: 'uppercase', children: [], childNodes: [{ nodeType: 3, nodeValue: 'VERIFICATION CODE' }], textContent: 'VERIFICATION CODE' };
+            const mainA = {
+                nodeType: 1, tagName: 'MAIN',
+                children: [pSentA, labelA],
+                childNodes: [pSentA, labelA],
+                textContent: 'Verify your emailWe sent a code to alex.turner@example.org' + 'VERIFICATION CODE',
+                querySelectorAll(sel) {
+                    if (sel.includes('button')) return [backBtnA, resendBtnA, verifyBtnA];
+                    return [];
+                }
+            };
+            otpInputA.parentElement = mainA;
+            const docA = {
+                title: 'Verify Email',
+                body: mainA,
+                getElementById: (id) => id === 'confirmation-code' ? otpInputA : null,
+                querySelector: (sel) => sel.includes('data-input-otp') || sel.includes('label[for="confirmation-code"]') ? (sel.includes('label') ? labelA : otpInputA) : null,
+                querySelectorAll: (sel) => {
+                    if (sel === 'input[autocomplete="one-time-code"]' || sel.startsWith('input:not')) return [otpInputA];
+                    if (sel.includes('p,')) return [mainA, pSentA, spanEmailA];
+                    if (sel === '.text-destructive') return [];
+                    if (sel === 'p, div, span, label') return [pSentA, labelA];
+                    return [];
+                }
+            };
+            const envA = makeSandbox(src, docA);
+            const diagA = envA.ctx.diagnosePageDom();
+            const filledA = envA.ctx.fillAndSubmit('SFXNRE', true, 'msg-alpha-1', now);
+            const dupLowerRejected = envA.ctx.isCodeRejected('sfxnre', 'msg-alpha-1', now, 'app.example.com');
+            const freshAlphaAccepted = !envA.ctx.isCodeRejected('FWUOYO', 'msg-alpha-2', now + 1000, 'app.example.com');
+            const normalLabelErr = envA.ctx.detectPageError();
+            // Now simulate destructive validation error on <label class="text-destructive">
+            labelA.textContent = 'Invalid or expired OTP';
+            docA.querySelectorAll = (sel) => sel === '.text-destructive' ? [labelA] : [];
+            const destructiveLabelErr = envA.ctx.detectPageError();
+
+            // --- Case B: 6 segmented maxlength="1" boxes WITHOUT onPaste handler ---
+            let verifyClicksB = 0;
+            const verifyBtnB = { tagName: 'BUTTON', textContent: 'Verify', disabled: false, offsetParent: {}, click() { verifyClicksB++; } };
+            const pasteCountsB = [0, 0, 0, 0, 0, 0];
+            const boxesB = Array.from({ length: 6 }, (_, idx) => ({
+                tagName: 'INPUT', type: 'text', id: 'otp-' + idx, name: 'otp_' + idx, placeholder: '',
+                value: '', disabled: false, readOnly: false, offsetParent: {},
+                focus() {},
+                dispatchEvent(e) { if (e.type === 'paste') pasteCountsB[idx]++; },
+                getBoundingClientRect() { return { width: 44, height: 48, top: 200, left: 100 + idx * 52 }; },
+                getAttribute(k) { return k === 'maxlength' ? '1' : (k === 'inputmode' ? 'text' : null); },
+                closest(sel) { return sel.includes('main') ? mainB : null; }
+            }));
+            const mainB = {
+                textContent: 'Verify your email We sent a code to alex.turner@example.org VERIFICATION CODE',
+                querySelectorAll: (sel) => sel.includes('button') ? [verifyBtnB] : []
+            };
+            boxesB.forEach(b => { b.parentElement = mainB; });
+            const envB = makeSandbox(src, {
+                title: 'Verify Email',
+                body: mainB,
+                querySelector: () => null,
+                querySelectorAll: (sel) => sel.includes('maxlength="1"') ? boxesB : []
+            });
+            const foundB = envB.ctx.findOtpInputs();
+            const filledB = envB.ctx.fillAndSubmit('SFXNRE', true, 'msg-seg-1', now);
+            const valuesB = boxesB.map(b => b.value);
+
+            // --- Case C: 6 segmented boxes WITH onPaste handler on EVERY box (must not clobber via per-box paste) ---
+            const pastePayloadsC = [];
+            const boxesC = Array.from({ length: 6 }, (_, idx) => ({
+                tagName: 'INPUT', type: 'text', id: 'seg-' + idx, name: 'seg_' + idx, placeholder: '',
+                value: '', disabled: false, readOnly: false, offsetParent: {},
+                focus() {},
+                dispatchEvent(e) {
+                    if (e.type === 'paste' && e.clipboardData) {
+                        const txt = e.clipboardData.getData('text/plain');
+                        pastePayloadsC.push({ idx, txt });
+                        // Simulate React onPaste that overwrites the whole OTP array from index 0
+                        for (let j = 0; j < boxesC.length; j++) {
+                            boxesC[j].value = txt[j] || '';
+                        }
+                    }
+                },
+                getBoundingClientRect() { return { width: 44, height: 48, top: 200, left: 100 + idx * 52 }; },
+                getAttribute(k) { return k === 'maxlength' ? '1' : null; },
+                closest: () => null
+            }));
+            const mainC = { textContent: 'We sent a code to alex.turner@example.org', querySelectorAll: () => [] };
+            boxesC.forEach(b => { b.parentElement = mainC; });
+            const envC = makeSandbox(src, {
+                title: 'Verify Email',
+                body: mainC,
+                querySelector: () => null,
+                querySelectorAll: (sel) => sel.includes('maxlength="1"') ? boxesC : []
+            });
+            const filledC = envC.ctx.fillAndSubmit('FWUOYO', true, 'msg-seg-2', now);
+            const valuesC = boxesC.map(b => b.value);
+
+            // --- Case D: Label "VERIFICATION CODE" above 6 sibling boxes without maxlength="1" ---
+            const boxesD = Array.from({ length: 6 }, (_, idx) => ({
+                tagName: 'INPUT', type: 'text', id: 'box-' + idx, name: '', placeholder: '',
+                value: '', disabled: false, readOnly: false, offsetParent: {},
+                focus() {},
+                dispatchEvent() {},
+                getBoundingClientRect() { return { width: 44, height: 48, top: 200, left: 100 + idx * 52 }; },
+                getAttribute: () => null,
+                closest: () => null
+            }));
+            const fieldWrapD = {
+                textContent: 'VERIFICATION CODE We sent a code to alex.turner@example.org',
+                querySelectorAll: (sel) => sel.includes('input[type="text"]') ? boxesD : [],
+                querySelector: () => boxesD[0]
+            };
+            boxesD.forEach(b => { b.parentElement = fieldWrapD; });
+            const lblD = {
+                tagName: 'LABEL', textContent: 'VERIFICATION CODE', children: [],
+                getAttribute: () => null, querySelector: () => null,
+                closest: (sel) => sel.includes('.field') ? fieldWrapD : null,
+                nextElementSibling: null
+            };
+            const envD = makeSandbox(src, {
+                title: 'Verify Email',
+                body: fieldWrapD,
+                querySelector: () => null,
+                querySelectorAll: (sel) => sel.startsWith('label,') ? [lblD] : []
+            });
+            const foundD = envD.ctx.findOtpInputs();
+            const filledD = envD.ctx.fillAndSubmit('K9M2QP', false, 'msg-seg-3', now);
+            const valuesD = boxesD.map(b => b.value);
+
+            // --- Case E: Passwordless Step 1 "Create account" vs "Continue with Google" capture ---
+            let capturedEvents = [];
+            const emailStepInput = {
+                tagName: 'INPUT', type: 'email', name: 'email', value: 'alex.turner@example.org',
+                disabled: false, readOnly: false, offsetParent: {},
+                getAttribute: (k) => k === 'autocomplete' ? 'email' : null,
+                getBoundingClientRect: () => ({ width: 280, height: 44, top: 120, left: 100 }),
+                closest: () => null
+            };
+            const step1Scope = {
+                querySelectorAll(sel) {
+                    if (sel.includes('type="password"')) return [];
+                    if (sel.includes('type="email"')) return [emailStepInput];
+                    return [];
+                }
+            };
+            const createAccountBtn = { tagName: 'BUTTON', textContent: 'Create account', value: '', closest: (sel) => sel.includes('main') ? step1Scope : null, getAttribute: () => null };
+            const googleBtn = { tagName: 'BUTTON', textContent: 'Continue with Google', value: '', closest: (sel) => sel.includes('main') ? step1Scope : null, getAttribute: () => null };
+            const envE = makeSandbox(src, { title: 'Create account', body: step1Scope, querySelector: () => null, querySelectorAll: () => [] });
+            envE.ctx.installLoginRequestCapture('app.example.com', (d, srcName) => { capturedEvents.push({ d, srcName }); });
+            envE.listeners.click.forEach(fn => fn({ target: googleBtn }));
+            const afterGoogleState = envE.ctx.getAuthState('app.example.com');
+            envE.listeners.click.forEach(fn => fn({ target: createAccountBtn }));
+            const afterCreateState = envE.ctx.getAuthState('app.example.com');
+            const rememberedEmailE = envE.ctx.getStorageItem('spark_otp_last_email_app.example.com');
+
+            // --- Case F: Adversarial false-positive guards must remain intact ---
+            const cardDiag = envA.ctx.diagnoseSyntheticSample({
+                labelText: 'Security code*', placeholder: 'CVV', maxLength: 4,
+                formText: 'Credit/Debit card Card number Expiration date Security code',
+                url: 'https://payment.www.linkedin.com/self-serve-checkout/'
+            });
+            const totpDiag = envA.ctx.diagnoseSyntheticSample({
+                labelText: '6-digit code', autocomplete: 'one-time-code', maxLength: 6,
+                formText: 'Enter the 6-digit code from your authenticator app'
+            });
+            const smsDiag = envA.ctx.diagnoseSyntheticSample({
+                labelText: 'SMS verification code', maxLength: 6,
+                formText: 'We sent a 6-digit code via SMS to +1 ***-***-4829'
+            });
+
+            return {
+                diagA: {
+                    channel: diagA.detected_channel,
+                    email: diagA.detected_email,
+                    otpCount: diagA.otp_input_count
+                },
+                filledA,
+                valueA: otpInputA.value,
+                verifyClicksA,
+                resendClicksA,
+                backClicksA,
+                dupLowerRejected,
+                freshAlphaAccepted,
+                normalLabelHasErr: normalLabelErr.hasError,
+                destructiveLabelHasErr: destructiveLabelErr.hasError,
+                foundCountB: foundB.length,
+                filledB,
+                valuesB,
+                pasteCountsB,
+                verifyClicksB,
+                filledC,
+                valuesC,
+                pastePayloadsC,
+                foundCountD: foundD.length,
+                filledD,
+                valuesD,
+                afterGoogleLoginAt: afterGoogleState.loginRequestAt,
+                afterCreateLoginAt: afterCreateState.loginRequestAt,
+                rememberedEmailE,
+                capturedCountE: capturedEvents.length,
+                cardBlocked: cardDiag.disqualified && cardDiag.channel === 'card_payment_blocked',
+                totpBlocked: totpDiag.disqualified && totpDiag.channel === 'authenticator_app_blocked',
+                smsBlocked: smsDiag.disqualified && smsDiag.channel === 'sms_only_blocked'
+            };
+        }
+
+        console.log(JSON.stringify({ ext: runSuite(contentJs), user: runSuite(userJs) }));
+        """.replace("__CONTENT_JS__", json.dumps(content_js)).replace("__USER_JS__", json.dumps(user_js))
+
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        for target in ("ext", "user"):
+            r = data[target]
+            # Case A: single data-input-otp pure-alpha
+            self.assertEqual(r["diagA"]["channel"], "email_otp", target)
+            self.assertEqual(r["diagA"]["email"], "alex.turner@example.org", target)
+            self.assertEqual(r["diagA"]["otpCount"], 1, target)
+            self.assertTrue(r["filledA"], target)
+            self.assertEqual(r["valueA"], "SFXNRE", f"{target}: pure-letter OTP must fill cleanly into input-otp")
+            self.assertEqual(r["verifyClicksA"], 1, f"{target}: Verify button must be clicked")
+            self.assertEqual(r["resendClicksA"], 0, f"{target}: Resend button must never be clicked as submit")
+            self.assertEqual(r["backClicksA"], 0, f"{target}: Back button must never be clicked as submit")
+            self.assertTrue(r["dupLowerRejected"], f"{target}: duplicate pure-alpha submission must be rejected case-insensitively")
+            self.assertTrue(r["freshAlphaAccepted"], f"{target}: fresh pure-alpha code FWUOYO must be accepted")
+            self.assertFalse(r["normalLabelHasErr"], f"{target}: normal VERIFICATION CODE label must not trigger page error")
+            self.assertTrue(r["destructiveLabelHasErr"], f"{target}: .text-destructive Invalid or expired OTP label must trigger page error")
+
+            # Case B: 6-box segmented without onPaste
+            self.assertEqual(r["foundCountB"], 6, target)
+            self.assertTrue(r["filledB"], target)
+            self.assertEqual(r["valuesB"], ["S", "F", "X", "N", "R", "E"], target)
+            self.assertEqual(r["pasteCountsB"], [1, 0, 0, 0, 0, 0], f"{target}: per-box fill must not fire redundant single-char paste events")
+            self.assertEqual(r["verifyClicksB"], 1, target)
+
+            # Case C: 6-box segmented with onPaste on every box
+            self.assertTrue(r["filledC"], target)
+            self.assertEqual(r["valuesC"], ["F", "W", "U", "O", "Y", "O"], f"{target}: React onPaste segmented fill must not be clobbered")
+            self.assertEqual(len(r["pastePayloadsC"]), 1, target)
+            self.assertEqual(r["pastePayloadsC"][0]["txt"], "FWUOYO", target)
+
+            # Case D: Label-based 6-box fallback
+            self.assertEqual(r["foundCountD"], 6, f"{target}: VERIFICATION CODE label must resolve all 6 segmented boxes")
+            self.assertTrue(r["filledD"], target)
+            self.assertEqual(r["valuesD"], ["K", "9", "M", "2", "Q", "P"], target)
+
+            # Case E: Passwordless Step 1 click capture
+            self.assertEqual(r["afterGoogleLoginAt"], 0, f"{target}: Continue with Google must not record passwordless email loginRequestAt")
+            self.assertGreater(r["afterCreateLoginAt"], 0, f"{target}: Create account with filled email must record loginRequestAt")
+            self.assertEqual(r["rememberedEmailE"], "alex.turner@example.org", target)
+            self.assertEqual(r["capturedCountE"], 1, target)
+
+            # Case F: Adversarial guards preserved
+            self.assertTrue(r["cardBlocked"], f"{target}: Card CVV must stay blocked")
+            self.assertTrue(r["totpBlocked"], f"{target}: Authenticator TOTP must stay blocked")
+            self.assertTrue(r["smsBlocked"], f"{target}: SMS/Phone modal must stay blocked")
+
 if __name__ == "__main__":
     unittest.main()
 

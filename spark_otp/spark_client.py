@@ -21,6 +21,8 @@ from .extractor import (
     extract_brand_hint_tokens,
     get_root_domain,
     clean_domain,
+    sanitize_account_email,
+    recipient_matches_account,
     COMMON_SERVICE_SUBDOMAINS,
     OTP_INTENT_PATTERN,
     parse_email_date,
@@ -246,13 +248,13 @@ class SparkClient:
         if not rows:
             return None
 
+        account = sanitize_account_email(account)
         if account:
-            acc_clean = account.strip().lower()
-            matching_acc = [r for r in rows if r[3] and acc_clean in r[3].lower()]
+            matching_acc = [r for r in rows if recipient_matches_account(r[3], account)]
             if strict_account:
                 rows = matching_acc
             else:
-                other_acc = [r for r in rows if not (r[3] and acc_clean in r[3].lower())]
+                other_acc = [r for r in rows if not recipient_matches_account(r[3], account)]
                 if matching_acc and other_acc:
                     newest_match_ts = matching_acc[0][6]
                     newest_other_ts = other_acc[0][6]
@@ -580,13 +582,13 @@ class SparkClient:
         # Recency-aware guard: if another account has an OTP that is substantially fresher
         # (>180s newer) than the target account's newest message, prioritize the fresh attempt
         # so a stale OTP from an old default account doesn't hijack a live login attempt.
+        account = sanitize_account_email(account)
         if account:
-            acc_clean = account.strip().lower()
-            matching_acc = [r for r in rows if r[2] and acc_clean in r[2].lower()]
+            matching_acc = [r for r in rows if recipient_matches_account(r[2], account)]
             if strict_account:
                 rows = matching_acc
             else:
-                other_acc = [r for r in rows if not (r[2] and acc_clean in r[2].lower())]
+                other_acc = [r for r in rows if not recipient_matches_account(r[2], account)]
                 if matching_acc and other_acc:
                     newest_match_ts = matching_acc[0][5]
                     newest_other_ts = other_acc[0][5]
@@ -937,14 +939,14 @@ class SparkClient:
         include_expired = allow_expired or (domain is not None and fallback_expired)
 
         # If a preferred account is specified, prioritize (or strictly isolate) emails from that account
+        preferred_account = sanitize_account_email(preferred_account)
         sorted_emails = emails
         if preferred_account:
-            acc_clean = preferred_account.strip().lower()
-            pref = [e for e in emails if e.account and acc_clean in e.account.strip().lower()]
+            pref = [e for e in emails if recipient_matches_account(e.account, preferred_account)]
             if strict_account:
                 sorted_emails = pref
             else:
-                others = [e for e in emails if not (e.account and acc_clean in e.account.strip().lower())]
+                others = [e for e in emails if not recipient_matches_account(e.account, preferred_account)]
                 sorted_emails = pref + others
 
         exclude_codes_set = set(str(c).strip().upper() for c in exclude_codes) if exclude_codes else set()
@@ -1099,6 +1101,7 @@ class SparkClient:
         page_size = getattr(config, "email_page_size", 35)
         current_time = now or kwargs.get("current_time") or datetime.now()
         hint = brand_hint or kwargs.get("hint")
+        account = sanitize_account_email(account)
 
         matching_rule = None
         if domain:
@@ -1339,6 +1342,7 @@ process.stdout.write(JSON.stringify(res));
         Also evaluates DOM input/context samples against the SSOT DOM detection engine when provided.
         """
         current_time = now or datetime.now()
+        account = sanitize_account_email(account)
         clean_target = (target or "").strip()
         domain = clean_domain(clean_target) if clean_target else None
         dom_diag = self.diagnose_dom_sample(dom_sample) if dom_sample is not None else None
@@ -1429,9 +1433,7 @@ process.stdout.write(JSON.stringify(res));
                         account_match = True
                         account_match_reason = "No account filter applied"
                         if account:
-                            req_acc = account.strip().lower()
-                            msg_to_clean = msg_to.strip().lower()
-                            if req_acc in msg_to_clean or msg_to_clean in req_acc:
+                            if recipient_matches_account(msg_to, account):
                                 account_match = True
                                 account_match_reason = f"Recipient '{msg_to}' matches '{account}'"
                             else:

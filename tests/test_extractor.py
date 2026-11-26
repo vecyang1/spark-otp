@@ -3,7 +3,15 @@ TDD Tests for Spark OTP Extractor.
 """
 import unittest
 from datetime import datetime, timedelta
-from spark_otp.extractor import extract_otp_from_thread, parse_email_date, get_domain_brand, get_root_domain, clean_domain
+from spark_otp.extractor import (
+    extract_otp_from_thread,
+    parse_email_date,
+    get_domain_brand,
+    get_root_domain,
+    clean_domain,
+    sanitize_account_email,
+    recipient_matches_account,
+)
 from spark_otp.config import DEFAULT_RULES
 from tests.fixtures import (
     REAL_CLOUDFLARE_FINANCE_EMAIL,
@@ -1204,6 +1212,300 @@ Your login code: 554433
             brand_hint="Sign in ・ Cloudflare Access",
         )
         self.assertIsNone(res_generic, "Generic email explicitly bound to another domain in subject must be rejected")
+
+    def test_pure_alpha_otp_extraction_shortbody_multiline_and_html(self):
+        """
+        Pure uppercase alphabetic 6-8 char OTPs (e.g. SFXNRE, FWUOYO) must extract cleanly
+        from flattened SQLite shortBody, multiline full thread, HTML table body, markdown bold,
+        standalone code lines, and leading-code formats with accurate TTL detection.
+        """
+        now = datetime(2026, 11, 26, 16, 55, 0)
+
+        # 1. Flattened SQLite shortBody layout (6-letter code with 5-minute TTL)
+        raw_shortbody = """
+ID: 810001
+Subject: Your MailFlow Login Code
+From: MailFlow <noreply@mailflow.example.com>
+To: user@example.com
+Date: 2026-11-26 16:53:08
+
+Your Login Verification Code We received a request to sign in to your MailFlow account. Please use the verification code below to complete your login. Your login code is: SFXNRE This code will expire in 5 minutes. If you did not request this code, pl
+"""
+        res1 = extract_otp_from_thread(raw_shortbody, domain_filter="app.mailflow.example.com", now=now)
+        self.assertIsNotNone(res1)
+        self.assertEqual(res1.code, "SFXNRE")
+        self.assertEqual(res1.time_remaining_seconds, 188)
+        self.assertFalse(res1.is_expired)
+
+        # 2. Multiline full thread layout with higher-vowel random code (FWUOYO)
+        raw_multiline = """
+ID: 810002
+Subject: Your MailFlow Login Code
+From: MailFlow <noreply@mailflow.example.com>
+To: user@example.com
+Date: 2026-11-26 16:53:08
+
+Your Login Verification Code
+
+We received a request to sign in to your MailFlow account. Please use the verification code below to complete your login.
+
+Your login code is:
+FWUOYO
+This code will expire in 5 minutes.
+"""
+        res2 = extract_otp_from_thread(raw_multiline, domain_filter="app.mailflow.example.com", now=now)
+        self.assertIsNotNone(res2)
+        self.assertEqual(res2.code, "FWUOYO")
+
+        # 3. Raw HTML table body (cache.sqlite fallback) with CSS style block noise
+        raw_html = """
+ID: 810003
+Subject: Your MailFlow Login Code
+From: MailFlow <noreply@mailflow.example.com>
+To: user@example.com
+Date: 2026-11-26 16:53:08
+
+<!DOCTYPE html>
+<html>
+<head>
+<style type="text/css">
+/* FONTS AND MOBILE STYLES */
+body { margin: 0 !important; padding: 0 !important; color: #FFFFFF; font-family: VERDANA; }
+.CENTER { border: 0; font-weight: NORMAL; }
+</style>
+</head>
+<body>
+<table>
+<tr><td>Your Login Verification Code</td></tr>
+<tr><td>Your login code is:</td></tr>
+<tr><td style="font-size:32px;font-weight:bold;color:#000000">FWUOYO</td></tr>
+<tr><td>This code will expire in 5 minutes.</td></tr>
+</table>
+</body>
+</html>
+"""
+        res3 = extract_otp_from_thread(raw_html, domain_filter="app.mailflow.example.com", now=now)
+        self.assertIsNotNone(res3)
+        self.assertEqual(res3.code, "FWUOYO")
+        self.assertEqual(res3.time_remaining_seconds, 188)
+
+        # 4. Standalone uppercase line sandwiched by OTP prompt and expiry cue (7-8 chars, markdown bold)
+        raw_standalone = """
+ID: 810004
+Subject: Your AcmeCloud Verification Code
+From: AcmeCloud <noreply@acme-cloud.net>
+To: user@example.com
+Date: 2026-11-26 16:54:00
+
+Your verification code
+
+**QZTRVNP**
+
+This code will expire in 10 minutes.
+"""
+        res4 = extract_otp_from_thread(raw_standalone, domain_filter="app.acme-cloud.net", now=now)
+        self.assertIsNotNone(res4)
+        self.assertEqual(res4.code, "QZTRVNP")
+
+        # 5. Leading-code format (8 uppercase letters)
+        raw_leading = """
+ID: 810005
+Subject: BVGKLMXZ is your AcmeCloud login code
+From: AcmeCloud <noreply@acme-cloud.net>
+To: user@example.com
+Date: 2026-11-26 16:54:00
+
+BVGKLMXZ is your AcmeCloud login code. Valid for 5 minutes.
+"""
+        res5 = extract_otp_from_thread(raw_leading, domain_filter="app.acme-cloud.net", now=now)
+        self.assertIsNotNone(res5)
+        self.assertEqual(res5.code, "BVGKLMXZ")
+
+        # 6. Numeric OTP retains priority whenever present alongside uppercase text
+        raw_numeric_priority = """
+ID: 810006
+Subject: Your MailFlow Login Code
+From: MailFlow <noreply@mailflow.example.com>
+To: user@example.com
+Date: 2026-11-26 16:54:00
+
+Reference batch: SFXNRE
+Your login code is: 482910
+This code will expire in 5 minutes.
+"""
+        res6 = extract_otp_from_thread(raw_numeric_priority, domain_filter="app.mailflow.example.com", now=now)
+        self.assertIsNotNone(res6)
+        self.assertEqual(res6.code, "482910")
+
+    def test_pure_alpha_otp_adversarial_false_positive_rejection(self):
+        """
+        Normal uppercase English words, brand names, URLs, HTML/CSS tokens, promo codes,
+        and shouty non-OTP emails must NEVER be falsely extracted as pure-alpha OTPs.
+        """
+        now = datetime(2026, 11, 26, 16, 55, 0)
+
+        # 1. Common uppercase words placed right after explicit code labels
+        blocked_words = [
+            "VERIFY", "VERIFIED", "GETCODE", "CLICKME", "SIGNIN", "GOOGLE",
+            "SUBMIT", "BUTTON", "EXPIRES", "PLEASE", "ACCOUNT", "PRIVACY",
+            "CONFIRM", "WELCOME", "SUPPORT", "SESSION", "FFFFFF", "XXXXXX",
+            "ABCDEF", "QWERTY", "MAILFLOW", "SUMMER", "WINTER", "SPRING",
+            "AUTUMN", "MONDAY", "FRIDAY", "JANUARY", "OCTOBER", "DECEMBER",
+        ]
+        for word in blocked_words:
+            raw = f"""
+ID: 810100
+Subject: Your MailFlow Login Code
+From: MailFlow <noreply@mailflow.example.com>
+To: user@example.com
+Date: 2026-11-26 16:54:00
+
+Your login code is: {word}
+This code will expire in 5 minutes.
+"""
+            res = extract_otp_from_thread(raw, domain_filter="app.mailflow.example.com", now=now)
+            self.assertIsNone(res, f"False positive: uppercase word '{word}' must never be extracted as OTP")
+
+        # 1b. Marketing/promo email with footer "verify your email address" must NEVER unlock bare "Use code:"
+        for promo_code in ("SUMMER", "KXMPTQ"):
+            raw_sale_footer = f"""
+ID: 810105
+Subject: Big Sale!
+From: Deals <deals@shop.example.com>
+To: user@example.com
+Date: 2026-11-26 16:54:00
+
+Use code: {promo_code}
+Click to verify your email address
+"""
+            self.assertIsNone(
+                extract_otp_from_thread(raw_sale_footer, domain_filter="shop.example.com", now=now),
+                f"Promo 'Use code: {promo_code}' with footer 'verify your email' must be rejected",
+            )
+
+        # 2. Novel brand name appearing in mixed-case elsewhere in email must be rejected
+        raw_novel_brand = """
+ID: 810101
+Subject: Your Zephyrox Login Code
+From: Auth Relay <noreply@relay.example.org>
+To: user@example.com
+Date: 2026-11-26 16:54:00
+
+Welcome to Zephyrox!
+Your login code is:
+ZEPHYROX
+This code will expire in 5 minutes.
+"""
+        self.assertIsNone(
+            extract_otp_from_thread(raw_novel_brand, domain_filter="zephyrox.example.org", now=now),
+            "Brand name echoed in mixed case must not be extracted as OTP",
+        )
+
+        # 3. URL path and query parameter uppercase tokens must be rejected
+        raw_url = """
+ID: 810102
+Subject: Your MailFlow Login Code
+From: MailFlow <noreply@mailflow.example.com>
+To: user@example.com
+Date: 2026-11-26 16:54:00
+
+To complete your verification code: https://app.mailflow.example.com/auth/SFXNRE/verify?code=FWUOYO
+"""
+        self.assertIsNone(
+            extract_otp_from_thread(raw_url, domain_filter="app.mailflow.example.com", now=now),
+            "Uppercase token inside URL must not be extracted as OTP",
+        )
+
+        # 4. Promo/coupon/tracking emails without auth intent must be rejected
+        for subject, body in [
+            ("Summer Sale - 20% Off", "Use promo code: SFXNRE at checkout to save 20%!"),
+            ("Your package has shipped", "Your tracking code: FWUOYO is active."),
+            ("Special Discount Offer", "Redeem coupon code: KXMPTQ before midnight."),
+            ("Referral Bonus", "Share referral code: QZTRVN with friends."),
+        ]:
+            raw_non_auth = f"""
+ID: 810103
+Subject: {subject}
+From: Shop <deals@shop.example.com>
+To: user@example.com
+Date: 2026-11-26 16:54:00
+
+{body}
+"""
+            self.assertIsNone(
+                extract_otp_from_thread(raw_non_auth, domain_filter="shop.example.com", now=now),
+                f"Non-auth email '{subject}' must not extract code",
+            )
+
+        # 5. HTML/CSS-only email with no real code must not match CSS/HTML tokens
+        raw_html_no_code = """
+ID: 810104
+Subject: Your MailFlow Login Code
+From: MailFlow <noreply@mailflow.example.com>
+To: user@example.com
+Date: 2026-11-26 16:54:00
+
+<html><head><style>.CODE { FONT-FAMILY: VERDANA; COLOR: #FFFFFF; }</style></head>
+<body><p>Click the link to complete verification:</p>
+<a href="https://app.mailflow.example.com/magic/SFXNRE">VERIFY ACCOUNT</a>
+</body></html>
+"""
+        self.assertIsNone(
+            extract_otp_from_thread(raw_html_no_code, domain_filter="app.mailflow.example.com", now=now),
+            "HTML link/CSS tokens must never be extracted as OTP",
+        )
+
+    def test_sanitize_account_email_and_recipient_matching(self):
+        """
+        Defensive backend account sanitization must strip glued DOM suffixes (CamelCase, ALL-CAPS,
+        dot-glued, lowercase UI words, CJK, digits, angle brackets) while preserving valid multi-word TLDs.
+        """
+        self.assertIsNone(sanitize_account_email(None))
+        self.assertIsNone(sanitize_account_email(""))
+        self.assertIsNone(sanitize_account_email("   "))
+
+        base = "user@example.com"
+        cases = [
+            (base, base),
+            (base + "Verification", base),
+            (base + "VERIFICATION", base),
+            (base + "Enter", base),
+            (base + "Code", base),
+            (base + ".Enter", base),
+            (base + ".Verification", base),
+            (base + ".VERIFICATION", base),
+            (base + ".Enter.Code", base),
+            ("user@" + "example.co.uk" + "Verify", "user@" + "example.co.uk"),
+            ("user@" + "example.co.uk" + ".Enter", "user@" + "example.co.uk"),
+            ("user@" + "example.com.cn" + "Verification", "user@" + "example.com.cn"),
+            ("user@" + "example.io" + "Resend", "user@" + "example.io"),
+            ("user@" + "example.edu" + "Check", "user@" + "example.edu"),
+            (base + "verification", base),
+            (base.upper() + "VERIFICATION", base),
+            (base + "验证码", base),
+            (base + "123", base),
+            ("Alex Turner <" + base + ">", base),
+            ("mailto:" + base + ".", base),
+            # Legitimate multi-word TLDs and ccTLDs MUST NOT be truncated
+            ("user@" + "example.co.uk", "user@" + "example.co.uk"),
+            ("user@" + "example.com.au", "user@" + "example.com.au"),
+            ("user@" + "acme.company", "user@" + "acme.company"),
+            ("user@" + "acme.network", "user@" + "acme.network"),
+            ("user@" + "acme.community", "user@" + "acme.community"),
+            ("user@" + "acme.codes", "user@" + "acme.codes"),
+            ("user@" + "acme.email", "user@" + "acme.email"),
+            ("user@" + "acme.support", "user@" + "acme.support"),
+        ]
+        for raw_acc, expected in cases:
+            self.assertEqual(sanitize_account_email(raw_acc), expected, f"Mismatch for {raw_acc!r}")
+
+        # Boundary-aware recipient matching
+        self.assertTrue(recipient_matches_account(base, base + "Verification"))
+        self.assertTrue(recipient_matches_account(base, base + ".Enter"))
+        self.assertTrue(recipient_matches_account("Alex <" + base + ">", base + "VERIFICATION"))
+        self.assertFalse(recipient_matches_account("other_user@example.com", base))
+        self.assertFalse(recipient_matches_account("user@" + "example.com.au", base))
+        self.assertFalse(recipient_matches_account("", base))
 
 if __name__ == "__main__":
     unittest.main()

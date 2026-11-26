@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.3] - 2026-11-26
+
+### Added
+- **Pure Uppercase Alphabetic OTP Extraction (`spark_otp/extractor.py`, `spark_otp/config.py`)**: Added deterministic extraction for 6–8 uppercase ASCII alphabetic verification codes (`extract_pure_alpha_otp_code()`) running strictly after all digit-bearing and hyphenated patterns so numeric codes keep priority. Supports explicit assignment, multiline prompts, leading-code formats, and standalone lines sandwiched by OTP/expiry cues, guarded by strict anti-false-positive filters (explicit OTP intent nouns, promo/coupon/tracking prefix rejection, curated English/calendar/UI stopword list, dynamic sender/brand/mixed-case echo filtering, URL/HTML boundary checks, and adjacent ALL-CAPS heading/button rejection). Added HTML `<style>`/`<script>`/tag stripping (`_strip_html_body()`) for clean extraction from cached HTML email tables.
+
+### Fixed
+- **DOM-Glued Email Sanitization — Client & Server Defense-in-Depth (`extension/content.js`, `userscript/spark-otp.user.js`, `spark_otp/extractor.py`, `spark_otp/server.py`, `spark_otp/spark_client.py`)**:
+  - Updated `findEmailOnPage()` to read block/inline boundary-aware text (`getNodeReadableText()`) and scan shortest-matching containers first, preventing sibling DOM labels (e.g. a trailing `"Verification"`, `".Enter"`, or non-ASCII suffix concatenated onto `user@example.com`) from corrupting the extracted TLD.
+  - Hardened `sanitizeEmail()` / `buildApiQuery()` on the client and added `sanitize_account_email()` + boundary-aware `recipient_matches_account()` across `/api/otp`, `/api/stream`, `/api/diagnose`, and `SparkClient` so CamelCase, ALL-CAPS, lowercase, dot-glued, digit, or CJK trailing suffixes are stripped cleanly while preserving valid ccTLDs and multi-word TLDs (`.co.uk`, `.company`, `.network`, `.solutions`, `.codes`).
+- **Segmented & Alphanumeric Input Fill + Resend/Refresh Race-Guard Hardening (`extension/content.js`, `userscript/spark-otp.user.js`)**:
+  - Hardened multi-box segmented OTP filling (`fillAndSubmit()`, `setInputValue()`, `setInputValueWithReactSupport()`) with `skipPaste` to avoid redundant per-box `paste` events clobbering React segmented inputs after a full-code paste; made submission/rejection dedup case-insensitive for alphabetic codes; added `6-character`/`6-letter`/`alphanumeric` detection cues and multi-box return for Priority 5 label matching.
+  - Wired manual Resend clicks (`onCaptured`) to clear stale `activeCode`, refresh the pill timestamp, and restart active SSE/polling streams immediately; captured passwordless Step-1 email submission buttons (excluding OAuth/SSO buttons); added `.text-destructive` / `<label>` error detection; stopped active listening on `pollOnce()` hit; and wired the userscript `#spark-user-race-poll` Refresh button to trigger live polling.
+
+### Tests
+- Added two-sided positive and adversarial suites in `tests/test_extractor.py`, `tests/test_server.py`, `tests/test_spark_client.py`, `tests/test_adversarial.py`, and `tests/test_dom_detection.py` (`TestGluedEmailAndPureAlphaOtp`) using virtualized RFC 2606 fixtures (**235 passed**); verified 100% extension/userscript SSOT parity (`scripts/sync_engine.py --check`), unpacked Chromium packaging gate (`tests/test_extension_packaging.py`), and real-browser smoke E2E (`scripts/e2e_extension_smoke.py`).
+
 ## [2026-11-22] - 2026-11-22
 
 ### Fixed

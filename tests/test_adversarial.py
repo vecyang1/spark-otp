@@ -115,6 +115,42 @@ class TestAdversarialEmails(unittest.TestCase):
         self.assertEqual(result.code, "382910")
         self.assertEqual(result.time_remaining_seconds, 10 * 60)
 
+    def test_reject_uppercase_cta_and_promo_codes_as_pure_alpha_otp(self):
+        """Uppercase UI buttons, shouty headings, and promo codes must NEVER match pure-alpha OTP extraction."""
+        now = datetime(2026, 11, 26, 17, 0)
+        date_str = (now - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M")
+
+        shouty_alert = f"""
+ID: 881030
+Subject: Verify your account security settings
+From: Security <security@cloudservice.com>
+To: dev.team@example.com
+Date: {date_str}
+Type: Email
+
+PLEASE VERIFY YOUR ACCOUNT IMMEDIATELY.
+CLICK THE SUBMIT BUTTON TO REVIEW PRIVACY SETTINGS.
+"""
+        self.assertIsNone(
+            extract_otp_from_thread(shouty_alert, domain_filter="cloudservice.com", now=now),
+            "Uppercase CTA alert without an actual OTP must be rejected",
+        )
+
+        promo_mail = f"""
+ID: 881031
+Subject: Flash Sale at CloudService
+From: Deals <deals@cloudservice.com>
+To: dev.team@example.com
+Date: {date_str}
+Type: Email
+
+Use coupon code: SFXNRE at checkout. Offer valid for 10 minutes!
+"""
+        self.assertIsNone(
+            extract_otp_from_thread(promo_mail, domain_filter="cloudservice.com", now=now),
+            "Promo/coupon uppercase code must never be extracted as login OTP",
+        )
+
 
 class TestAdversarialDomInputs(unittest.TestCase):
     """Verify that false-friend inputs (promo, captcha, password, search, zip) are disqualified."""

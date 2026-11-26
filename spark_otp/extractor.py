@@ -46,6 +46,293 @@ COMMON_SERVICE_SUBDOMAINS = {
     "console", "dash", "dashboard", "sso", "id"
 }
 
+KNOWN_EMAIL_TLDS = {
+    "com", "org", "net", "edu", "gov", "mil", "int", "io", "ai", "co", "app",
+    "dev", "me", "so", "gg", "tv", "cc", "xyz", "info", "biz", "pro", "name",
+    "cloud", "site", "tech", "online", "store", "live", "mail", "email",
+    "uk", "jp", "cn", "de", "fr", "in", "au", "ca", "us", "eu", "nl", "ch",
+    "se", "no", "fi", "es", "it", "br", "mx", "kr", "tw", "hk", "sg", "vn",
+    "th", "id", "my", "ph", "nz", "za", "il", "ae", "pl", "cz", "at", "be",
+    "dk", "ie", "pt", "ro", "ru", "ua", "tr", "ar", "cl", "pe", "co", "is",
+}
+
+VALID_STANDALONE_MULTI_WORD_TLDS = {
+    "academy", "account", "accounts", "aero", "agency", "airforce", "apartments",
+    "apple", "archi", "army", "art", "asia", "associates", "attorney", "auction",
+    "audio", "author", "auto", "autos", "cab", "cafe", "call", "cam", "camp",
+    "capital", "cards", "care", "careers", "casa", "cash", "casino", "catering",
+    "center", "claims", "cleaning", "click", "clinic", "clothing", "cloud", "club",
+    "coach", "codes", "coffee", "college", "cologne", "comcast", "community",
+    "company", "compare", "computer", "consulting", "contact", "cooking", "cool",
+    "coop", "country", "coupons", "courses", "deals", "degree", "delivery",
+    "democrat", "dental", "dentist", "design", "digital", "direct", "domains",
+    "education", "email", "engineering", "express", "finance", "foundation",
+    "free", "frogans", "frontier", "global", "groups", "health", "holdings",
+    "hosting", "inc", "industries", "info", "ink", "institute", "insurance",
+    "insure", "international", "investments", "management", "market", "marketing",
+    "media", "memorial", "menu", "mobile", "modern", "netflix", "network",
+    "office", "online", "organic", "partners", "portal", "properties", "report",
+    "review", "school", "search", "security", "select", "server", "services",
+    "simple", "single", "social", "software", "solar", "solutions", "soy",
+    "status", "store", "stream", "studio", "support", "switch", "systems",
+    "target", "technology", "travel", "university", "ventures", "vision",
+    "wallet", "website", "window", "worker", "world",
+}
+
+GLUE_SPLIT_TLDS = (
+    "cloud", "email", "store", "info", "site", "tech", "live", "mail",
+    "com", "net", "org", "edu", "gov", "mil", "xyz", "app", "dev", "biz", "pro",
+    "io", "ai", "co", "me", "so", "uk", "jp", "cn", "de", "fr", "au", "ca",
+    "us", "eu", "tv", "cc", "gg", "in", "kr", "tw", "hk", "sg", "nl",
+)
+
+GLUED_EMAIL_SUFFIX_PREFIXES = (
+    "verification", "verify", "passcode", "security", "continue", "confirm",
+    "account", "support", "resend", "submit", "cancel", "signin", "signup",
+    "change", "please", "button", "expire", "enter", "check", "login", "wrong",
+    "inbox", "email", "click", "paste", "didn", "code", "mail", "step", "next",
+    "back", "help", "edit", "sent", "copy", "open", "view", "your", "this",
+    "that", "here", "otp", "not",
+)
+
+STRONG_OTP_INTENT_PATTERN = re.compile(
+    r"(?i)(?:"
+    # English (explicit auth/OTP intent; excludes generic "<word> code" catchall like promo/zip code)
+    r"verification\s*code|security\s*code|login\s*code|sign[-\s]?in\s*code|access\s*code|"
+    r"device\s*verification|device\s*auth|"
+    r"one[-\s]?time\s*(?:password|code|pin|passcode)|single[-\s]?use\s*code|"
+    r"temporary\s*(?:code|passcode|pin)|passcode|auth(?:entication)?\s*code|"
+    r"confirmation\s*code|secret\s*code|pin\s*code|two[-\s]?factor|\b2fa\b|\bmfa\b|\botp\b|"
+    r"validation\s*code|validating\s*code|3d\s*secure|"
+    r"verify\s+your\s+(?:email|account|identity|login|device)|"
+    r"complete\s+your\s+(?:login|sign[-\s]?in|verification)|"
+    r"(?:sign|log)\s+in\s+to\s+your|"
+    # Chinese (Simplified & Traditional)
+    r"验证码|动态码|校验码|安全码|授权码|登录码|一次性密码|验证代码|身份验证码|"
+    r"驗證碼|動態碼|校驗碼|安全碼|授權碼|登錄碼|一次性密碼|驗證代碼|身分驗證碼|"
+    # Japanese
+    r"認証コード|確認コード|ワンタイムパスワード|セキュリティコード|認証用コード|パスコード|"
+    # Korean
+    r"인증\s*번호|인증\s*코드|확인\s*코드|보안\s*코드|일회용\s*비밀\s*번호|일회용\s*번호|otp\s*번호|"
+    # Spanish & Portuguese
+    r"código\s*de\s*verificación|codigo\s*de\s*verificacion|código\s*de\s*verificação|codigo\s*de\s*verificacao|"
+    r"código\s*de\s*seguridad|código\s*de\s*segurança|codigo\s*de\s*seguranca|"
+    r"código\s*de\s*confirmación|código\s*de\s*confirmação|codigo\s*de\s*confirmacao|"
+    r"código\s*de\s*acceso|código\s*de\s*un\s*solo\s*uso|clave\s*de\s*verificación|clave\s*de\s*confirmación|"
+    r"código\s*de\s*autenticação|senha\s*descartável|senha\s*de\s*uso\s*único|"
+    # French
+    r"code\s*de\s*vérification|code\s*de\s*verification|code\s*de\s*sécurité|code\s*de\s*confirmation|"
+    r"code\s*d['’]accès|code\s*d['’]authentification|mot\s*de\s*passe\s*à\s*usage\s*unique|code\s*à\s*usage\s*unique|"
+    # German
+    r"verifizierungscode|bestätigungscode|bestaetigungscode|sicherheitscode|einmalpasswort|einmalkennwort|authentifizierungscode|einmalcode|"
+    # Russian
+    r"код\s*подтверждения|код\s*верификации|проверочный\s*код|код\s*безопасности|одноразовый\s*пароль|код\s*авторизации|"
+    # Italian
+    r"codice\s*di\s*verifica|codice\s*di\s*sicurezza|codice\s*di\s*conferma|codice\s*monouso|password\s*monouso|"
+    # Vietnamese
+    r"mã\s*xác\s*thực|mã\s*xác\s*minh|mã\s*otp|mã\s*xác\s*nhận|mã\s*đăng\s*nhập|mật\s*khẩu\s*một\s*lần|"
+    # Thai
+    r"รหัส\s*otp|รหัสยืนยัน|เลขรหัส\s*otp|รหัสผ่านแบบใช้ครั้งเดียว|รหัสความปลอดภัย|"
+    # Indonesian / Malay
+    r"kode\s*verifikasi|kode\s*konfirmasi|kode\s*keamanan|kata\s*sandi\s*sekali\s*pakai|kod\s*pengesahan|kod\s*keselamatan|"
+    # Arabic
+    r"رمز\s*التحقق|كود\s*التحقق|رمز\s*التأكيد|كلمة\s*مرور\s*لمرة\s*واحدة|رمز\s*الأمان|"
+    # Hindi
+    r"सत्यापन\s*कोड|प्रमाणीकरण\s*कोड|सुरक्षा\s*कोड|ओटीपी\s*कोड|वन-टाइम\s*पासवर्ड"
+    r")"
+)
+
+EXPLICIT_OTP_CODE_NOUN_PATTERN = re.compile(
+    r"(?i)(?:"
+    # Requires an explicit OTP/auth code noun (excludes footer-only "verify your email" / "sign in to your")
+    r"verification\s*code|security\s*code|login\s*code|sign[-\s]?in\s*code|access\s*code|"
+    r"device\s*verification|device\s*auth|"
+    r"one[-\s]?time\s*(?:password|code|pin|passcode)|single[-\s]?use\s*code|"
+    r"temporary\s*(?:code|passcode|pin)|passcode|auth(?:entication)?\s*code|"
+    r"confirmation\s*code|secret\s*code|pin\s*code|two[-\s]?factor|\b2fa\b|\bmfa\b|\botp\b|"
+    r"validation\s*code|validating\s*code|3d\s*secure|"
+    r"验证码|动态码|校验码|安全码|授权码|登录码|一次性密码|验证代码|身份验证码|"
+    r"驗證碼|動態碼|校驗碼|安全碼|授權碼|登錄碼|一次性密碼|驗證代碼|身分驗證碼|"
+    r"認証コード|確認コード|ワンタイムパスワード|セキュリティコード|認証用コード|パスコード|"
+    r"인증\s*번호|인증\s*코드|확인\s*코드|보안\s*코드|일회용\s*비밀\s*번호|일회용\s*번호|otp\s*번호|"
+    r"código\s*de\s*verificación|codigo\s*de\s*verificacion|código\s*de\s*verificação|codigo\s*de\s*verificacao|"
+    r"código\s*de\s*seguridad|código\s*de\s*segurança|código\s*de\s*confirmación|código\s*de\s*confirmación|"
+    r"code\s*de\s*vérification|code\s*de\s*verification|code\s*de\s*sécurité|code\s*de\s*confirmation|"
+    r"verifizierungscode|bestätigungscode|bestaetigungscode|sicherheitscode|einmalpasswort|einmalcode|"
+    r"код\s*подтверждения|код\s*верификации|проверочный\s*код|код\s*безопасности|"
+    r"codice\s*di\s*verifica|codice\s*di\s*sicurezza|codice\s*di\s*conferma|"
+    r"mã\s*xác\s*thực|mã\s*xác\s*minh|mã\s*otp|mã\s*xác\s*nhận|mã\s*đăng\s*nhập|"
+    r"รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|kode\s*konfirmasi|رمز\s*التحقق|सत्यापन\s*कोड"
+    r")"
+)
+
+NON_AUTH_CODE_PREFIX_RE = re.compile(
+    r"(?i)\b(?:promo|coupon|discount|voucher|referral|gift|redeem|invite|"
+    r"postal|zip|area|country|currency|airport|tracking|order|invoice|"
+    r"error|status|http|exit|color|hex|source|dress|bar|qr|swift|iban|bic|"
+    r"sort|routing|product|item|sku|part|model|serial|batch|lot|reference|"
+    r"ref|claim|booking|flight|hotel|reservation|use|apply)\s*(?:code|number|id|#)?\s*[:#：]?\s*$"
+)
+
+PURE_ALPHA_OTP_DISQUALIFIED_WORDS = {
+    # Auth / OTP / Email / UI / CTA terms (6-8 letters)
+    "verify", "verified", "getcode", "clickme", "signin", "signup", "signout", "logout",
+    "submit", "button", "expire", "expires",
+    # Months, weekdays, seasons, and common marketing/promo words (6-8 letters)
+    "january", "february", "august", "october", "november", "december",
+    "monday", "tuesday", "thursday", "friday", "saturday", "sunday",
+    "summer", "winter", "spring", "autumn",
+    "holiday", "weekend", "savings", "bargain", "freeship", "shipping",
+    "checkout", "shopping", "festival", "birthday", "newyear", "starter",
+    "premium", "forever", "loyalty", "vipclub", "blackfri", "cybermon",
+    "expired", "please", "account", "accounts", "privacy", "confirm", "access",
+    "secure", "security", "passcode", "password", "request", "support", "welcome",
+    "system", "systems", "update", "updated", "details", "contact", "status",
+    "cancel", "manage", "portal", "ignore", "action", "actions", "online", "device",
+    "devices", "before", "minute", "minutes", "second", "seconds", "hourly",
+    "follow", "prompt", "select", "return", "reload", "resend", "refresh", "change",
+    "changes", "changed", "create", "created", "delete", "deleted", "remove",
+    "removed", "enable", "enabled", "disable", "active", "inactive", "locked",
+    "unlock", "denied", "failed", "passed", "client", "clients", "server", "servers",
+    "domain", "domains", "sender", "senders", "header", "headers", "footer", "footers",
+    "message", "subject", "emails", "mailer", "cookie", "cookies", "tokens", "rights",
+    "policy", "safety", "report", "reports", "optout", "member", "members", "people",
+    "person", "friend", "groups", "events", "agenda", "remind", "timers", "recent",
+    "latest", "newest", "oldest", "custom", "global", "public", "private", "manual",
+    "direct", "simple", "single", "double", "triple", "notice", "notices", "thanks",
+    "regard", "regards", "sincere", "assist", "option", "options", "prefer", "prefers",
+    "digest", "weekly", "monthly", "annual", "upgrade", "pricing", "offers", "coupon",
+    "coupons", "reward", "rewards", "points", "deposit", "summary", "metrics",
+    "history", "archive", "folders", "drafts", "outbox", "attach", "browser",
+    "desktop", "android", "windows", "network", "connect", "service", "company",
+    "product", "project", "channel", "invited", "invite", "started", "finish",
+    "proceed", "session", "invalid", "missing", "unknown", "default", "example",
+    "testing", "pending", "waiting", "loading", "protect", "trusted", "reserve",
+    "reserved", "caution", "warning", "failure", "success", "complete", "continue",
+    "receive", "received", "entered", "already", "another", "because", "between",
+    "without", "through", "against", "however", "nothing", "someone", "anyone",
+    "everyone", "believe", "replied", "forward", "content", "section", "article",
+    "general", "special", "primary", "current", "present", "express", "process",
+    "version", "release", "preview", "limited", "instant", "quickly", "safely",
+    "exactly", "finally", "shortly", "usually", "whether", "neither", "further",
+    "control", "problem", "working", "running", "stopped", "sending", "getting",
+    "setting", "settings", "logging", "signing", "opening", "closing", "reading",
+    "writing", "copying", "pasting", "sharing", "viewing", "editing", "saving",
+    "posting", "finding", "keeping", "holding", "showing", "telling", "helping",
+    "asking", "calling", "passing", "failing", "checking", "trying", "coming",
+    "making", "taking", "giving", "having", "moving", "paying", "buying", "adding",
+    "ending", "office", "number", "numbers", "letter", "letters", "digits", "symbol",
+    "format", "length", "height", "weight", "widths", "colors", "colours", "styles",
+    "hidden", "accept", "reject", "approve", "decline", "refuse", "dismiss",
+    "skipped", "resume", "repeat", "reboot", "repair", "revert", "commit", "deploy",
+    "launch", "publish", "revoke", "rotate", "extend", "refund", "refunds", "charge",
+    "charged", "payout", "payouts", "payday", "salary", "budget", "profit", "revenue",
+    "discount", "voucher", "promos", "ticket", "tickets", "booking", "flight",
+    "flights", "hotels", "travel", "depart", "arrive", "driver", "pickup", "dropoff",
+    "delivery", "courier", "parcel", "shipper", "shipped", "customs", "duties",
+    "prices", "quotes", "totals", "amount", "balance", "credit", "credits", "debits",
+    "checks", "branch", "banking", "saving", "invest", "equity", "shares", "trading",
+    "broker", "wallet", "mining", "staking", "levels", "silver", "golden", "bronze",
+    "vendor", "partner", "agency", "studio", "school", "course", "lesson", "module",
+    "degree", "campus", "health", "doctor", "clinic", "patient", "recipe", "dinner",
+    "coffee", "market", "stores", "retail", "outlet", "brands", "models", "series",
+    "design", "review", "rating", "comments", "thread", "topics", "forums", "boards",
+    "guests", "speaker", "record", "replay", "stream", "camera", "volume", "bright",
+    "screen", "mirror", "remote", "laptop", "tablet", "mobile", "iphone", "macbook",
+    "router", "signal", "cables", "battery", "energy", "memory", "backup", "clouds",
+    "cluster", "region", "builds", "orders", "billing", "invoice", "receipt",
+    "payment", "address", "profile", "tracked", "deliver", "package", "copied",
+    "pasted", "shared", "linked", "unlink", "issued", "signed", "frozen", "paused",
+    "closed", "opened", "needed", "wanted", "called", "posted", "search", "filter",
+    "sorted", "rename", "upload", "download", "export", "import", "restore",
+    # HTML / CSS / Programming / Placeholders
+    "border", "center", "margin", "margins", "padding", "strong", "normal", "italic",
+    "family", "bottom", "inline", "script", "scripts", "styling", "values", "string",
+    "object", "arrays", "tables", "column", "layout", "themes", "shadow", "radius",
+    "stroke", "vector", "canvas", "window", "dialog", "modals", "banner", "toasts",
+    "badges", "labels", "inputs", "fields", "toggle", "slider", "switch", "picker",
+    "scroll", "cursor", "opaque", "darker", "dashed", "dotted", "smooth", "linear",
+    "radial", "spring", "bounce", "easing", "motion", "frames", "pixels", "inches",
+    "meters", "dollar", "crypto", "ledger", "assets", "stocks", "trades", "charts",
+    "graphs", "trends", "alerts", "notify", "routes", "anchor", "target", "source",
+    "origin", "agents", "robots", "spider", "crawls", "cached", "tunnel", "bridge",
+    "socket", "packet", "buffer", "thread", "worker", "daemon", "kernel", "plugin",
+    "addons", "static", "images", "videos", "photos", "doctype", "charset", "public",
+    "return", "export", "import", "sizeof", "typeof", "struct", "switch", "repeat",
+    "ffffff", "cccccc", "eeeeee", "dddddd", "bbbbbb", "aaaaaa", "xxxxxx", "zzzzzz",
+    "abcdef", "abcdefg", "abcdefgh", "fedcba", "qwerty", "asdfgh", "zxcvbn",
+    "sample", "tester", "deadbeef", "cafebabe", "verdana", "tahoma", "roboto",
+    "inherit", "display", "charset", "content", "bgcolor", "valign", "nowrap",
+    # Common major brand / provider names (6-8 letters)
+    "google", "github", "stripe", "vercel", "notion", "openai", "claude", "gemini",
+    "amazon", "paypal", "discord", "shopify", "twitter", "icloud", "proton",
+    "outlook", "hotmail", "foxmail", "twilio", "stytch", "resend", "postmark",
+    "mailgun", "sendgrid", "workos", "linear", "framer", "webflow", "zapier",
+    "hubspot", "zendesk", "datadog", "sentry", "grafana", "fastly", "akamai",
+    "firebase", "supabase", "netlify", "heroku", "docker", "gitlab", "render",
+    "railway", "paddle", "square", "klarna", "revolut", "mercury", "chrome",
+    "safari", "firefox", "dropbox", "spotify", "netflix", "airbnb", "booking",
+    "expedia", "alibaba", "tencent", "baidu", "oracle", "vmware", "redhat",
+    "ubuntu", "debian", "python", "nodejs", "docker", "readdle", "spark",
+}
+
+PURE_ALPHA_OTP_PATTERNS = [
+    # 1a. Explicit OTP label + assignment ("Your login code is: SFXNRE", "Verification Code:\nFWUOYO")
+    re.compile(
+        r"(?i)(?:your\s+(?:[a-z0-9\.-]+\s+)?(?:verification|login|sign[-\s]?in|security|confirmation|authentication|access|auth|one[-\s]?time|single[-\s]?use|temporary|2fa|mfa|email|device)\s+(?:code|passcode|pin)|"
+        r"(?:verification|login|sign[-\s]?in|security|confirmation|authentication|access|auth|one[-\s]?time|single[-\s]?use|temporary|validation|validating|2fa|mfa|email|device)\s+(?:code|passcode|pin))"
+        r"\s*(?:is\s*[:#：]?|[:#：])\s*(?:[\r\n]\s*)?(?:[\*`\"']+\s*)?(?-i:([A-Z]{6,8}))(?![A-Za-z0-9])"
+    ),
+    # 1b. Multiline OTP prompt followed by uppercase code ("Your verification code\n\nKXMPTQ", "Use the code below to sign in:\nBVGKLM")
+    re.compile(
+        r"(?i)(?:your\s+(?:[a-z0-9\.-]+\s+)?(?:verification|login|sign[-\s]?in|security|confirmation|authentication|access|auth|one[-\s]?time|single[-\s]?use|temporary|2fa|mfa)\s+(?:code|passcode|pin)|"
+        r"use\s+the\s+(?:verification\s+|login\s+|security\s+)?code\s+below(?:\s+to\s+[^\r\n:.]{1,40})?|"
+        r"enter\s+(?:the\s+|this\s+)?(?:following\s+)?(?:verification\s+|login\s+|security\s+)?code(?:\s+below)?(?:\s+when\s+prompted|\s+to\s+[^\r\n:.]{1,40})?)"
+        r"\s*[:#：]?[\r\n]+\s*(?:[\*`\"']+\s*)?(?-i:([A-Z]{6,8}))(?![A-Za-z0-9])"
+    ),
+    # 1c. Generic explicit code/passcode/otp assignment (strictly guarded against non-auth/promo prefixes
+    # and gated by EXPLICIT_OTP_CODE_NOUN_PATTERN in extract_pure_alpha_otp_code)
+    re.compile(
+        r"(?i)(?<!error\s)(?<!status\s)(?<!reference\s)(?<!promo\s)(?<!coupon\s)(?<!discount\s)"
+        r"(?<!postal\s)(?<!zip\s)(?<!area\s)(?<!country\s)(?<!tracking\s)(?<!gift\s)"
+        r"(?<!referral\s)(?<!voucher\s)(?<!invite\s)(?<!color\s)(?<!hex\s)(?<!source\s)"
+        r"(?<!product\s)(?<!booking\s)(?<!flight\s)(?<!hotel\s)(?<!order\s)"
+        r"(?<!use\s)(?<!apply\s)(?<!redeem\s)"
+        r"\b(?:(?:your\s+(?:[a-z0-9\.-]+\s+)?)?code|passcode|otp)"
+        r"\s*(?:is\s*[:#：]?|[:#：])\s*(?:[\r\n]\s*)?(?:[\*`\"']+\s*)?(?-i:([A-Z]{6,8}))(?![A-Za-z0-9])"
+    ),
+    # 1d. Multilingual explicit OTP label + assignment
+    re.compile(
+        r"(?i)(?:验证码|动态码|校验码|安全码|授权码|驗證碼|動態碼|校驗碼|"
+        r"認証コード|確認コード|ワンタイムパスワード|인증\s*번호|인증\s*코드|확인\s*코드|"
+        r"código\s*de\s*verificación|codigo\s*de\s*verificacion|código\s*de\s*verificação|"
+        r"code\s*de\s*vérification|code\s*de\s*verification|verifizierungscode|bestätigungscode|"
+        r"код\s*подтверждения|codice\s*di\s*verifica|mã\s*xác\s*thực|รหัส\s*otp|kode\s*verifikasi|"
+        r"رمز\s*التحقق|सत्यापन\s*कोड)"
+        r"\s*(?:是|为|は|는|은|es|é|est|ist|lautet|это|è|adalah|là|هو|है)?\s*[:#：]?\s*(?:[\r\n]\s*)?(?:[\*`\"']+\s*)?(?-i:([A-Z]{6,8}))(?![A-Za-z0-9])"
+    ),
+    # 2. Leading-code format ("SFXNRE is your verification code")
+    re.compile(
+        r"(?-i:\b([A-Z]{6,8})\b)\s+(?i:is\s+(?:your|the)\s+(?:[a-z0-9\.-]+\s+){0,2}"
+        r"(?:one[-\s]?time|single[-\s]?use|temporary|verification|security|login|sign[-\s]?in|access|confirmation|authentication|auth)?\s*"
+        r"(?:code|passcode|otp|pin)\b)"
+    ),
+]
+
+PURE_ALPHA_PREV_LINE_CUE_RE = re.compile(
+    r"(?i)(?:verification|login|sign[-\s]?in|security|confirmation|authentication|access|one[-\s]?time|single[-\s]?use|temporary|2fa|mfa)\s*(?:code|passcode|pin)|"
+    r"\b(?:code|passcode|otp)\s*(?:is|below|follows)?\s*[:#：]?\s*$|"
+    r"use\s+the\s+code\s+below|enter\s+(?:the\s+|this\s+)?(?:following\s+)?code|"
+    r"验证码|动态码|校验码|認証コード|確認コード|인증\s*번호|인증\s*코드|código\s*de\s*verificación|code\s*de\s*vérification|verifizierungscode"
+)
+
+PURE_ALPHA_NEXT_LINE_CUE_RE = re.compile(
+    r"(?i)(?:this\s+code\s+(?:will\s+)?expire|code\s+(?:will\s+)?expire|expires?\s+(?:in|after)|valid\s+(?:for|in)|"
+    r"enter\s+this\s+code|use\s+this\s+code|do\s+not\s+share\s+this\s+code|"
+    r"if\s+you\s+did\s*n['’]?t\s+request|if\s+you\s+did\s+not\s+request|"
+    r"有效|有効|분\s*이내|minuto|minuten|минут|phút|นาที|menit)"
+)
+
 OTP_INTENT_PATTERN = re.compile(
     r"(?i)(?:"
     # English
@@ -168,6 +455,313 @@ def clean_domain(domain: str) -> str:
     d = re.sub(r"^https?://", "", d)
     d = d.split("/")[0].split(":")[0]
     return re.sub(r"^www\.", "", d)
+
+def sanitize_account_email(account: Optional[str]) -> Optional[str]:
+    """
+    Defensively normalize an account/email query string and strip glued DOM suffixes
+    such as 'user@example.com' + 'Verification', 'user@example.com' + 'VERIFICATION',
+    'user@example.com' + '.Enter', angle brackets, 'mailto:', or trailing CJK/punctuation.
+    Preserves legitimate multi-word TLDs (e.g. '.company', '.network', '.codes').
+    """
+    if account is None:
+        return None
+    raw = str(account)
+    # Remove invisible zero-width chars and normalize NBSP
+    raw = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", raw).replace("\u00a0", " ").strip()
+    if not raw:
+        return None
+
+    # Strip leading mailto:
+    raw = re.sub(r"(?i)^mailto:", "", raw).strip()
+
+    # Extract email inside angle brackets if present (e.g. "Alex <user@example.com>")
+    angle_match = re.search(r"<([^\s<>@]+@[^\s<>@]+)>", raw)
+    if angle_match:
+        raw = angle_match.group(1).strip()
+
+    if "@" not in raw:
+        return raw
+
+    # Extract the first email-like token if surrounded by prose/whitespace
+    email_tok_match = re.search(r"[^\s<>\"',;()]+@[^\s<>\"',;()]+", raw)
+    if email_tok_match:
+        raw = email_tok_match.group(0)
+
+    local, domain_raw = raw.rsplit("@", 1)
+    local = local.strip(" \"'<>()[]{}:;,")
+    # Truncate domain at first non-ASCII character (e.g. glued CJK label)
+    domain_raw = re.split(r"[^\x20-\x7e]", domain_raw, maxsplit=1)[0]
+    domain_raw = domain_raw.strip(" .\"'<>()[]{}:;,!?|\\/~")
+    if not local or not domain_raw:
+        return None
+
+    labels = [lbl for lbl in domain_raw.split(".") if lbl]
+    if len(labels) < 2:
+        return f"{local.lower()}@{domain_raw.lower()}"
+
+    # Strip dot-glued trailing UI suffixes after a valid TLD (e.g. '.com' + '.Enter' or '.com' + '.Verification')
+    def _is_dot_glued_ui_label(lbl_raw: str) -> bool:
+        lbl_alpha = re.sub(r"[^A-Za-z]+.*$", "", lbl_raw)
+        lbl_low = lbl_alpha.lower()
+        if not lbl_low:
+            return True
+        # Never strip valid 2-letter ccTLDs (e.g. .co.uk, .com.au, .com.cn)
+        if len(lbl_low) == 2 and lbl_low in KNOWN_EMAIL_TLDS:
+            return False
+        if any(lbl_low.startswith(w) for w in GLUED_EMAIL_SUFFIX_PREFIXES):
+            return True
+        return False
+
+    if len(labels) >= 3:
+        for idx in range(len(labels) - 2, 0, -1):
+            anchor = labels[idx].lower()
+            if anchor in KNOWN_EMAIL_TLDS:
+                trailing = labels[idx + 1:]
+                if trailing and all(_is_dot_glued_ui_label(t) for t in trailing):
+                    labels = labels[: idx + 1]
+                    break
+
+    tld_raw = labels[-1]
+    if not tld_raw.lower().startswith("xn--"):
+        # Strip any trailing digits or symbols glued onto the TLD (e.g. '.com' + '123')
+        tld_raw = re.sub(r"[^A-Za-z]+.*$", "", tld_raw)
+        if not tld_raw:
+            return f"{local.lower()}@{domain_raw.lower()}"
+
+        # 1. Mixed-case boundary inside TLD (e.g. 'com' + 'Verification', 'com' + 'VERIFICATION', 'uk' + 'Enter')
+        case_split = re.match(r"^([a-z]{2,10})([A-Z][A-Za-z]*)$", tld_raw)
+        if case_split and (case_split.group(1) in KNOWN_EMAIL_TLDS or len(case_split.group(1)) == 2):
+            tld_clean = case_split.group(1)
+        else:
+            tld_lower = tld_raw.lower()
+            tld_clean = tld_lower
+            # 2. All-lowercase / all-uppercase glued UI suffix (only if not a valid standalone TLD)
+            if tld_lower not in VALID_STANDALONE_MULTI_WORD_TLDS:
+                for prefix in GLUE_SPLIT_TLDS:
+                    if tld_lower.startswith(prefix) and len(tld_lower) > len(prefix):
+                        remainder = tld_lower[len(prefix):]
+                        if any(remainder.startswith(w) for w in GLUED_EMAIL_SUFFIX_PREFIXES):
+                            tld_clean = prefix
+                            break
+    else:
+        tld_clean = tld_raw.lower()
+
+    clean_domain_str = ".".join([lbl.lower() for lbl in labels[:-1]] + [tld_clean.lower()])
+    return f"{local.lower()}@{clean_domain_str}"
+
+def recipient_matches_account(recipient: Optional[str], account: Optional[str]) -> bool:
+    """Boundary-aware check that an email recipient header matches the sanitized requested account."""
+    acc_clean = sanitize_account_email(account)
+    if not acc_clean or not recipient:
+        return False
+    acc_lower = acc_clean.strip().lower()
+    rec_lower = recipient.strip().lower()
+    if not rec_lower:
+        return False
+    if "@" in acc_lower:
+        return bool(re.search(r"(?<![a-z0-9._%+-])" + re.escape(acc_lower) + r"(?![a-z0-9._%+-])", rec_lower))
+    return acc_lower in rec_lower
+
+def _strip_html_body(body_text: str) -> str:
+    """Convert raw HTML email body (e.g. cache.sqlite fallback) into clean plain text without CSS/JS noise."""
+    if not body_text or not re.search(
+        r"<(?:!doctype|html|head|body|style|script|table|tr|td|th|div|p|br|span)\b",
+        body_text,
+        re.IGNORECASE,
+    ):
+        return body_text
+    cleaned = re.sub(r"(?is)<style\b[^>]*>.*?</style>", " ", body_text)
+    cleaned = re.sub(r"(?is)<script\b[^>]*>.*?</script>", " ", cleaned)
+    cleaned = re.sub(r"(?s)<!--.*?-->", " ", cleaned)
+    cleaned = re.sub(
+        r"(?i)</?(?:tr|td|th|div|p|br|li|h[1-6]|table|tbody|thead|section|article|header|footer|hr)\b[^>]*>",
+        "\n",
+        cleaned,
+    )
+    cleaned = re.sub(r"<[^>]+>", " ", cleaned)
+    cleaned = html.unescape(cleaned)
+    lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in cleaned.splitlines()]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+def _is_valid_pure_alpha_otp(
+    candidate: str,
+    search_corpus: str,
+    match_start: int,
+    match_end: int,
+    full_match_start: int,
+    sender: str = "",
+    domain_filter: Optional[str] = None,
+    brand_hint: Optional[str] = None,
+) -> bool:
+    """
+    Strict anti-false-positive validator for pure uppercase alphabetic OTP codes (6-8 ASCII letters).
+    Rejects normal English/UI/HTML/CSS words, brand/domain tokens, URLs, mixed-case echoes,
+    repeated-character placeholders, and shouty ALL-CAPS headings/buttons.
+    """
+    if not candidate or not (6 <= len(candidate) <= 8):
+        return False
+    if not (candidate.isascii() and candidate.isalpha() and candidate.isupper()):
+        return False
+    # Reject repeated-char placeholders (AAAAAA, XXXXXX, ABABAB, FFFFFF)
+    if len(set(candidate)) < 3:
+        return False
+
+    cand_lower = candidate.lower()
+    if cand_lower in PURE_ALPHA_OTP_DISQUALIFIED_WORDS:
+        return False
+
+    # Reject non-auth code prefixes immediately preceding the match (promo/coupon/tracking/zip/etc.)
+    prefix_window = search_corpus[max(0, full_match_start - 40):match_start]
+    if NON_AUTH_CODE_PREFIX_RE.search(prefix_window):
+        return False
+
+    # Reject brand / sender / domain / page-hint tokens dynamically
+    brand_tokens = set()
+    for src in (sender or "", domain_filter or "", brand_hint or ""):
+        for tok in re.findall(r"[a-zA-Z]{4,}", src.lower()):
+            brand_tokens.add(tok)
+    if domain_filter:
+        for tok in get_domain_tokens(domain_filter):
+            brand_tokens.add(tok.lower())
+    if brand_hint:
+        for tok in extract_brand_hint_tokens(brand_hint):
+            brand_tokens.add(tok.lower())
+    if cand_lower in brand_tokens:
+        return False
+    sender_alpha = re.sub(r"[^a-z]", "", (sender or "").lower())
+    domain_alpha = re.sub(r"[^a-z]", "", clean_domain(domain_filter or ""))
+    if cand_lower in sender_alpha or (domain_alpha and cand_lower in domain_alpha):
+        return False
+
+    # Reject tokens that also appear in lowercase or Title Case anywhere in the email (real words / brands)
+    for m in re.finditer(r"(?i)\b" + re.escape(candidate) + r"\b", search_corpus):
+        if m.group(0) != candidate:
+            return False
+
+    # Reject tokens embedded inside URLs, query params, HTML attributes, hex colors, or filenames
+    tok_start = match_start
+    while tok_start > 0 and not search_corpus[tok_start - 1].isspace():
+        tok_start -= 1
+    tok_end = match_end
+    while tok_end < len(search_corpus) and not search_corpus[tok_end].isspace():
+        tok_end += 1
+    enclosing_raw = search_corpus[tok_start:tok_end]
+    if any(sym in enclosing_raw for sym in ("://", "/", "?", "=", "@", "#", "&", "%", "<", ">", "_")):
+        return False
+    prefix_in_tok = search_corpus[tok_start:match_start]
+    suffix_in_tok = search_corpus[match_end:tok_end]
+    if not re.match(r"^[\*`\"')\]}.,;!?。，、】」』》]*$", suffix_in_tok):
+        return False
+    if not (
+        re.match(r"^[\*`\"'(\[{【「『《]*$", prefix_in_tok)
+        or re.search(r"[:：][\*`\"'(\[{【「『《]*$", prefix_in_tok)
+    ):
+        return False
+
+    # Reject tokens sitting inside ALL-CAPS headings/CTA buttons on the same line
+    line_start = search_corpus.rfind("\n", 0, match_start) + 1
+    line_end = search_corpus.find("\n", match_end)
+    if line_end == -1:
+        line_end = len(search_corpus)
+    before_on_line = search_corpus[line_start:match_start]
+    after_on_line = search_corpus[match_end:line_end]
+
+    if re.search(r"\b[A-Z]{2,}[ \t]+[\*`\"'(\[{]*$", before_on_line):
+        return False
+    has_explicit_assignment_before = bool(
+        re.search(r"(?:[:：]|(?i:\bis))\s*[\*`\"'(\[{]*$", before_on_line)
+    )
+    if not has_explicit_assignment_before and re.match(r"^[\*`\"')\]},]*[ \t]+[A-Z]{2,}\b", after_on_line):
+        return False
+
+    return True
+
+def extract_pure_alpha_otp_code(
+    search_corpus: str,
+    sender: str = "",
+    domain_filter: Optional[str] = None,
+    brand_hint: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Extract a 6-8 uppercase ASCII alphabetic OTP code (e.g. 'SFXNRE', 'FWUOYO')
+    only when strong auth/OTP intent and tight contextual anchors are present.
+    """
+    if not STRONG_OTP_INTENT_PATTERN.search(search_corpus):
+        return None
+    has_explicit_otp_noun = bool(EXPLICIT_OTP_CODE_NOUN_PATTERN.search(search_corpus))
+
+    # Tier 1 & 2: explicit OTP assignment and leading-code formats
+    # Pattern index 2 (bare `code:`) requires an explicit OTP-code noun so marketing emails
+    # with footer text like "Click to verify your email address" cannot unlock bare "Use code: ...".
+    for pat_idx, pat in enumerate(PURE_ALPHA_OTP_PATTERNS):
+        if pat_idx == 2 and not has_explicit_otp_noun:
+            continue
+        for match in pat.finditer(search_corpus):
+            raw_cand = match.group(1)
+            if not raw_cand:
+                continue
+            cand = clean_extracted_code(raw_cand)
+            if _is_valid_pure_alpha_otp(
+                candidate=cand,
+                search_corpus=search_corpus,
+                match_start=match.start(1),
+                match_end=match.end(1),
+                full_match_start=match.start(),
+                sender=sender,
+                domain_filter=domain_filter,
+                brand_hint=brand_hint,
+            ):
+                return cand
+
+    # Tier 3: standalone uppercase code line sandwiched by OTP prompt or expiry cues
+    if not has_explicit_otp_noun:
+        return None
+    lines = search_corpus.splitlines(keepends=True)
+    offsets: List[int] = []
+    pos = 0
+    for ln in lines:
+        offsets.append(pos)
+        pos += len(ln)
+
+    for idx, ln in enumerate(lines):
+        m = re.match(r"^(\s*(?:[\*`\"']+\s*)?)([A-Z]{6,8})(?:\s*[\*`\"']+)?\s*$", ln.rstrip("\r\n"))
+        if not m:
+            continue
+        cand = m.group(2)
+        cand_start = offsets[idx] + len(m.group(1))
+        cand_end = cand_start + len(cand)
+
+        prev_non_empty = ""
+        for j in range(idx - 1, -1, -1):
+            s = lines[j].strip()
+            if s:
+                prev_non_empty = s
+                break
+        next_non_empty = ""
+        for j in range(idx + 1, len(lines)):
+            s = lines[j].strip()
+            if s:
+                next_non_empty = s
+                break
+
+        prev_has_cue = bool(prev_non_empty and PURE_ALPHA_PREV_LINE_CUE_RE.search(prev_non_empty))
+        next_has_cue = bool(next_non_empty and PURE_ALPHA_NEXT_LINE_CUE_RE.search(next_non_empty))
+        if not (prev_has_cue or next_has_cue):
+            continue
+
+        if _is_valid_pure_alpha_otp(
+            candidate=cand,
+            search_corpus=search_corpus,
+            match_start=cand_start,
+            match_end=cand_end,
+            full_match_start=offsets[idx],
+            sender=sender,
+            domain_filter=domain_filter,
+            brand_hint=brand_hint,
+        ):
+            return cand
+
+    return None
 
 def get_root_domain(domain: str) -> str:
     """
@@ -494,7 +1088,7 @@ def extract_universal_otp(
         ):
             return None
 
-    body_text = get_thread_body(thread_text)
+    body_text = _strip_html_body(get_thread_body(thread_text))
     raw_search_text = subject + "\n" + body_text
     
     # Normalize markdown asterisks around numbers/codes (e.g. "** 521006**" -> " 521006 ")
@@ -601,8 +1195,9 @@ def extract_universal_otp(
                 if code_candidate.lower() in disqualified_words:
                     continue
 
-                # Disqualify reference numbers or tracking numbers immediately preceding
-                start_pos = max(0, match.start() - 35)
+                # Disqualify reference numbers or tracking numbers immediately preceding on the same line
+                line_start_pos = search_corpus.rfind("\n", 0, match.start()) + 1
+                start_pos = max(line_start_pos, match.start() - 35)
                 prefix_text = search_corpus[start_pos:match.start()].lower()
                 if re.search(r"(?:reference|ref\s*#?|order\s*#?|tracking|เลขที่อ้างอิง|error\s*code|message\s*id|msg\s*id)", prefix_text):
                     continue
@@ -654,6 +1249,29 @@ def extract_universal_otp(
                     time_remaining_seconds=max(0, remaining),
                 )
 
+    # 4. Pure uppercase alphabetic OTP fallback (6-8 uppercase ASCII letters in strong OTP context)
+    # Runs strictly AFTER all digit-bearing / hyphenated patterns so numeric codes always take priority.
+    pure_alpha_code = extract_pure_alpha_otp_code(
+        search_corpus=raw_search_text,
+        sender=sender,
+        domain_filter=domain_filter,
+        brand_hint=brand_hint,
+    )
+    if pure_alpha_code and pure_alpha_code != msg_id:
+        return OTPResult(
+            code=pure_alpha_code,
+            service="universal_otp",
+            domain=domain_filter,
+            callback_url=None,
+            message_id=msg_id,
+            subject=subject,
+            sender=sender,
+            received_at=email_dt.isoformat(),
+            expires_at=(email_dt + timedelta(seconds=ttl)).isoformat(),
+            is_expired=is_expired,
+            time_remaining_seconds=max(0, remaining),
+        )
+
     return None
 
 def extract_otp_from_thread(
@@ -698,7 +1316,9 @@ def extract_otp_from_thread(
         return None
 
     body_text = get_thread_body(thread_text)
+    clean_body_text = _strip_html_body(body_text)
     search_text = subject + "\n" + body_text
+    clean_search_text = (subject + "\n" + clean_body_text) if clean_body_text != body_text else search_text
 
     # 1. Evaluate predefined rule matrix
     for rule in rules:
@@ -731,6 +1351,8 @@ def extract_otp_from_thread(
             continue
 
         code_match = re.search(rule.code_regex, search_text)
+        if not code_match and clean_search_text != search_text:
+            code_match = re.search(rule.code_regex, clean_search_text)
         if not code_match:
             continue
         
@@ -756,7 +1378,7 @@ def extract_otp_from_thread(
                         callback_url = html.unescape(g.strip())
                         break
 
-        detected_ttl = detect_ttl(search_text)
+        detected_ttl = detect_ttl(clean_search_text)
         ttl = detected_ttl if detected_ttl is not None else rule.default_ttl_seconds
         expires_at_dt = email_dt + timedelta(seconds=ttl)
         remaining = int(ttl - age_seconds)

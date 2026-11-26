@@ -337,11 +337,16 @@
   function recordCodeSubmitted(code, messageId, domain) {
     if (!code) return;
     const c = String(code).trim();
+    const upper = c.toUpperCase();
     const state = getAuthState(domain);
     state.lastSubmittedCode = c;
     state.lastSubmittedMsgId = messageId ? String(messageId).trim() : null;
     state.lastSubmittedAt = Date.now();
-    state.submissionCounts[c] = (state.submissionCounts[c] || 0) + 1;
+    const prevCount = state.submissionCounts[c] || state.submissionCounts[upper] || 0;
+    state.submissionCounts[c] = prevCount + 1;
+    if (upper !== c) {
+      state.submissionCounts[upper] = prevCount + 1;
+    }
     saveAuthState(state, domain);
   }
 
@@ -783,8 +788,13 @@
     return { action: "none", reason: "window_elapsed_without_rejection" };
   }
 
-  function installLoginRequestCapture(domain) {
+  function installLoginRequestCapture(domain, onCaptured) {
     if (typeof document === "undefined" || !document.addEventListener) return false;
+    if (typeof onCaptured === "function") {
+      try {
+        document.__sparkOtpLoginCaptureCallback = onCaptured;
+      } catch (e) {}
+    }
     if (document.__sparkOtpLoginCaptureInstalled === true) return true;
     if (document.__sparkOtpLoginCaptureInstalled === undefined) {
       try {
@@ -795,14 +805,34 @@
     }
     if (document.__sparkOtpLoginCaptureInstalled === true) return true;
     document.__sparkOtpLoginCaptureInstalled = true;
-    const d = domain || detectTargetDomain();
+    const resolveDomain = () => domain || detectTargetDomain();
+    const notifyCaptured = (d, source) => {
+      try {
+        const cb = document.__sparkOtpLoginCaptureCallback;
+        if (typeof cb === "function") cb(d, source);
+      } catch (e) {}
+    };
+    const rememberEmailValue = (d, rawVal) => {
+      try {
+        const val = String(rawVal || "").trim();
+        if (val && val.includes("@") && d) {
+          setStorageItem("spark_otp_last_email_" + d, val);
+        }
+      } catch (e) {}
+    };
     const positive = /(?:send\s+(?:a\s+)?(?:new\s+|login\s+)?(?:code|passcode)|send\s+code|resend|re-send|send\s+again|request\s+(?:a\s+)?(?:new\s+)?code|continue\s+with\s+email|email\s+me\s+(?:a\s+)?(?:login\s+)?code|get\s+code|发送(?:登录)?验证码|重新发送|再发送|重发|获取验证码|用邮箱登录|邮箱登录)/i;
     const negative = /(?:log\s*out|sign\s*out|delete|remove|cancel|back|close|返回|取消|关闭|删除|移除|退出|注销)/i;
+    const emailStepActionRegex = /^(?:create\s+account|continue|next|sign\s+in|log\s+in|sign\s+up|get\s+started|continue\s+with\s+email|下一步|继续|登录|注册|创建账号)$/i;
+    const oauthOrSsoRegex = /(?:google|apple|github|microsoft|facebook|linkedin|sso|single\s+sign[- ]?on|passkey|saml)/i;
+    const getButtonLabel = (el) => {
+      if (!el) return "";
+      return ((el.textContent || "") + " " + (el.value || "") + " " + (typeof el.getAttribute === "function" ? (el.getAttribute("aria-label") || el.getAttribute("title") || "") : "")).replace(/\s+/g, " ").trim();
+    };
     const isLoginRequestTrigger = (el) => {
       if (!el) return false;
       if (el.closest && el.closest("#spark-otp-pill-container")) return false;
       try {
-        const label = ((el.textContent || "") + " " + (el.value || "") + " " + (typeof el.getAttribute === "function" ? (el.getAttribute("aria-label") || el.getAttribute("title") || "") : "")).replace(/\s+/g, " ").trim();
+        const label = getButtonLabel(el);
         if (!label || label.length > 120) return false;
         if (negative.test(label)) return false;
         return positive.test(label);
@@ -810,14 +840,44 @@
         return false;
       }
     };
+    const findVisibleFilledEmailForPasswordlessAction = (btn) => {
+      if (!btn || (btn.closest && btn.closest("#spark-otp-pill-container"))) return null;
+      try {
+        const label = getButtonLabel(btn);
+        if (!label || label.length > 60 || negative.test(label) || oauthOrSsoRegex.test(label)) return null;
+        if (!emailStepActionRegex.test(label)) return null;
+        const scope = (btn.closest && btn.closest('form, [role="dialog"], .card, main, section')) || document.body;
+        if (!scope || typeof scope.querySelectorAll !== "function") return null;
+        const visibleCheck = (inp) => (typeof isInteractiveElement === "function" ? isInteractiveElement(inp) : (inp.offsetParent !== null));
+        const pwdInputs = Array.from(scope.querySelectorAll('input[type="password"]'));
+        if (pwdInputs.some(visibleCheck)) return null;
+        const emailInputs = Array.from(scope.querySelectorAll('input[type="email"], input[name*="email" i], input[autocomplete="email"]'));
+        for (const inp of emailInputs) {
+          const val = String(inp.value || "").trim();
+          if (val && val.includes("@") && visibleCheck(inp)) {
+            return val;
+          }
+        }
+      } catch (e) {}
+      return null;
+    };
     document.addEventListener("click", (evt) => {
       if (programmaticResendClickActive) return;
       try {
         const target = evt && evt.target;
         if (!target) return;
         const btn = (target.closest && target.closest('button, a[href], [role="button"], input[type="button"], input[type="submit"]')) || target;
+        const d = resolveDomain();
         if (isLoginRequestTrigger(btn)) {
           recordLoginRequest(d, "button_click");
+          notifyCaptured(d, "button_click");
+          return;
+        }
+        const passwordlessEmail = findVisibleFilledEmailForPasswordlessAction(btn);
+        if (passwordlessEmail) {
+          rememberEmailValue(d, passwordlessEmail);
+          recordLoginRequest(d, "button_click");
+          notifyCaptured(d, "button_click");
         }
       } catch (e) {}
     }, true);
@@ -828,7 +888,10 @@
         if (!target || !target.tagName) return;
         const type = String(target.type || "").toLowerCase();
         if (type === "email") {
+          const d = resolveDomain();
+          rememberEmailValue(d, target.value);
           recordLoginRequest(d, "email_enter");
+          notifyCaptured(d, "email_enter");
         }
       } catch (e) {}
     }, true);
@@ -838,8 +901,13 @@
         const form = evt && evt.target;
         if (!form) return;
         const emailInput = form.querySelector ? form.querySelector('input[type="email"], input[name*="email" i], input[autocomplete="email"]') : null;
+        const d = resolveDomain();
+        if (emailInput && emailInput.value) {
+          rememberEmailValue(d, emailInput.value);
+        }
         if (emailInput || (typeof findEmailOnPage === "function" && findEmailOnPage())) {
           recordLoginRequest(d, "form_submit");
+          notifyCaptured(d, "form_submit");
         }
       } catch (e) {}
     }, true);
@@ -868,12 +936,13 @@
         '.error-message',
         '.notification-error',
         '.text-danger',
+        '.text-destructive',
         '.invalid-feedback',
         '#error',
         '#login-error',
         '.login-error'
       ];
-      const errorTextRegex = /(?:incorrect|invalid|wrong|expired|failed|not\s*valid|has\s*expired)\s*(?:verification\s*|security\s*|auth\s*|login\s*|one-time\s*)?(?:code|passcode|token|pin|otp)?|(?:code|passcode|token|pin|otp)\s*(?:is\s*)?(?:incorrect|invalid|wrong|expired|not\s*valid|has\s*expired)|(?:that\s+account\s+)?does\s+not\s+have\s+access|unauthorized|验证码.*?(?:错误|不正确|有误|已过期|无效)|認証コード.*?(?:正しくありません|無効|切れています)/i;
+      const errorTextRegex = /(?:incorrect|invalid|wrong|expired|failed|not\s*valid|has\s*expired)\s*(?:or\s+expired\s+)?(?:verification\s*|security\s*|auth\s*|login\s*|one-time\s*)?(?:code|passcode|token|pin|otp)?|(?:code|passcode|token|pin|otp)\s*(?:is\s*)?(?:incorrect|invalid|wrong|expired|not\s*valid|has\s*expired)|(?:that\s+account\s+)?does\s+not\s+have\s+access|unauthorized|验证码.*?(?:错误|不正确|有误|已过期|无效)|認証コード.*?(?:正しくありません|無効|切れています)/i;
 
       for (const sel of errorSelectors) {
         const els = document.querySelectorAll(sel);
@@ -886,13 +955,13 @@
       }
 
       // Check general elements for exact Bandwagon "Incorrect code, please try again", Cloudflare Access "That account does not have access.", or similar
-      const paragraphs = document.querySelectorAll("p, div, span");
+      const paragraphs = document.querySelectorAll("p, div, span, label");
       for (const el of paragraphs) {
         if (el.children.length > 2) continue;
         const text = (el.textContent || "").trim();
         if (text.length > 0 && text.length < 150) {
           if (/incorrect\s*code(?:,\s*please\s*try\s*again)?/i.test(text) ||
-              /invalid\s*(?:two-factor|verification)\s*code/i.test(text) ||
+              /invalid\s*(?:or\s+expired\s+)?(?:two-factor|verification|login)?\s*(?:code|otp)/i.test(text) ||
               /(?:that\s+account\s+)?does\s+not\s+have\s+access/i.test(text) ||
               /验证码错误/i.test(text)) {
             return { hasError: true, reason: "dom_text", text };
@@ -908,6 +977,7 @@
     const opts = options || {};
     if (!code) return true;
     const cleanCode = String(code).trim();
+    const upperCode = cleanCode.toUpperCase();
     const cleanMsgId = messageId ? String(messageId).trim() : null;
     const state = getAuthState(domain);
     const pageErr = detectPageError();
@@ -929,7 +999,7 @@
     }
 
     // 1. Explicitly rejected/failed code (case-insensitive)
-    if (state.failedCodes && state.failedCodes.some(fc => fc.toUpperCase() === cleanCode.toUpperCase())) {
+    if (state.failedCodes && state.failedCodes.some(fc => fc.toUpperCase() === upperCode)) {
       return true;
     }
 
@@ -938,15 +1008,16 @@
       return true;
     }
 
+    const submitCount = (state.submissionCounts && (state.submissionCounts[cleanCode] || state.submissionCounts[upperCode])) || 0;
+
     // 3. Current code matches last submitted code and page has error or code was submitted
-    if (state.lastSubmittedCode && cleanCode.toUpperCase() === state.lastSubmittedCode.toUpperCase()) {
-      if (pageErr.hasError || (state.submissionCounts[cleanCode] || 0) >= 1) {
+    if (state.lastSubmittedCode && upperCode === state.lastSubmittedCode.toUpperCase()) {
+      if (pageErr.hasError || submitCount >= 1) {
         return true;
       }
     }
 
     // 4. Max submit limit: if code was submitted >= 1 time already
-    const submitCount = state.submissionCounts[cleanCode] || 0;
     if (submitCount >= 1) {
       return true;
     }
@@ -971,13 +1042,46 @@
 
   function buildApiQuery(domain, account, options = {}) {
     let q = `domain=${encodeURIComponent(domain)}`;
-    if (account) {
-      q += `&account=${encodeURIComponent(account)}`;
+    let safeAccount = account ? String(account).trim() : "";
+    if (safeAccount && safeAccount.includes("@")) {
+      // Defensive TLD-boundary sanitization against glued DOM text (e.g. 'user@example.org' + 'Verification')
+      const atIdx = safeAccount.lastIndexOf("@");
+      const local = safeAccount.slice(0, atIdx).replace(/^[<(\['"]+/, "");
+      const domRaw = safeAccount.slice(atIdx + 1).replace(/[>'\])".,;:!?]+$/, "");
+      const labels = domRaw.split(".").filter(Boolean);
+      if (labels.length >= 2) {
+        const commonTlds = new Set(["com", "org", "net", "edu", "gov", "mil", "int", "info", "biz", "pro", "xyz", "io", "ai", "co", "me", "us", "uk", "ca", "au", "de", "fr", "jp", "cn", "sg", "hk", "tw", "kr", "eu", "app", "dev", "cloud", "tech"]);
+        while (labels.length >= 3) {
+          const prev = labels[labels.length - 2];
+          const last = labels[labels.length - 1];
+          if (commonTlds.has(prev.toLowerCase()) && /^[a-z]+$/.test(prev) && /^[A-Z]/.test(last)) {
+            labels.pop();
+          } else {
+            break;
+          }
+        }
+        let tld = labels[labels.length - 1];
+        if (!/^xn--/i.test(tld)) {
+          const alphaPrefix = tld.match(/^([a-zA-Z]{2,})(?=[^a-zA-Z])/);
+          if (alphaPrefix) tld = alphaPrefix[1];
+          const camelGlue = tld.match(/^([a-z]{2,10}|[A-Z][a-z]{1,9})([A-Z][a-zA-Z]*)$/);
+          if (camelGlue) tld = camelGlue[1];
+          else if ((/^[A-Z]+$/.test(tld) || /^[a-z]+$/.test(tld)) && !commonTlds.has(tld.toLowerCase()) && tld.length >= 6) {
+            const sameCaseGlue = tld.match(/^(com|org|net|edu|gov|mil|info|biz|pro|xyz|app|dev|cloud|tech|io|ai|co|me|us|uk|ca|au|de|fr|jp|cn|sg|hk|tw|kr|gg|so|sh|eu)(verification|verify|code|enter|check|inbox|didn|resend|submit|continue|login|signin|signup|back|next|please|confirm|passcode|otp|token|expires|valid|security|auth|account|email|click|step|your|sent)[a-z]*$/i);
+            if (sameCaseGlue) tld = sameCaseGlue[1];
+          }
+          labels[labels.length - 1] = tld;
+        }
+        safeAccount = `${local}@${labels.join(".")}`;
+      }
+    }
+    if (safeAccount) {
+      q += `&account=${encodeURIComponent(safeAccount)}`;
     }
     if (options && options.allowExpired !== true) {
       q += `&allow_expired=0`;
     }
-    if (options && options.strictAccount && account) {
+    if (options && options.strictAccount && safeAccount) {
       q += `&strict_account=1`;
     }
     if (typeof detectPageBrandHint === "function") {
@@ -1348,7 +1452,7 @@
     const hasExplicitEmailContext = isCloudflareAccess
       || /(?:email[-_ ]*(?:verification[-_ ]*|auth(?:entication)?[-_ ]*|login[-_ ]*|security[-_ ]*)?(?:code|otp|pin|token|passcode)|code[-_ ]*sent[-_ ]*to[-_ ]*email|邮箱验证码|邮件验证码|邮箱校验码|邮件校验码|メールアドレス認証)/i.test(combined)
       || /(?:check\s+your\s+email|sent\s+(?:it\s+|a\s+code\s+)?to\s+your\s+email|we\s+(?:just\s+|have\s+)?emailed\s+you|email\s+with\s+a\s+(?:verification\s+|authentication\s+|security\s+|login\s+)?code|enter\s+the\s+code\s+sent\s+to\s+your\s+email|发送(?:至|到).*?邮箱|已向.*?邮箱.*?发送|邮箱中的验证码|查收.*?邮件|查收.*?邮箱|メール(?:アドレス)?に.*?送信|メールに記載された)/i.test(containerPrimaryText)
-      || /(?:sent\s+(?:a\s+)?(?:\d+[- ]*(?:digit|char)\s+)?(?:verification\s+|authentication\s+|security\s+|login\s+|device\s+|auth\s+|one[-_ ]*time\s+)?(?:code|passcode|pin|otp|email)\s+to|(?:verification|authentication|security|confirmation)\s+code\s+sent\s+to|已(?:将.*?验证码)?发送(?:至|到)|已向)\s*:?\s*[^\s,;:]{1,64}@[^\s,;:]{1,64}/i.test(containerPrimaryText)
+      || /(?:sent\s+(?:a\s+)?(?:\d+[- ]*(?:digit|char(?:acter)?|letter)\s+)?(?:verification\s+|authentication\s+|security\s+|login\s+|device\s+|auth\s+|one[-_ ]*time\s+)?(?:code|passcode|pin|otp|email)\s+to|(?:verification|authentication|security|confirmation)\s+code\s+sent\s+to|已(?:将.*?验证码)?发送(?:至|到)|已向)\s*:?\s*[^\s,;:]{1,64}@[^\s,;:]{1,64}/i.test(containerPrimaryText)
       || (!hasPhoneOrSmsSignalInContext && /enter\s+the\s+(?:authentication|verification|security|login|confirmation)\s+code\s+you\s+have\s+received/i.test(containerPrimaryText));
 
     // =========================================================================
@@ -1655,7 +1759,7 @@
       } catch (e) {}
 
       const textSample = `${name} ${id} ${placeholder} ${aria} ${title} ${className} ${labelText}`;
-      if (/(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|email[-_ ]*code|security[-_ ]*code|auth(?:entication)?[-_ ]*code|confirm(?:ation)?[-_ ]*code|login[-_ ]*code|device[-_ ]*code|code[-_ ]*input|pin[-_ ]*input|otp[-_ ]*input|codeinput|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(textSample) || /(?:sent\s*to\s*(?:your\s*)?(?:email|device)|check\s*your\s*(?:email|inbox)|enter\s*the\s*(?:authentication|verification|security|login)\s*code\s*you\s*have\s*received|보낸|전송|enviado|envoyé|gesendet|отправлен)/i.test(textSample)) {
+      if (/(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|8-digit|6-char(?:acter)?|6-letter|4-char(?:acter)?|8-char(?:acter)?|alphanumeric[-_ ]*code|email[-_ ]*code|security[-_ ]*code|auth(?:entication)?[-_ ]*code|confirm(?:ation)?[-_ ]*code|login[-_ ]*code|device[-_ ]*code|code[-_ ]*input|pin[-_ ]*input|otp[-_ ]*input|codeinput|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(textSample) || /(?:sent\s*to\s*(?:your\s*)?(?:email|device)|check\s*your\s*(?:email|inbox)|enter\s*the\s*(?:authentication|verification|security|login)\s*code\s*you\s*have\s*received|보낸|전송|enviado|envoyé|gesendet|отправлен)/i.test(textSample)) {
         return true;
       }
 
@@ -1793,6 +1897,9 @@
       'input[placeholder*="login code" i]',
       'input[placeholder*="6-digit" i]',
       'input[placeholder*="4-digit" i]',
+      'input[placeholder*="8-digit" i]',
+      'input[placeholder*="6-char" i]',
+      'input[placeholder*="6-letter" i]',
       'input[placeholder*="one-time code" i]',
       'input[placeholder*="one-time password" i]',
       'input[placeholder*="one-time passcode" i]',
@@ -1891,7 +1998,19 @@
         // 5c. Form-group / control-group / field-label wrapper (standard in WHMCS / SiteGround / Bootstrap / Tailwind)
         const container = lbl.closest ? lbl.closest('.control-group, .form-group, .field, .form-item, .form-row, .input-group, .sg-field-label, [data-e2e*="field-label" i], [class*="field-label" i], fieldset, tr') : null;
         if (container) {
-          const groupInput = container.querySelector && container.querySelector('input[type="text"], input[type="tel"], input[type="number"], input[type="password"], input:not([type])');
+          const inputSel = 'input[type="text"], input[type="tel"], input[type="number"], input[type="password"], input:not([type])';
+          if (typeof container.querySelectorAll === "function") {
+            const groupInputs = Array.from(container.querySelectorAll(inputSel))
+              .filter(isInteractiveElement)
+              .filter(el => !isDisqualifiedInput(el));
+            if (groupInputs.length >= 4 && groupInputs.length <= 8) {
+              return sortInputsByVisualOrder(groupInputs);
+            }
+            if (groupInputs.length === 1) {
+              return [groupInputs[0]];
+            }
+          }
+          const groupInput = container.querySelector && container.querySelector(inputSel);
           if (groupInput && isInteractiveElement(groupInput) && !isDisqualifiedInput(groupInput)) {
             return [groupInput];
           }
@@ -1903,7 +2022,19 @@
           if (nextEl.tagName === "INPUT" && isInteractiveElement(nextEl) && !isDisqualifiedInput(nextEl)) {
             return [nextEl];
           }
-          const nextInput = nextEl.querySelector && nextEl.querySelector('input[type="text"], input[type="tel"], input[type="number"], input[type="password"], input:not([type])');
+          const inputSel = 'input[type="text"], input[type="tel"], input[type="number"], input[type="password"], input:not([type])';
+          if (typeof nextEl.querySelectorAll === "function") {
+            const nextInputs = Array.from(nextEl.querySelectorAll(inputSel))
+              .filter(isInteractiveElement)
+              .filter(el => !isDisqualifiedInput(el));
+            if (nextInputs.length >= 4 && nextInputs.length <= 8) {
+              return sortInputsByVisualOrder(nextInputs);
+            }
+            if (nextInputs.length === 1) {
+              return [nextInputs[0]];
+            }
+          }
+          const nextInput = nextEl.querySelector && nextEl.querySelector(inputSel);
           if (nextInput && isInteractiveElement(nextInput) && !isDisqualifiedInput(nextInput)) {
             return [nextInput];
           }
@@ -1953,35 +2084,180 @@
 
     const systemEmailRegex = /(?:support|help|sales|contact|privacy|terms|billing|security|abuse|info|noreply|no-reply|service|mailer-daemon)@/i;
     const dummyDomainRegex = /(?:example\.com|domain\.com|yourdomain\.com|test\.com)/i;
+    const blockBoundaryTags = new Set([
+      "DIV", "P", "LABEL", "H1", "H2", "H3", "H4", "H5", "H6",
+      "LI", "TD", "TH", "TR", "SECTION", "ARTICLE", "MAIN",
+      "HEADER", "FOOTER", "FORM", "FIELDSET", "BUTTON", "BR",
+      "UL", "OL", "DD", "DT", "BLOCKQUOTE", "HR", "OPTION", "SELECT", "TEXTAREA", "INPUT"
+    ]);
+    const commonTlds = new Set([
+      "com", "org", "net", "edu", "gov", "mil", "int", "info", "biz", "name", "pro", "xyz",
+      "io", "ai", "co", "me", "us", "uk", "ca", "au", "de", "fr", "jp", "cn", "sg", "hk",
+      "tw", "kr", "in", "id", "my", "th", "vn", "ph", "nz", "eu", "ch", "nl", "se", "no",
+      "fi", "dk", "es", "it", "pt", "pl", "cz", "at", "be", "ie", "gr", "tr", "ru", "ua",
+      "br", "mx", "ar", "cl", "za", "ae", "il", "sa",
+      "app", "dev", "gg", "so", "sh", "to", "cc", "tv", "ly", "fm", "am", "im", "is",
+      "cloud", "tech", "site", "online", "store", "shop", "email", "mail", "page", "link",
+      "live", "life", "work", "world", "space", "club", "team", "blog", "news", "media",
+      "design", "studio", "agency", "digital", "global", "network", "systems", "solutions",
+      "software", "support", "services", "company", "finance", "capital", "ventures", "academy"
+    ]);
+
+    // Extract text while preserving whitespace across block and sibling DOM boundaries
+    // so `<p>We sent a code to <span>user@example.org</span></p><label>Verification code</label>`
+    // never glues `Verification` onto the email TLD.
+    function getNodeReadableText(node, depth) {
+      if (!node) return "";
+      const d = depth || 0;
+      if (d > 12) return typeof node.textContent === "string" ? node.textContent : "";
+      if (node.nodeType === 3) {
+        return String(node.nodeValue || node.textContent || "");
+      }
+      const tag = String(node.tagName || "").toUpperCase();
+      if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT") return "";
+      if (tag === "BR") return "\n";
+
+      if (node.childNodes && node.childNodes.length > 0) {
+        let out = "";
+        for (let i = 0; i < node.childNodes.length; i++) {
+          const child = node.childNodes[i];
+          if (!child) continue;
+          const childTag = String(child.tagName || "").toUpperCase();
+          const isBlock = child.nodeType === 1 && blockBoundaryTags.has(childTag);
+          const part = getNodeReadableText(child, d + 1);
+          if (!part) continue;
+          if (out.length > 0) {
+            const prevEndsSpace = /\s$/.test(out);
+            const nextStartsSpace = /^\s/.test(part);
+            if (isBlock) {
+              if (!prevEndsSpace && !nextStartsSpace) out += "\n";
+            } else if (!prevEndsSpace && !nextStartsSpace) {
+              // Separate adjacent inline elements when the previous segment already ends
+              // in an email-like domain (e.g. <span>user@example.org</span><span>Verification</span>)
+              if (/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$/.test(out) && /^[a-zA-Z0-9]/.test(part)) {
+                out += " ";
+              }
+            }
+          }
+          out += part;
+          if (isBlock && !/\s$/.test(out)) {
+            out += "\n";
+          }
+        }
+        return out;
+      }
+
+      if (typeof node.innerText === "string" && node.innerText.length > 0) {
+        return node.innerText;
+      }
+
+      // Mock DOM fallback: when a container exposes `children` whose raw textContent sum
+      // equals the parent's concatenated textContent, join children with newlines.
+      if (Array.isArray(node.children) && node.children.length > 0) {
+        const rawParent = typeof node.textContent === "string" ? node.textContent : "";
+        let rawChildrenConcat = "";
+        const childParts = [];
+        let allHaveText = true;
+        for (let i = 0; i < node.children.length; i++) {
+          const c = node.children[i];
+          if (!c || typeof c.textContent !== "string") {
+            allHaveText = false;
+            break;
+          }
+          rawChildrenConcat += c.textContent;
+          childParts.push(getNodeReadableText(c, d + 1));
+        }
+        if (allHaveText && rawParent && rawChildrenConcat === rawParent) {
+          return childParts.join("\n");
+        }
+      }
+
+      return typeof node.textContent === "string" ? node.textContent : "";
+    }
 
     function sanitizeEmail(email) {
       if (!email) return "";
-      return email.trim().replace(/^[<(\['"]+/, "").replace(/[>'\])".,;:!?]+$/, "").trim();
+      let clean = String(email).trim().replace(/^[<(\['"]+/, "").replace(/[>'\])".,;:!?]+$/, "").trim();
+      const atIdx = clean.lastIndexOf("@");
+      if (atIdx <= 0) return clean;
+      const local = clean.slice(0, atIdx);
+      const domainRaw = clean.slice(atIdx + 1).replace(/\.+$/, "");
+      const labels = domainRaw.split(".").filter(Boolean);
+      if (labels.length < 2) return `${local}@${domainRaw}`;
+
+      // 1. Strip dot-glued sentence words after a known TLD (e.g. 'user@example.org' + '.Enter')
+      while (labels.length >= 3) {
+        const prev = labels[labels.length - 2];
+        const last = labels[labels.length - 1];
+        const prevLower = prev.toLowerCase();
+        const lastLower = last.toLowerCase();
+        const isCapAfterLowerTld = commonTlds.has(prevLower) && /^[a-z]+$/.test(prev) && /^[A-Z]/.test(last);
+        const isGluedUiWord = commonTlds.has(prevLower) && !commonTlds.has(lastLower) && /^(?:verification|verify|enter|check|please|code|resend|submit|continue|login|signin|signup|confirm|didn|back|next|click|expires|valid|otp|pin|passcode)$/i.test(lastLower);
+        if (isCapAfterLowerTld || isGluedUiWord) {
+          labels.pop();
+        } else {
+          break;
+        }
+      }
+
+      // 2. Strip non-alpha / CamelCase / same-case UI suffixes glued to the final TLD
+      let tld = labels[labels.length - 1];
+      if (!/^xn--/i.test(tld)) {
+        // Non-punycode TLDs never contain digits, hyphens, or non-ASCII characters
+        const alphaPrefix = tld.match(/^([a-zA-Z]{2,})(?=[^a-zA-Z])/);
+        if (alphaPrefix) {
+          tld = alphaPrefix[1];
+        }
+        // Mixed-case boundary inside TLD (e.g. comVerification, comVERIFICATION, comEnter, ComVerification, ukCode)
+        const camelGlue = tld.match(/^([a-z]{2,10}|[A-Z][a-z]{1,9})([A-Z][a-zA-Z]*)$/);
+        if (camelGlue) {
+          tld = camelGlue[1];
+        } else if ((/^[A-Z]+$/.test(tld) || /^[a-z]+$/.test(tld)) && !commonTlds.has(tld.toLowerCase()) && tld.length >= 6) {
+          // Same-case all-caps or all-lowercase known-TLD + UI word glue (e.g. ORGVERIFICATION, comverification)
+          const sameCaseGlue = tld.match(/^(com|org|net|edu|gov|mil|info|biz|pro|xyz|app|dev|cloud|tech|io|ai|co|me|us|uk|ca|au|de|fr|jp|cn|sg|hk|tw|kr|gg|so|sh|eu)(verification|verify|code|enter|check|inbox|didn|resend|submit|continue|login|signin|signup|back|next|please|confirm|passcode|otp|token|expires|valid|security|auth|account|email|click|step|your|sent)[a-z]*$/i);
+          if (sameCaseGlue) {
+            tld = sameCaseGlue[1];
+          }
+        }
+        labels[labels.length - 1] = tld;
+      }
+
+      return `${local}@${labels.join(".")}`;
     }
 
     function isValidUserEmail(email) {
       const clean = sanitizeEmail(email).toLowerCase();
       if (!clean) return false;
       if (!/^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+$/.test(clean)) return false;
+      const tld = clean.split(".").pop() || "";
+      if (!(/^[a-z]{2,24}$/.test(tld) || /^xn--[a-z0-9-]{2,59}$/.test(tld))) return false;
       if (systemEmailRegex.test(clean) || dummyDomainRegex.test(clean)) return false;
       return true;
     }
 
     // 1. High-fidelity sentence matching: e.g. "sent a 6-digit verification code to alex.turner@example.com"
     const sentencePatterns = [
-      /(?:sent\s+(?:a\s+)?(?:\d+[- ]*(?:digit|char)\s+)?(?:verification\s+|security\s+|login\s+|device\s+|auth\s+)?(?:code|passcode|email|link|pin)\s+to|(?:verification|security)\s+code\s+sent\s+to|code\s+(?:was|has\s+been)\s+sent\s+to|sent\s+to|sent\s+an\s+email\s+to|check\s+your\s+email\s+at|发送至|发送到|已将验证码发送(?:至|到)|已向.*?发送验证码)\s*:?\s*([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/i,
+      /(?:sent\s+(?:a\s+)?(?:\d+[- ]*(?:digit|char(?:acter)?|letter)\s+)?(?:verification\s+|security\s+|login\s+|device\s+|auth\s+)?(?:code|passcode|email|link|pin)\s+to|(?:verification|security)\s+code\s+sent\s+to|code\s+(?:was|has\s+been)\s+sent\s+to|sent\s+to|sent\s+an\s+email\s+to|check\s+your\s+email\s+at|发送至|发送到|已将验证码发送(?:至|到)|已向.*?发送验证码)\s*:?\s*([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/i,
       /(?:to\s+protect\s+your\s+account[^\n]*?sent[^\n]*?to)\s*([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/i,
       /([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)\s*(?:has\s+been\s+sent|receives?\s+(?:the|a)\s+code|接收验证码)/i
     ];
 
     const textNodes = Array.from(document.querySelectorAll("p, div, span, b, strong, em, td, li, h1, h2, h3, h4, section, main, article"));
-    for (const node of textNodes) {
-      if (node.children && node.children.length > 5) continue;
-      const text = node.textContent || "";
-      if (text.length > 500) continue;
+    // Check most specific (shortest) elements first so `<p>We sent a code to <span>...</span></p>`
+    // matches before an ancestor wrapper `<div>` that also contains adjacent form labels.
+    const scoredNodes = [];
+    for (let idx = 0; idx < textNodes.length; idx++) {
+      const node = textNodes[idx];
+      if (!node || (node.children && node.children.length > 5)) continue;
+      const text = getNodeReadableText(node);
+      if (!text || text.length > 500) continue;
+      scoredNodes.push({ text, idx });
+    }
+    scoredNodes.sort((a, b) => a.text.length - b.text.length || a.idx - b.idx);
 
+    for (const item of scoredNodes) {
       for (const pat of sentencePatterns) {
-        const match = text.match(pat);
+        const match = item.text.match(pat);
         if (match && match[1]) {
           const cleaned = sanitizeEmail(match[1]);
           if (isValidUserEmail(cleaned)) {
@@ -1996,12 +2272,12 @@
     if (otpInputs.length > 0) {
       const container = (otpInputs[0].closest ? otpInputs[0].closest("form, .card, .modal, [role='dialog'], .content, .main, #content, .login-container") : null) || otpInputs[0].parentElement;
       if (container) {
-        const tags = container.querySelectorAll("b, strong, em, .email, [data-email]");
+        const tags = container.querySelectorAll ? container.querySelectorAll("b, strong, em, .email, [data-email]") : [];
         for (const tag of tags) {
-          const t = sanitizeEmail(tag.textContent || "");
+          const t = sanitizeEmail(getNodeReadableText(tag));
           if (isValidUserEmail(t)) return t;
         }
-        const m = container.textContent.match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g);
+        const m = getNodeReadableText(container).match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g);
         if (m) {
           for (const em of m) {
             const cleaned = sanitizeEmail(em);
@@ -2014,7 +2290,7 @@
     // 3. User profile / account info blocks on auth page (e.g. WHMCS sidebar "Account Information ... alex.turner@example.com")
     const accountInfoBlocks = document.querySelectorAll(".account-info, .account-information, #account-info, .user-info, .profile-info, [class*='account' i]");
     for (const block of accountInfoBlocks) {
-      const m = block.textContent.match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g);
+      const m = getNodeReadableText(block).match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g);
       if (m) {
         for (const em of m) {
           const cleaned = sanitizeEmail(em);
@@ -2027,7 +2303,7 @@
     const emphases = document.querySelectorAll("b, strong, em, i, code, span");
     for (const el of emphases) {
       if (el.children && el.children.length > 2) continue;
-      const m = (el.textContent || "").match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g);
+      const m = getNodeReadableText(el).match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g);
       if (m) {
         for (const em of m) {
           const cleaned = sanitizeEmail(em);
@@ -2037,7 +2313,7 @@
     }
 
     // 5. Global unique user email scan across the whole page (catches custom WHMCS templates, notices, and footers)
-    const pageText = (document.body && (document.body.innerText || document.body.textContent)) || "";
+    const pageText = (document.body && getNodeReadableText(document.body)) || "";
     const allPageMatches = pageText.match(/[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+/g);
     if (allPageMatches) {
       const candidates = Array.from(new Set(allPageMatches.map(sanitizeEmail).filter(isValidUserEmail)));
@@ -2101,7 +2377,7 @@
     return null;
   }
 
-  function setInputValue(input, value) {
+  function setInputValue(input, value, options) {
     input.focus();
 
     // Native prototype setter bypass for React/controlled inputs
@@ -2121,12 +2397,14 @@
       tracker.setValue("");
     }
 
-    // Dispatch simulated paste event (handles input-otp and onPaste handlers)
-    try {
-      const dt = new DataTransfer();
-      dt.setData("text/plain", value);
-      input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }));
-    } catch (e) {}
+    // Dispatch simulated paste event (handles input-otp and onPaste handlers; skipped on per-box segmented fill)
+    if (!options || !options.skipPaste) {
+      try {
+        const dt = new DataTransfer();
+        dt.setData("text/plain", value);
+        input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }));
+      } catch (e) {}
+    }
 
     try {
       if (typeof InputEvent !== "undefined") {
@@ -2147,7 +2425,7 @@
     } catch (e) {}
   }
 
-  function setInputValueWithReactSupport(input, value) {
+  function setInputValueWithReactSupport(input, value, options) {
     input.focus();
 
     // Native prototype setter bypass for React/controlled inputs
@@ -2167,12 +2445,14 @@
       tracker.setValue("");
     }
 
-    // Dispatch simulated paste event (handles input-otp and onPaste handlers)
-    try {
-      const dt = new DataTransfer();
-      dt.setData("text/plain", value);
-      input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }));
-    } catch (e) {}
+    // Dispatch simulated paste event (handles input-otp and onPaste handlers; skipped on per-box segmented fill)
+    if (!options || !options.skipPaste) {
+      try {
+        const dt = new DataTransfer();
+        dt.setData("text/plain", value);
+        input.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }));
+      } catch (e) {}
+    }
 
     try {
       if (typeof InputEvent !== "undefined") {
@@ -2308,6 +2588,7 @@
 
   function fillAndSubmit(code, submit = true, messageId = null, receivedAtMs = 0) {
     const cleanCode = String(code).trim();
+    const upperCode = cleanCode.toUpperCase();
     const domain = detectTargetDomain();
     const recMs = Number(receivedAtMs) || 0;
     if (isCodeRejected(cleanCode, messageId, recMs, domain)) {
@@ -2316,7 +2597,7 @@
     }
 
     const state = getAuthState(domain);
-    const alreadySubmitted = (state.submissionCounts[cleanCode] || 0) >= 1;
+    const alreadySubmitted = ((state.submissionCounts && (state.submissionCounts[cleanCode] || state.submissionCounts[upperCode])) || 0) >= 1;
     const shouldActuallySubmit = submit && !alreadySubmitted;
 
     if (shouldActuallySubmit) {
@@ -2337,7 +2618,7 @@
       return true;
     }
 
-    // Case 2: Single input (including React input-otp / shadcn)
+    // Case 2: Single input (including React input-otp / shadcn, numeric, alphanumeric, or pure-letter codes)
     const setValueFn = (typeof setInputValueWithReactSupport === "function") ? setInputValueWithReactSupport : setInputValue;
     if (inputs.length === 1) {
       const input = inputs[0];
@@ -2346,10 +2627,11 @@
       return true;
     }
 
-    // Case 3: Segmented multi-box inputs (4, 6, 8 digit inputs)
+    // Case 3: Segmented multi-box inputs (4, 6, 8 numeric/alpha/alphanumeric boxes)
     if (inputs.length > 1) {
-      // Attempt clipboard paste event on first input
+      // Attempt full-code clipboard paste event on first input
       try {
+        if (typeof inputs[0].focus === "function") inputs[0].focus();
         const dt = new DataTransfer();
         dt.setData("text/plain", cleanCode);
         const pasteEvt = new ClipboardEvent("paste", {
@@ -2360,12 +2642,24 @@
         inputs[0].dispatchEvent(pasteEvt);
       } catch (e) {}
 
-      // Fill each box individually
-      for (let i = 0; i < inputs.length && i < cleanCode.length; i++) {
-        const char = cleanCode[i];
-        const inp = inputs[i];
-        setValueFn(inp, char);
-        inp.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, key: char, charCode: char.charCodeAt(0) }));
+      // If the page's paste handler already populated every box accurately, avoid clobbering it
+      const boxCount = Math.min(inputs.length, cleanCode.length);
+      const pastePopulated = boxCount > 0 && inputs.slice(0, boxCount).every(
+        (inp, idx) => String(inp.value || "").toUpperCase() === cleanCode[idx].toUpperCase()
+      );
+
+      // Otherwise fill each box individually without dispatching redundant per-box paste events
+      if (!pastePopulated) {
+        for (let i = 0; i < boxCount; i++) {
+          const char = cleanCode[i];
+          const inp = inputs[i];
+          setValueFn(inp, char, { skipPaste: true });
+          try {
+            if (typeof KeyboardEvent !== "undefined") {
+              inp.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, key: char, charCode: char.charCodeAt(0) }));
+            }
+          } catch (e) {}
+        }
       }
 
       triggerSubmit(inputs[inputs.length - 1], shouldActuallySubmit);
@@ -2460,7 +2754,7 @@
     });
     if (!diag.disqualified && diag.rule_id === "candidate_passed_disqualification") {
       const affinityCorpus = `${attrs.name} ${attrs.id} ${attrs.placeholder} ${attrs["aria-label"]} ${attrs["data-testid"]} ${attrs.class} ${s.label || s.labelText || ""} ${ctxText} ${host} ${path}`;
-      const hasPositiveAffinity = /(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|email[-_ ]*code|security[-_ ]*code|auth(?:entication)?[-_ ]*code|confirm(?:ation)?[-_ ]*code|login[-_ ]*code|device[-_ ]*code|code[-_ ]*input|pin[-_ ]*input|otp[-_ ]*input|codeinput|code[-_ ]*auth(?:entication)?|browser_auth|cdn-cgi\/access|cloudflareaccess|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(affinityCorpus);
+      const hasPositiveAffinity = /(?:verification|verify|two[-_ ]*factor|twofa|2fa|totp|otp|passcode|one[-_ ]*time|6-digit|4-digit|8-digit|6-char(?:acter)?|6-letter|4-char(?:acter)?|8-char(?:acter)?|alphanumeric[-_ ]*code|email[-_ ]*code|security[-_ ]*code|auth(?:entication)?[-_ ]*code|confirm(?:ation)?[-_ ]*code|login[-_ ]*code|device[-_ ]*code|code[-_ ]*input|pin[-_ ]*input|otp[-_ ]*input|codeinput|code[-_ ]*auth(?:entication)?|browser_auth|cdn-cgi\/access|cloudflareaccess|验证码|校验码|动态码|安全码|驗證碼|校驗碼|動態碼|安全碼|ワンタイム|認証コード|確認コード|セキュリティコード|인증번호|인증코드|확인코드|보안코드|código|codigo|verificación|verificacion|seguridad|confirmación|vérification|sécurité|verifizierung|bestätigung|sicherheit|einmalpasswort|подтверждения|верификации|безопасности|mã\s*xác\s*thực|mã\s*otp|รหัส\s*otp|รหัสยืนยัน|kode\s*verifikasi|رمز\s*التحقق|सत्यापन)/i.test(affinityCorpus);
       if (!hasPositiveAffinity) {
         return Object.assign({}, diag, {
           qualified: false,
@@ -2881,7 +3175,7 @@
 
       const fillBtn = document.getElementById("spark-otp-btn-fill");
       if (fillBtn) {
-        fillBtn.addEventListener("click", () => fillAndSubmit(data.code, true));
+        fillBtn.addEventListener("click", () => fillAndSubmit(data.code, true, data.message_id || null, data.received_at_ms || 0));
       }
       const copyBtn = document.getElementById("spark-otp-btn-copy");
       if (copyBtn) {
@@ -2942,7 +3236,7 @@
             setInputValueWithReactSupport(inputs[0], data.code);
           } else if (inputs.length > 1) {
             for (let i = 0; i < inputs.length && i < data.code.length; i++) {
-              setInputValueWithReactSupport(inputs[i], data.code[i]);
+              setInputValueWithReactSupport(inputs[i], data.code[i], { skipPaste: true });
             }
           }
         });
@@ -3279,6 +3573,7 @@
             message_id: data.otp.message_id,
             received_at_ms: receivedMs
           });
+          stopListening();
           return;
         }
       }
@@ -3300,7 +3595,17 @@
     if (getStorageItem("spark_otp_dismissed_" + domain) === "1") return;
     // (A) Capture the exact instant of the login request: button click, form submit,
     // email input Enter, and (as a DOM fallback) the email-step -> OTP-step transition.
-    installLoginRequestCapture(domain);
+    // When a manual Resend / Send code click occurs while OTP inputs are already visible,
+    // refresh the active SSE stream and pill timestamp immediately.
+    installLoginRequestCapture(domain, () => {
+      try {
+        if (findOtpInputs().length > 0) {
+          activeCode = null;
+          stopListening();
+          startListening();
+        }
+      } catch (e) {}
+    });
     const pageErr = detectPageError();
     let authState = getAuthState(domain);
 
@@ -3371,6 +3676,7 @@
     }
 
     // Dynamic SPA monitoring: observe DOM changes for OTP or passwordless email fields appearing or disappearing
+    let sawEmailStep = Boolean(emailInput);
     let mutationTimer = null;
     const observer = new MutationObserver((mutations) => {
       // Ignore mutations inside our own floating pill
@@ -3388,9 +3694,11 @@
         }
         const foundOtp = findOtpInputs();
         const emailStepNow = findEmailInput();
-        if (foundOtp.length > 0 && emailStepNow) {
+        if (emailStepNow) sawEmailStep = true;
+        if (foundOtp.length > 0 && sawEmailStep) {
           // Fallback (3): email step switched to OTP step without us seeing the click.
-          recordLoginRequest(domain, "step_transition", Date.now(), { onlyIfUnset: true });
+          // Backdate by RACE_STALE_TOLERANCE_MS so fast mail delivery during the API round-trip isn't excluded.
+          recordLoginRequest(domain, "step_transition", Date.now() - RACE_STALE_TOLERANCE_MS, { onlyIfUnset: true });
         }
         if (foundOtp.length > 0 && !isListening && !activeCode) {
           startListening();

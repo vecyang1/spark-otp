@@ -9,6 +9,7 @@ from pathlib import Path
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Optional
 from .spark_client import SparkClient
+from .extractor import sanitize_account_email
 from .config import config
 from .telemetry import telemetry
 from .contracts import OPENAPI_SPEC, SCHEMAS
@@ -154,7 +155,7 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
     def handle_diagnose(self, params):
         t0 = time.perf_counter()
         domain = params.get("domain", params.get("url", params.get("target", [None])))[0]
-        account = params.get("account", [None])[0]
+        account = sanitize_account_email(params.get("account", [None])[0])
         dom_sample = params.get("dom_sample", [None])[0]
         brand_hint = params.get("hint", params.get("brand_hint", [None]))[0]
         allow_expired_param = params.get("allow_expired", [None])[0]
@@ -245,7 +246,7 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
     def handle_otp(self, params):
         t0 = time.perf_counter()
         domain = params.get("domain", [None])[0]
-        account = params.get("account", [None])[0]
+        account = sanitize_account_email(params.get("account", [None])[0])
         brand_hint = params.get("hint", params.get("brand_hint", [None]))[0]
         strict_account_param = params.get("strict_account", [None])[0]
         strict_account = strict_account_param.lower() in ("1", "true", "yes") if strict_account_param else False
@@ -348,7 +349,7 @@ class OTPRequestHandler(BaseHTTPRequestHandler):
     def handle_stream(self, params):
         """Server-Sent Events (SSE) stream."""
         domain = params.get("domain", [None])[0]
-        account = params.get("account", [None])[0]
+        account = sanitize_account_email(params.get("account", [None])[0])
         brand_hint = params.get("hint", params.get("brand_hint", [None]))[0]
         strict_account_param = params.get("strict_account", [None])[0]
         strict_account = strict_account_param.lower() in ("1", "true", "yes") if strict_account_param else False
