@@ -25,6 +25,10 @@ from .extractor import (
     recipient_matches_account,
     COMMON_SERVICE_SUBDOMAINS,
     OTP_INTENT_PATTERN,
+    SECURITY_LOGIN_ALERT_SUBJECT_RE,
+    has_preheader_padding,
+    _strip_html_body,
+    _strip_urls_for_code_extraction,
     parse_email_date,
     domain_matches,
 )
@@ -275,7 +279,7 @@ class SparkClient:
         for pk, sender, s_name, recipient, subject, body, received_ts in rows:
             if exclude_msg_ids_set and str(pk) in exclude_msg_ids_set:
                 continue
-            if since_time is not None and received_ts <= since_time:
+            if since_time is not None and received_ts < since_time:
                 continue
             if first_expired_otp and received_ts < (current_time.timestamp() - max_age):
                 break
@@ -609,7 +613,7 @@ class SparkClient:
         for pk, sender, recipient, subject, short_body, received_ts, unseen in rows:
             if exclude_msg_ids_set and str(pk) in exclude_msg_ids_set:
                 continue
-            if since_time is not None and received_ts <= since_time:
+            if since_time is not None and received_ts < since_time:
                 continue
             if first_expired_otp and received_ts < (current_time.timestamp() - max_age):
                 break
@@ -687,46 +691,58 @@ class SparkClient:
             ]
             has_otp_intent = has_otp_intent or bool(matching_rules)
 
-            if has_otp_intent:
-                domain_ok = not domain
-                if domain:
-                    for r in matching_rules:
-                        if domain_matches(domain, None, r.associated_domains, sender, subject, short_body, brand_hint=brand_hint):
-                            domain_ok = True
-                            break
-                    if not domain_ok:
-                        domain_ok = domain_matches(domain, None, None, sender, subject, short_body, brand_hint=brand_hint)
+            domain_ok = not domain
+            if domain:
+                for r in matching_rules:
+                    if domain_matches(domain, None, r.associated_domains, sender, subject, short_body, brand_hint=brand_hint):
+                        domain_ok = True
+                        break
+                if not domain_ok:
+                    domain_ok = domain_matches(domain, None, None, sender, subject, short_body, brand_hint=brand_hint)
 
-                if domain_ok:
-                    full_thread = self.fetch_thread(str(pk))
-                    if full_thread:
-                        res_full = extract_otp_from_thread(
+            # Domain-scoped fallback for security/login-alert subjects (e.g. "Security alert: New device login attempt")
+            # or ESP preheader-padded shortBody (e.g. SendGrid U+034F runs hiding the entire email body from shortBody).
+            should_fetch_full = False
+            if has_otp_intent and domain_ok:
+                should_fetch_full = True
+            elif domain and domain_ok:
+                is_recent_for_full = include_expired or (current_time.timestamp() - received_ts) <= max(max_age, 1800)
+                if is_recent_for_full and (
+                    SECURITY_LOGIN_ALERT_SUBJECT_RE.search(subject)
+                    or has_preheader_padding(short_body)
+                ):
+                    should_fetch_full = True
+
+            if should_fetch_full:
+                full_thread = self.fetch_thread(str(pk))
+                if full_thread:
+                    res_full = extract_otp_from_thread(
+                        thread_text=full_thread,
+                        domain_filter=domain,
+                        rules=config.rules,
+                        now=current_time,
+                        max_age_seconds=max_age,
+                        allow_expired=False,
+                        brand_hint=brand_hint,
+                    )
+                    if res_full:
+                        res_full = self._stamp_row_precision(res_full, pk, received_ts, current_time)
+                        if (not exclude_codes_set or res_full.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full.message_id not in exclude_msg_ids_set):
+                            return res_full
+                    elif include_expired and first_expired_otp is None:
+                        res_full_exp = extract_otp_from_thread(
                             thread_text=full_thread,
                             domain_filter=domain,
                             rules=config.rules,
                             now=current_time,
                             max_age_seconds=max_age,
-                            allow_expired=False,
+                            allow_expired=True,
                             brand_hint=brand_hint,
                         )
-                        if res_full:
-                            res_full = self._stamp_row_precision(res_full, pk, received_ts, current_time)
-                            if (not exclude_codes_set or res_full.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full.message_id not in exclude_msg_ids_set):
-                                return res_full
-                        elif include_expired and first_expired_otp is None:
-                            res_full_exp = extract_otp_from_thread(
-                                thread_text=full_thread,
-                                domain_filter=domain,
-                                rules=config.rules,
-                                now=current_time,
-                                max_age_seconds=max_age,
-                                allow_expired=True,
-                                brand_hint=brand_hint,
-                            )
-                            if res_full_exp:
-                                res_full_exp = self._stamp_row_precision(res_full_exp, pk, received_ts, current_time)
-                                if (not exclude_codes_set or res_full_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full_exp.message_id not in exclude_msg_ids_set):
-                                    first_expired_otp = res_full_exp
+                        if res_full_exp:
+                            res_full_exp = self._stamp_row_precision(res_full_exp, pk, received_ts, current_time)
+                            if (not exclude_codes_set or res_full_exp.code.strip().upper() not in exclude_codes_set) and (not exclude_msg_ids_set or res_full_exp.message_id not in exclude_msg_ids_set):
+                                first_expired_otp = res_full_exp
 
         if include_expired and first_expired_otp:
             return first_expired_otp
@@ -851,56 +867,58 @@ class SparkClient:
             return []
 
     def fetch_thread(self, message_id: str) -> str:
-        """Fetch thread details for a specific message ID."""
+        """Fetch thread details for a specific message ID (preferring sub-2ms local cache.sqlite before CLI IPC)."""
         msg_key = str(message_id)
         if hasattr(self, "_thread_cache") and msg_key in self._thread_cache:
             return self._thread_cache[msg_key]
         out = ""
+
+        # Fast-path: read cached HTML body from Spark's local cache.sqlite (<2ms, exact DB timestamp, zero CLI IPC)
         try:
-            if shutil.which(self.spark_bin):
-                res = subprocess.run(
-                    [self.spark_bin, "thread", msg_key],
-                    capture_output=True,
-                    text=True,
-                    timeout=15
-                )
-                if res.returncode == 0 and res.stdout:
-                    out = res.stdout
+            html_body = self._get_html_body_from_cache_sqlite(msg_key)
+            if html_body:
+                db_path = self._find_sqlite_db()
+                sender = ""
+                recipient = ""
+                subject = ""
+                dt_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                if db_path:
+                    try:
+                        uri = f"file:{db_path.resolve()}?mode=ro"
+                        conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+                        try:
+                            cur = conn.cursor()
+                            cur.execute(
+                                "SELECT messageFrom, messageTo, subject, receivedDate FROM messages WHERE pk = ? LIMIT 1;",
+                                (int(msg_key),)
+                            )
+                            row = cur.fetchone()
+                            if row:
+                                sender = row[0] or ""
+                                recipient = row[1] or ""
+                                subject = row[2] or ""
+                                if row[3]:
+                                    dt_str = datetime.fromtimestamp(row[3]).strftime("%Y-%m-%d %H:%M:%S")
+                        finally:
+                            conn.close()
+                    except Exception:
+                        pass
+                out = f"ID: {msg_key}\nSubject: {subject}\nFrom: {sender}\nTo: {recipient}\nDate: {dt_str}\n\n{html_body}\n"
         except Exception:
             pass
 
-        # Fallback to cache.sqlite messageBodyHtml if CLI is unavailable or failed
+        # Fallback: invoke Spark Desktop CLI IPC when cache.sqlite is unavailable or lacks this message body
         if not out:
             try:
-                html_body = self._get_html_body_from_cache_sqlite(msg_key)
-                if html_body:
-                    db_path = self._find_sqlite_db()
-                    sender = ""
-                    recipient = ""
-                    subject = ""
-                    dt_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    if db_path:
-                        try:
-                            uri = f"file:{db_path.resolve()}?mode=ro"
-                            conn = sqlite3.connect(uri, uri=True, timeout=2.0)
-                            try:
-                                cur = conn.cursor()
-                                cur.execute(
-                                    "SELECT messageFrom, messageTo, subject, receivedDate FROM messages WHERE pk = ? LIMIT 1;",
-                                    (int(msg_key),)
-                                )
-                                row = cur.fetchone()
-                                if row:
-                                    sender = row[0] or ""
-                                    recipient = row[1] or ""
-                                    subject = row[2] or ""
-                                    if row[3]:
-                                        dt_str = datetime.fromtimestamp(row[3]).strftime("%Y-%m-%d %H:%M:%S")
-                            finally:
-                                conn.close()
-                        except Exception:
-                            pass
-                    out = f"ID: {msg_key}\nSubject: {subject}\nFrom: {sender}\nTo: {recipient}\nDate: {dt_str}\n\n{html_body}\n"
+                if shutil.which(self.spark_bin):
+                    res = subprocess.run(
+                        [self.spark_bin, "thread", msg_key],
+                        capture_output=True,
+                        text=True,
+                        timeout=15
+                    )
+                    if res.returncode == 0 and res.stdout:
+                        out = res.stdout
             except Exception:
                 pass
 
@@ -963,7 +981,7 @@ class SparkClient:
             if email.date_str:
                 parsed_date = parse_email_date(email.date_str)
                 if parsed_date:
-                    if since_time is not None and parsed_date.timestamp() <= since_time:
+                    if since_time is not None and parsed_date.timestamp() < since_time:
                         continue
                     age = (current_time - parsed_date).total_seconds()
                     allowed_cutoff = 86400 if include_expired else (max(max_age * 2, 7200) if domain else max_age)
@@ -1402,9 +1420,9 @@ process.stdout.write(JSON.stringify(res));
                         for term in search_terms[:5]:
                             cur.execute(
                                 "SELECT pk, accountPk, receivedDate, messageFrom, messageTo, subject, shortBody "
-                                "FROM messages WHERE subject LIKE ? OR shortBody LIKE ? "
+                                "FROM messages WHERE subject LIKE ? OR shortBody LIKE ? OR messageFrom LIKE ? "
                                 "ORDER BY receivedDate DESC, pk DESC LIMIT 10;",
-                                (f"%{term}%", f"%{term}%")
+                                (f"%{term}%", f"%{term}%", f"%{term}%")
                             )
                             target_rows.extend(cur.fetchall())
 
@@ -1467,12 +1485,14 @@ process.stdout.write(JSON.stringify(res));
 
                         dt_str = rec_dt.strftime("%Y-%m-%d %H:%M:%S")
                         thread_text = f"ID: {pk}\nSubject: {subj}\nFrom: {msg_from}\nTo: {msg_to}\nDate: {dt_str}\n\n{short_b}\n"
+                        diag_max_age = getattr(config, "max_email_age_seconds", 600)
+                        full_t = None
                         otp_cand = extract_otp_from_thread(
                             thread_text=thread_text,
                             domain_filter=domain,
                             rules=config.rules,
                             now=current_time,
-                            max_age_seconds=86400 * 30,
+                            max_age_seconds=diag_max_age,
                             allow_expired=True,
                             brand_hint=brand_hint,
                         )
@@ -1487,7 +1507,7 @@ process.stdout.write(JSON.stringify(res));
                                         domain_filter=domain,
                                         rules=config.rules,
                                         now=current_time,
-                                        max_age_seconds=86400 * 30,
+                                        max_age_seconds=diag_max_age,
                                         allow_expired=True,
                                         brand_hint=brand_hint,
                                     )
@@ -1501,7 +1521,7 @@ process.stdout.write(JSON.stringify(res));
                                     domain_filter=domain,
                                     rules=config.rules,
                                     now=current_time,
-                                    max_age_seconds=86400 * 30,
+                                    max_age_seconds=diag_max_age,
                                     allow_expired=True,
                                     brand_hint=brand_hint,
                                 )
@@ -1515,9 +1535,12 @@ process.stdout.write(JSON.stringify(res));
 
                         extracted_code = otp_cand.code if otp_cand else None
                         callback_url = otp_cand.callback_url if otp_cand else None
-                        is_expired = otp_cand.is_expired if otp_cand else (age_secs > 600)
+                        is_expired = otp_cand.is_expired if otp_cand else (age_secs > diag_max_age)
 
-                        has_intent = bool(matched_rule or OTP_INTENT_PATTERN.search(subj) or OTP_INTENT_PATTERN.search(short_b))
+                        full_t_intent = bool(
+                            full_t and OTP_INTENT_PATTERN.search(_strip_urls_for_code_extraction(_strip_html_body(full_t)))
+                        )
+                        has_intent = bool(matched_rule or OTP_INTENT_PATTERN.search(subj) or OTP_INTENT_PATTERN.search(short_b) or full_t_intent)
                         if not has_intent:
                             status = "NON_AUTH_EMAIL"
                             failure_reason = "No auth/OTP intent or known provider rule matched"

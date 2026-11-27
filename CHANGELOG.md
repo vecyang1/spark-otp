@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.4] - 2026-11-27
+
+### Added
+- **Spaceship Email 2FA Rule & Universal Standalone Alphanumeric/Hex OTP Extraction (`spark_otp/config.py`, `spark_otp/extractor.py`)**:
+  - Added dedicated `spaceship_auth` rule (`alert@spaceship.com` / `@spaceship.com`, 30-minute TTL) handling both `Security alert: New device or new location login attempt` and `Important action required: Please verify account` emails with 6-character lowercase hex OTP codes (e.g. `62c2fe`, `c16fae`, `723204`, including rare all-hex-letter codes).
+  - Added universal standalone mixed alphanumeric/hex OTP line extraction (`_extract_standalone_alnum_otp()`) gated by explicit OTP prompt / expiry cues on adjacent lines and non-auth label guards (username, order, version, timestamp rejection).
+  - Extended `detect_ttl()` to parse spelled-out English durations (`thirty minutes`, `fifteen minutes`, `one hour`, `an hour`, optional `in`/`after`).
+
+### Fixed
+- **SendGrid / Tracking URL Noise Poisoning (`spark_otp/extractor.py`)**:
+  - Stripped markdown link destinations (`[label](https://...)` -> `label`), bare HTTP(S) URLs, and invisible email preheader spacer chars (`U+034F`, `U+00AD`, `U+2007`, `U+200B`–`U+200D`, `U+FEFF`, `U+2060`) prior to universal OTP intent/code matching (`_strip_urls_for_code_extraction()`), and added enclosing URL-token rejection on every candidate match.
+  - Enforced word boundaries (`\b2fa\b`, `\bmfa\b`, `\botp\b`) and mandatory keyword-to-code separators so SendGrid click URLs containing `-2FA...` / `-2Fa...` / `-2BV-2F4-` can never hijack OTP extraction.
+- **Preheader-Padded `shortBody` Full-Body Fetch, `cache.sqlite` Fast-Path, Same-Second `since_time` Parity & `diagnose()` Accuracy (`spark_otp/spark_client.py`)**:
+  - Updated `_get_otp_from_sqlite()` to trigger full-body fetch for recent domain-matched emails with security/login-alert subjects (`SECURITY_LOGIN_ALERT_SUBJECT_RE`) or ESP invisible preheader padding (`has_preheader_padding()`).
+  - Reordered `fetch_thread()` to read local Spark `cache.sqlite` (`messageBodyHtml`) first (<2ms, exact DB timestamp, zero Spark CLI IPC latency) before falling back to `spark thread`.
+  - Aligned `since_time` boundary across SQLite, Apple Mail, and CLI search from `<=` to `<` (matching SQL `>=` and `diagnose()` `<`) so fresh codes arriving in the same integer second as `loginRequestAt` are never dropped.
+  - Fixed `diagnose()` passing `max_age_seconds=86400*30` (which masked 10-hour-old universal OTPs as `VALID_ACTIVE` / `is_expired=False`), added `messageFrom LIKE ?` to SQL target search, and included fetched full-body intent in status classification.
+- **Spaceship `/zh/auth/secondFactor/` DOM, Concurrency & Resend/Error Hardening (`extension/content.js`, `userscript/spark-otp.user.js`)**:
+  - Added href-less `a:not([href])` fallback in `findResendControl()`, expanded Chinese invalid/expired code error matching in `detectPageError()` with a static resend/help-question guard (`isStaticResendOrHelpHint`, preventing normal prompts like `您的验证码已过期或您没有收到？ 重新发送验证码` or `Code expired or didn't receive it?` from falsely tripping error rejection), added `second[-_ ]?factor` affinity/form context (strictly behind Priority Gates A–D so TOTP stays blocked), respected `aria-disabled="true"` in `triggerSubmit()`, and prevented in-flight `EventSource`/`pollOnce` responses carrying the already-filled `activeCode` from clobbering the green success pill with a false `rejected` banner when no page error exists.
+
+### Tests
+- Added positive & adversarial suites in `tests/test_extractor.py`, `tests/test_sqlite_backend.py`, and `tests/test_dom_detection.py` (`test_spaceship_second_factor_zh_detection_hex_fill_resend_and_totp_guard`); verified **241/241 pytest**, `scripts/sync_engine.py --check`, `scripts/e2e_extension_smoke.py`, and live Spaceship `/api/otp` + `/api/diagnose` + browser autofill E2E.
+
 ## [1.7.3] - 2026-11-26
 
 ### Added

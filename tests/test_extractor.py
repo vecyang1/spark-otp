@@ -1507,6 +1507,151 @@ Date: 2026-11-26 16:54:00
         self.assertFalse(recipient_matches_account("user@" + "example.com.au", base))
         self.assertFalse(recipient_matches_account("", base))
 
+    def test_spaceship_security_alert_hex_and_sendgrid_url_isolation(self):
+        """
+        Spaceship login/verify emails use standalone 6-char lowercase hex codes (e.g. 62c2fe, c16fae),
+        SendGrid click URLs containing `-2FA...` / `-2BV-2F4-` tracking noise, and spelled-out
+        'thirty minutes' TTL. Both spaceship_auth rule and universal fallback must extract the exact
+        code (never URL garbage) with 1800s TTL.
+        """
+        now = datetime(2026, 11, 27, 9, 10, 0)
+        for idx, (subject, code, expiry_line) in enumerate([
+            (
+                "Security alert: New device or new location login attempt",
+                "62c2fe",
+                "The code will expire in thirty minutes after the request was made.",
+            ),
+            (
+                "Security alert: New device or new location login attempt",
+                "723204",
+                "The code will expire in thirty minutes after the request was made.",
+            ),
+            (
+                "Important action required: Please verify account",
+                "c16fae",
+                "The code will expire thirty minutes after the request was made.",
+            ),
+        ]):
+            raw = f"""
+ID: {820100 + idx}
+Subject: {subject}
+From: Spaceship <alert@spaceship.com>
+To: Alex <user@example.com>
+Date: 2026-11-27 09:05:47
+
+An attempt to access your Spaceship account was made from a new device or a new location
+
+# [Login attempted from new device or new location](https://u59241194.ct.sendgrid.net/ls/click?upn=u001.abc-2BcVEllufc-2FAvf31iL-2FB6za-2BV-2F4-2B-2Fauzy7lr26-2F6is-3D-3D)
+
+Hi Alex,
+
+Please confirm the login request is from you to protect your Spaceship account against unauthorized access.
+
+Simply copy and paste the temporary authentication code into the verification form on the Spaceship website.
+
+{code}
+
+{expiry_line}
+
+## Account login request
+
+Username:
+
+alexuser123
+
+IP Address:
+
+198.51.100.42
+"""
+            res_rule = extract_otp_from_thread(raw, domain_filter="spaceship.com", now=now)
+            self.assertIsNotNone(res_rule, f"Rule missed Spaceship code {code}")
+            self.assertEqual(res_rule.code, code)
+            self.assertEqual(res_rule.service, "spaceship_auth")
+            exp_dt = datetime.fromisoformat(res_rule.expires_at)
+            rec_dt = datetime.fromisoformat(res_rule.received_at)
+            self.assertEqual((exp_dt - rec_dt).total_seconds(), 1800.0)
+
+            res_univ = extract_otp_from_thread(raw, domain_filter="spaceship.com", rules=[], now=now)
+            self.assertIsNotNone(res_univ, f"Universal fallback missed Spaceship code {code}")
+            self.assertEqual(res_univ.code, code)
+            self.assertEqual(res_univ.service, "universal_otp")
+
+        # Rare all-hex-letter code (a-f only) must still be extracted by the anchored spaceship_auth rule
+        raw_all_hex_letters = """
+ID: 820109
+Subject: Security alert: New device or new location login attempt
+From: Spaceship <alert@spaceship.com>
+To: Alex <user@example.com>
+Date: 2026-11-27 09:05:47
+
+Simply copy and paste the temporary authentication code into the verification form on the Spaceship website.
+
+cafeab
+
+The code will expire in thirty minutes after the request was made.
+"""
+        res_hex_alpha = extract_otp_from_thread(raw_all_hex_letters, domain_filter="spaceship.com", now=now)
+        self.assertIsNotNone(res_hex_alpha)
+        self.assertEqual(res_hex_alpha.code, "cafeab")
+        self.assertEqual(res_hex_alpha.service, "spaceship_auth")
+
+    def test_sendgrid_url_noise_and_standalone_alnum_adversarial_rejection(self):
+        """
+        Adversarial check: SendGrid click URLs containing `-2FAvf31iL`, `-2Fauzy7lr26`, and
+        `-2BV-2F4-` inside non-OTP alerts or marketing emails must NEVER trigger false OTP extraction,
+        and non-auth standalone alphanumeric tokens (usernames, orders, versions) must be rejected.
+        """
+        now = datetime(2026, 11, 27, 9, 10, 0)
+
+        raw_url_noise = """
+ID: 820201
+Subject: Unsuccessful login attempts on your account
+From: Spaceship <alert@spaceship.com>
+To: user@example.com
+Date: 2026-11-27 09:05:00
+
+# [Unsuccessful login attempts](https://u59241194.ct.sendgrid.net/ls/click?upn=u001.VePtRIlo-2BcVEllufc-2FAvf31iL-2FB6za-2BV-2F4-2B-2Fauzy7lr26-3D-3D)
+
+We've noticed multiple attempts to access your account. Secure your account and ensure 2FA (two-factor authentication) is enabled.
+"""
+        self.assertIsNone(
+            extract_otp_from_thread(raw_url_noise, domain_filter="spaceship.com", now=now),
+            "SendGrid URL noise (-2FAvf31iL / -2BV-2F4- / -2Fauzy7lr26) must NEVER be extracted as OTP",
+        )
+
+        raw_non_auth_alnum = """
+ID: 820202
+Subject: Account notification from ExampleCloud
+From: ExampleCloud <noreply@example.com>
+To: user@example.com
+Date: 2026-11-27 09:05:00
+
+Your account login verification reminder.
+
+Username:
+
+ab12cd
+
+Version:
+
+v123456
+
+Please contact support if you did not request this change.
+"""
+        self.assertIsNone(
+            extract_otp_from_thread(raw_non_auth_alnum, domain_filter="example.com", now=now),
+            "Username/version standalone alphanumeric lines must not be extracted as OTP",
+        )
+
+    def test_detect_ttl_english_word_numbers(self):
+        """detect_ttl must parse spelled-out English minute/hour durations."""
+        from spark_otp.extractor import detect_ttl
+        self.assertEqual(detect_ttl("The code will expire in thirty minutes after the request."), 1800)
+        self.assertEqual(detect_ttl("The code will expire thirty minutes after the request."), 1800)
+        self.assertEqual(detect_ttl("This passcode is valid for fifteen minutes."), 900)
+        self.assertEqual(detect_ttl("Expires in one hour."), 3600)
+        self.assertEqual(detect_ttl("Valid for an hour."), 3600)
+
 if __name__ == "__main__":
     unittest.main()
 

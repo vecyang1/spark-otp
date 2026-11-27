@@ -674,6 +674,123 @@ Date: {dt_str}
         self.assertIsNotNone(fallback_res)
         self.assertEqual(fallback_res.code, "056957")
 
+    def test_sqlite_preheader_padded_security_alert_and_cache_fastpath(self):
+        """
+        Emails whose shortBody is filled with invisible preheader spacers (U+034F) and whose subject is
+        'Security alert: New device or new location login attempt' must trigger full-body fetch via
+        sibling cache.sqlite (<2ms fast-path) and extract lowercase hex codes with accurate second precision.
+        """
+        now = datetime(2026, 11, 27, 9, 10, 0)
+        ts_msg = int(datetime(2026, 11, 27, 9, 5, 47).timestamp())
+        padded_short = "An attempt to access your Spaceship account was made from a new device or a new location" + (" \u034f" * 80)
+
+        insert_mock_message(
+            self.db_path,
+            pk=742786,
+            sender="Spaceship <alert@spaceship.com>",
+            recipient="Alex <user@example.com>",
+            subject="Security alert: New device or new location login attempt",
+            short_body=padded_short,
+            received_ts=ts_msg,
+        )
+
+        # Populate sibling cache.sqlite with raw HTML body
+        cache_path = os.path.join(os.path.dirname(self.db_path), "cache.sqlite")
+        cconn = sqlite3.connect(cache_path)
+        cconn.execute("CREATE TABLE messageBodyHtml (messagePk INTEGER PRIMARY KEY, data BLOB)")
+        html_body = (
+            "<html><body>"
+            "<div style='display:none'>An attempt to access your Spaceship account" + ("&#847; " * 40) + "</div>"
+            "<p>Simply copy and paste the temporary authentication code into the verification form on the Spaceship website.</p>"
+            "<div>62c2fe</div>"
+            "<p>The code will expire in thirty minutes after the request was made.</p>"
+            "</body></html>"
+        ).encode("utf-8")
+        cconn.execute("INSERT INTO messageBodyHtml (messagePk, data) VALUES (742786, ?)", (html_body,))
+        cconn.commit()
+        cconn.close()
+
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+        otp = client.get_latest_otp(domain="spaceship.com", now=now)
+        self.assertIsNotNone(otp, "Must extract 62c2fe from cache.sqlite HTML when shortBody is U+034F preheader-padded")
+        self.assertEqual(otp.code, "62c2fe")
+        self.assertEqual(otp.service, "spaceship_auth")
+        self.assertIn("09:05:47", otp.received_at)
+        self.assertFalse(otp.is_expired)
+
+        # Same-second since_time boundary (received_ts == since_time) must be accepted; since_time + 1 excluded
+        otp_same_sec = client.get_latest_otp(domain="spaceship.com", since_time=ts_msg, now=now)
+        self.assertIsNotNone(otp_same_sec, "Email arriving in the exact same integer second as since_time must be accepted")
+        self.assertEqual(otp_same_sec.code, "62c2fe")
+        otp_after = client.get_latest_otp(domain="spaceship.com", since_time=ts_msg + 1, now=now)
+        self.assertIsNone(otp_after, "Email older than since_time must remain excluded")
+
+    def test_sqlite_generic_provider_preheader_padding_and_diagnose_expiry_accuracy(self):
+        """
+        Unknown providers using U+034F preheader padding + security-alert subject must trigger full-body
+        fetch only for matching domain, and diagnose() must accurately mark 10-hour-old universal OTPs as EXPIRED.
+        """
+        now = datetime(2026, 11, 27, 9, 10, 0)
+        ts_recent = int((now - timedelta(seconds=60)).timestamp())
+        ts_old = int((now - timedelta(hours=10)).timestamp())
+        padded = "New sign-in detected for your AcmeCloud account" + (" \u034f" * 40)
+
+        insert_mock_message(
+            self.db_path,
+            pk=749001,
+            sender="AcmeCloud <alert@acme-cloud.net>",
+            recipient="user@example.com",
+            subject="Security alert: New device login attempt",
+            short_body=padded,
+            received_ts=ts_recent,
+        )
+        insert_mock_message(
+            self.db_path,
+            pk=749002,
+            sender="AcmeCloud <alert@acme-cloud.net>",
+            recipient="user@example.com",
+            subject="Security alert: New device login attempt",
+            short_body=padded,
+            received_ts=ts_old,
+        )
+
+        client = SparkClient(sqlite_path=self.db_path, spark_bin="/usr/bin/false")
+        fetched = []
+
+        def mock_fetch(msg_id):
+            fetched.append(msg_id)
+            ts = ts_recent if msg_id == "749001" else ts_old
+            code = "9b4e21" if msg_id == "749001" else "4d7a10"
+            dt_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+            return (
+                f"ID: {msg_id}\nSubject: Security alert: New device login attempt\n"
+                "From: AcmeCloud <alert@acme-cloud.net>\nTo: user@example.com\n"
+                f"Date: {dt_str}\n\n"
+                "Simply copy and paste the temporary authentication code into the verification form.\n\n"
+                f"{code}\n\n"
+                "The code will expire in ten minutes.\n"
+            )
+
+        client.fetch_thread = mock_fetch
+
+        # Unrelated domain must NOT fetch full body
+        self.assertIsNone(client.get_latest_otp(domain="unrelated.example.org", now=now))
+        self.assertEqual(fetched, [], "Unrelated domain must not fetch full body for preheader-padded email")
+
+        # Matching domain extracts universal standalone hex OTP
+        otp = client.get_latest_otp(domain="acme-cloud.net", now=now)
+        self.assertIsNotNone(otp)
+        self.assertEqual(otp.code, "9b4e21")
+        self.assertEqual(otp.service, "universal_otp")
+
+        # diagnose() must accurately mark the 10-hour-old candidate as EXPIRED (not VALID_ACTIVE via 30-day TTL bug)
+        diag = client.diagnose(target="acme-cloud.net", allow_expired=True, now=now)
+        old_cand = next((c for c in diag["candidates"] if c["message_id"] == "749002"), None)
+        self.assertIsNotNone(old_cand)
+        self.assertEqual(old_cand["extracted_code"], "4d7a10")
+        self.assertTrue(old_cand["is_expired"], "10-hour-old universal OTP must be flagged is_expired=True in diagnose()")
+        self.assertEqual(old_cand["status"], "EXPIRED")
+
 if __name__ == "__main__":
     unittest.main()
 

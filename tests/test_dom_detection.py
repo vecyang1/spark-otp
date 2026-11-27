@@ -3374,6 +3374,245 @@ class TestGluedEmailAndPureAlphaOtp(unittest.TestCase):
             self.assertTrue(r["totpBlocked"], f"{target}: Authenticator TOTP must stay blocked")
             self.assertTrue(r["smsBlocked"], f"{target}: SMS/Phone modal must stay blocked")
 
+    def test_spaceship_second_factor_zh_detection_hex_fill_resend_and_totp_guard(self):
+        """
+        Verify Spaceship's /zh/auth/secondFactor/ Email 2FA flow:
+        - Single 6-char OTP input detected under Chinese label ('请输入您的6位验证码')
+        - Masked email ('y********l@g*******m') returns null from findEmailOnPage()
+        - Lowercase hex code ('62c2fe') fills cleanly without mangling case and submits enabled '验证' button
+        - aria-disabled='true' submit button is not clicked; href-less <a class="gb-link">重新发送验证码</a> is found
+        - Chinese error text ('验证码无效' / '验证码已过期') triggers detectPageError()
+        - Adversarial: /zh/auth/secondFactor/ in Authenticator App (TOTP) mode remains blocked by Gate B
+        """
+        content_js = (REPO_ROOT / "extension" / "content.js").read_text(encoding="utf-8")
+        user_js = (REPO_ROOT / "userscript" / "spark-otp.user.js").read_text(encoding="utf-8")
+
+        js_code = r"""
+        const vm = require("vm");
+        const contentJs = __CONTENT_JS__;
+        const userJs = __USER_JS__;
+
+        function extractSsot(src) {
+            const s = "// === BEGIN CORE DOM DETECTION ENGINE (SSOT) ===";
+            const e = "// === END CORE DOM DETECTION ENGINE (SSOT) ===";
+            const si = src.indexOf(s);
+            const ei = src.indexOf(e, si);
+            return src.slice(si + s.length, ei);
+        }
+
+        function runCase(src) {
+            const storage = {};
+            const codeInput = {
+                tagName: "INPUT",
+                type: "text",
+                name: "code",
+                id: "email-twofa-code",
+                maxLength: 6,
+                placeholder: "",
+                value: "",
+                disabled: false,
+                readOnly: false,
+                offsetParent: {},
+                events: [],
+                getAttribute(k) {
+                    const m = { maxlength: "6", type: "text", name: "code", id: "email-twofa-code", autocomplete: "one-time-code" };
+                    return m[k.toLowerCase()] ?? null;
+                },
+                focus() {},
+                dispatchEvent(evt) { this.events.push(evt.type); },
+                closest(sel) {
+                    if (sel.includes("form")) return formEl;
+                    return null;
+                }
+            };
+            let verifyClicks = 0;
+            let disabledClicks = 0;
+            const verifyBtn = {
+                tagName: "BUTTON",
+                type: "submit",
+                textContent: "验证",
+                value: "",
+                disabled: false,
+                offsetParent: {},
+                getAttribute(k) { return k === "aria-disabled" ? "false" : null; },
+                click() { verifyClicks++; }
+            };
+            const ariaDisabledBtn = {
+                tagName: "BUTTON",
+                type: "submit",
+                textContent: "验证",
+                value: "",
+                disabled: false,
+                offsetParent: {},
+                getAttribute(k) { return k === "aria-disabled" ? "true" : null; },
+                click() { disabledClicks++; }
+            };
+            const resendLink = {
+                tagName: "A",
+                textContent: "重新发送验证码",
+                value: "",
+                disabled: false,
+                getAttribute() { return null; },
+                closest() { return null; }
+            };
+            const labelEl = {
+                tagName: "LABEL",
+                htmlFor: "email-twofa-code",
+                textContent: "请输入您的6位验证码",
+                children: [],
+                getAttribute(k) { return k === "for" ? "email-twofa-code" : null; }
+            };
+            const maskedNotice = {
+                tagName: "P",
+                textContent: "为防止未经授权的登录，我们已向 y********l@g*******m 发送了一封包含验证码的邮件。",
+                children: []
+            };
+            const staticResendHintZh = {
+                tagName: "P",
+                textContent: "您的验证码已过期或您没有收到？ 重新发送验证码",
+                children: [resendLink],
+                querySelector(sel) { return sel.includes("a") ? resendLink : null; }
+            };
+            const staticResendHintEn = {
+                tagName: "P",
+                textContent: "Code expired or didn't receive it? Resend verification code",
+                children: []
+            };
+            const errNode = { tagName: "DIV", textContent: "验证码无效或已过期，请重试", children: [] };
+            let includeErr = false;
+            let useAriaDisabled = false;
+
+            const formEl = {
+                tagName: "FORM",
+                id: "email-twofa-form",
+                action: "/zh/auth/secondFactor/",
+                className: "twofa-email",
+                textContent: "电子邮箱安全验证 为防止未经授权的登录，我们已向 y********l@g*******m 发送了一封包含验证码的邮件。 请输入您的6位验证码 您的验证码已过期或您没有收到？ 重新发送验证码 信任此设备 验证",
+                getAttribute(k) { return k === "action" ? "/zh/auth/secondFactor/" : null; },
+                querySelectorAll(sel) {
+                    if (sel.includes("button")) return useAriaDisabled ? [ariaDisabledBtn] : [verifyBtn];
+                    if (sel.includes("input")) return [codeInput];
+                    return [];
+                },
+                querySelector(sel) {
+                    if (sel.includes("button")) return useAriaDisabled ? ariaDisabledBtn : verifyBtn;
+                    return null;
+                },
+                submit() {}
+            };
+
+            const ctx = {
+                window: {
+                    location: {
+                        hostname: "www.spaceship.com",
+                        pathname: "/zh/auth/secondFactor/",
+                        search: "?returnUrl=%2Fapplication%2Fpaymentmethod%2F",
+                        hash: "",
+                        href: "https://www.spaceship.com/zh/auth/secondFactor/?returnUrl=%2Fapplication%2Fpaymentmethod%2F"
+                    },
+                    HTMLInputElement: { prototype: {} },
+                    getComputedStyle: () => ({ display: "block", visibility: "visible", opacity: "1" })
+                },
+                document: {
+                    title: "电子邮箱 TwoFactor",
+                    body: {
+                        innerText: formEl.textContent,
+                        textContent: formEl.textContent
+                    },
+                    getElementById(id) { return id === "email-twofa-code" ? codeInput : null; },
+                    querySelector(sel) {
+                        if (sel.includes('label[for="email-twofa-code"]')) return labelEl;
+                        return null;
+                    },
+                    querySelectorAll(sel) {
+                        if (sel === 'input[autocomplete="one-time-code"]') return [codeInput];
+                        if (sel === 'button, a[href], [role="button"], input[type="button"], input[type="submit"]') return [verifyBtn];
+                        if (sel === 'a:not([href])') return [resendLink];
+                        if (sel === "p, div, span, label") return includeErr ? [maskedNotice, staticResendHintZh, staticResendHintEn, errNode] : [maskedNotice, staticResendHintZh, staticResendHintEn];
+                        if (sel.includes("label")) return [labelEl];
+                        if (sel === "form") return [formEl];
+                        return [];
+                    }
+                },
+                sessionStorage: {
+                    getItem: (k) => (k in storage ? storage[k] : null),
+                    setItem: (k, v) => { storage[k] = String(v); }
+                },
+                setTimeout: (fn) => fn(),
+                Event: function(t) { this.type = t; },
+                InputEvent: function(t, o) { this.type = t; this.data = o && o.data; },
+                KeyboardEvent: function(t, o) { this.type = t; this.key = o && o.key; },
+                console: { log() {}, warn() {}, error() {} },
+                CSS: { escape: (s) => s },
+                NodeFilter: { SHOW_ELEMENT: 1 },
+                URL
+            };
+            vm.createContext(ctx);
+            vm.runInContext(extractSsot(src), ctx);
+
+            const found = ctx.findOtpInputs();
+            const detectedEmail = ctx.findEmailOnPage();
+            const resendCtrl = ctx.findResendControl();
+            const initialErr = ctx.detectPageError();
+
+            // 1. aria-disabled submit button must NOT be clicked
+            useAriaDisabled = true;
+            const filledWhenDisabled = ctx.fillAndSubmit("62c2fe", true, "742786", Date.now());
+            const disabledClicksAfterFirst = disabledClicks;
+
+            // 2. Enabled submit button clicks cleanly on fresh hex code
+            useAriaDisabled = false;
+            const filledEnabled = ctx.fillAndSubmit("c16fae", true, "742787", Date.now());
+
+            // 3. Chinese invalid/expired error detected
+            includeErr = true;
+            const pageErr = ctx.detectPageError();
+
+            // 4. Adversarial: /zh/auth/secondFactor/ in Authenticator App (TOTP) mode must be blocked
+            const totpSecondFactor = ctx.diagnoseSyntheticSample({
+                labelText: "请输入您的6位验证码",
+                autocomplete: "one-time-code",
+                maxLength: 6,
+                formText: "两步验证 请输入来自您的 Google Authenticator 身份验证器应用的6位验证码",
+                url: "https://www.spaceship.com/zh/auth/secondFactor/"
+            });
+
+            return {
+                foundCount: found.length,
+                detectedEmail,
+                resendLabel: resendCtrl ? resendCtrl.textContent : null,
+                initialHasError: initialErr.hasError,
+                filledWhenDisabled,
+                disabledClicksAfterFirst,
+                filledEnabled,
+                finalValue: codeInput.value,
+                verifyClicks,
+                pageErrHasError: pageErr.hasError,
+                totpBlocked: totpSecondFactor.disqualified && totpSecondFactor.channel === "authenticator_app_blocked"
+            };
+        }
+
+        console.log(JSON.stringify({ ext: runCase(contentJs), user: runCase(userJs) }));
+        """.replace("__CONTENT_JS__", json.dumps(content_js)).replace("__USER_JS__", json.dumps(user_js))
+
+        proc = subprocess.run(["node", "-e", js_code], capture_output=True, text=True, cwd=str(REPO_ROOT))
+        self.assertEqual(proc.returncode, 0, f"Node script failed: {proc.stderr}")
+        data = json.loads(proc.stdout)
+
+        for target in ("ext", "user"):
+            r = data[target]
+            self.assertEqual(r["foundCount"], 1, target)
+            self.assertIsNone(r["detectedEmail"], f"{target}: masked email y********l@g*******m must return null")
+            self.assertEqual(r["resendLabel"], "重新发送验证码", f"{target}: href-less Chinese resend link must be detected")
+            self.assertFalse(r["initialHasError"], f"{target}: static resend hint '您的验证码已过期或您没有收到？' must NEVER trigger detectPageError()")
+            self.assertTrue(r["filledWhenDisabled"], target)
+            self.assertEqual(r["disabledClicksAfterFirst"], 0, f"{target}: aria-disabled submit button must not be clicked")
+            self.assertTrue(r["filledEnabled"], target)
+            self.assertEqual(r["finalValue"], "c16fae", f"{target}: lowercase hex code must preserve exact characters")
+            self.assertEqual(r["verifyClicks"], 1, f"{target}: enabled 验证 button must be clicked")
+            self.assertTrue(r["pageErrHasError"], f"{target}: Chinese 验证码无效或已过期 error must be detected")
+            self.assertTrue(r["totpBlocked"], f"{target}: /secondFactor/ TOTP Authenticator mode must stay blocked")
+
 if __name__ == "__main__":
     unittest.main()
 

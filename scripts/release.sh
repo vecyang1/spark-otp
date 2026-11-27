@@ -24,5 +24,5 @@ PYTHONDONTWRITEBYTECODE=1 python3 -B "$PUBLISH_SCRIPT" \
   --repo "$REPO_DIR" \
   --tag "$TAG" \
   --assets "$REPO_DIR/extension" "$REPO_DIR/userscript/spark-otp.user.js" \
-  --allow-emails "example.com" "example.org" "example.net" "gmail.com" "acme-cloud.net" "stripe-auth.com" "cloudflare.com" "bandwagonhost.com" "64clouds.com" "fedex.com" "adobe.com" "sentry.io" "nowhere.com" "domain.com" "albato.com" "cloudservice.com" "oakridge.edu" "notify.cl" \
+  --allow-emails "example.com" "example.org" "example.net" "gmail.com" "acme-cloud.net" "stripe-auth.com" "cloudflare.com" "bandwagonhost.com" "64clouds.com" "fedex.com" "adobe.com" "sentry.io" "nowhere.com" "domain.com" "albato.com" "cloudservice.com" "oakridge.edu" "notify.cl" "spaceship.com" \
   "$@"

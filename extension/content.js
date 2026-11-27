@@ -601,6 +601,8 @@
     let nodes = [];
     try {
       nodes = Array.from(document.querySelectorAll(selectors));
+      const hreflessLinks = Array.from(document.querySelectorAll('a:not([href])') || []);
+      if (hreflessLinks.length > 0) nodes = nodes.concat(hreflessLinks);
     } catch (e) {
       return null;
     }
@@ -943,12 +945,33 @@
         '.login-error'
       ];
       const errorTextRegex = /(?:incorrect|invalid|wrong|expired|failed|not\s*valid|has\s*expired)\s*(?:or\s+expired\s+)?(?:verification\s*|security\s*|auth\s*|login\s*|one-time\s*)?(?:code|passcode|token|pin|otp)?|(?:code|passcode|token|pin|otp)\s*(?:is\s*)?(?:incorrect|invalid|wrong|expired|not\s*valid|has\s*expired)|(?:that\s+account\s+)?does\s+not\s+have\s+access|unauthorized|验证码.*?(?:错误|不正确|有误|已过期|无效)|認証コード.*?(?:正しくありません|無効|切れています)/i;
+      const isStaticResendOrHelpHint = (text, el) => {
+        if (!text) return false;
+        // Static resend/help prompts on normal OTP forms (e.g. "您的验证码已过期或您没有收到？ 重新发送验证码",
+        // "Code expired or didn't receive it? Resend code") must never be misclassified as active auth errors.
+        if (/[?？]/.test(text) && /(?:没收到|没有收到|未收到|重新发送|重发|didn['’]?t\s+(?:receive|get)|not\s+received?|haven['’]?t\s+received|re-?send|或您没有|或未收到)/i.test(text)) {
+          return true;
+        }
+        if (/^(?:did\s+your|has\s+your|haven['’]?t\s+received|didn['’]?t\s+(?:receive|get)|如果.*?(?:过期|没收到)|您的验证码已过期或)/i.test(text)) {
+          return true;
+        }
+        if (el && typeof el.querySelector === "function") {
+          const actionChild = el.querySelector("a, button");
+          if (actionChild) {
+            const childTxt = (actionChild.textContent || "").trim();
+            if (/(?:re-?send|重新发送|重发|再次发送|send\s+again)/i.test(childTxt)) {
+              return true;
+            }
+          }
+        }
+        return false;
+      };
 
       for (const sel of errorSelectors) {
         const els = document.querySelectorAll(sel);
         for (const el of els) {
           const text = (el.textContent || "").trim();
-          if (text.length > 0 && text.length < 300 && errorTextRegex.test(text)) {
+          if (text.length > 0 && text.length < 300 && !isStaticResendOrHelpHint(text, el) && errorTextRegex.test(text)) {
             return { hasError: true, reason: "dom_alert", text };
           }
         }
@@ -959,11 +982,12 @@
       for (const el of paragraphs) {
         if (el.children.length > 2) continue;
         const text = (el.textContent || "").trim();
-        if (text.length > 0 && text.length < 150) {
+        if (text.length > 0 && text.length < 150 && !isStaticResendOrHelpHint(text, el)) {
           if (/incorrect\s*code(?:,\s*please\s*try\s*again)?/i.test(text) ||
-              /invalid\s*(?:or\s+expired\s+)?(?:two-factor|verification|login)?\s*(?:code|otp)/i.test(text) ||
+              /invalid\s*(?:or\s+expired\s+)?(?:two-factor|verification|login|authentication|security)?\s*(?:code|otp)/i.test(text) ||
+              /(?:code|otp)\s+(?:is\s+)?(?:invalid|incorrect|expired)/i.test(text) ||
               /(?:that\s+account\s+)?does\s+not\s+have\s+access/i.test(text) ||
-              /验证码错误/i.test(text)) {
+              /验证码.*?(?:错误|不正确|有误|已过期|无效)|(?:无效|过期|错误)的?验证码/i.test(text)) {
             return { hasError: true, reason: "dom_text", text };
           }
         }
@@ -1783,7 +1807,7 @@
           const search = (window.location.search || "").toLowerCase();
           const host = (window.location.hostname || "").toLowerCase();
           const docTitle = (typeof document !== "undefined" && document.title ? document.title : "").toLowerCase();
-          if (/(?:browser_auth|two[-_ ]*factor[-_ ]*code|totp[-_ ]*code|verify[-_ ]*code|verification[-_ ]*code|code[-_ ]*auth(?:entication)?|auth(?:entication)?[-_ ]*code|cdn-cgi\/access)/i.test(path + " " + search) || /(?:cloudflareaccess\.com)/i.test(host) || /(?:two[-_ ]*factor|2fa|totp|authentication|verification)\s*(?:code|passcode|verification)/i.test(docTitle)) {
+          if (/(?:browser_auth|two[-_ ]*factor[-_ ]*code|second[-_ ]?factor|totp[-_ ]*code|verify[-_ ]*code|verification[-_ ]*code|code[-_ ]*auth(?:entication)?|auth(?:entication)?[-_ ]*code|cdn-cgi\/access)/i.test(path + " " + search) || /(?:cloudflareaccess\.com)/i.test(host) || /(?:two[-_ ]*factor|2fa|totp|authentication|verification)\s*(?:code|passcode|verification)/i.test(docTitle)) {
             return true;
           }
         }
@@ -2053,7 +2077,7 @@
       const action = (typeof form.getAttribute === "function" ? form.getAttribute("action") : form.action) || "";
       const id = form.id || "";
       const cls = typeof form.className === "string" ? form.className : (typeof form.getAttribute === "function" ? form.getAttribute("class") : "") || "";
-      return /(?:^|[\W_])(?:browser_auth|two[-_ ]*factor[-_ ]*code|verify[-_ ]*code|verification[-_ ]*code|code[-_ ]*auth(?:entication)?|auth(?:entication)?[-_ ]*code|enter[-_ ]*otp)(?:[\W_]|$)/i.test(`${action} ${id} ${cls} ${allForms.length === 1 ? locPathAndSearch : ""}`);
+      return /(?:^|[\W_])(?:browser_auth|two[-_ ]*factor[-_ ]*code|second[-_ ]?factor|verify[-_ ]*code|verification[-_ ]*code|code[-_ ]*auth(?:entication)?|auth(?:entication)?[-_ ]*code|enter[-_ ]*otp)(?:[\W_]|$)/i.test(`${action} ${id} ${cls} ${allForms.length === 1 ? locPathAndSearch : ""}`);
     });
     for (const form of dedicatedAuthForms) {
       const inputs = Array.from(form.querySelectorAll('input[type="text"], input[type="tel"], input[type="number"], input:not([type])'))
@@ -2543,6 +2567,7 @@
     };
 
     setTimeout(() => {
+      const isEnabledBtn = (b) => b && !b.disabled && !(typeof b.getAttribute === "function" && b.getAttribute("aria-disabled") === "true");
       // 1. Look for enclosing form (including external buttons linked via HTML5 form="form-id" in CardFooter)
       const form = targetElement.closest("form") || document.getElementById("totp-form");
       if (form) {
@@ -2553,18 +2578,18 @@
           ...Array.from(form.querySelectorAll('button[type="submit"], input[type="submit"], button:not([type]), input[type="button"], [role="button"], a.btn, a.button, a[class*="btn" i], a[class*="button" i]')),
           ...externalBtns
         ];
-        const verifySubmit = allSubmitBtns.find(b => checkVerifyBtn(b) && !b.disabled);
+        const verifySubmit = allSubmitBtns.find(b => checkVerifyBtn(b) && isEnabledBtn(b));
         if (verifySubmit) {
           verifySubmit.click();
           return;
         }
-        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]') || externalBtns.find(b => !b.disabled);
-        if (submitBtn && !submitBtn.disabled) {
+        const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]') || externalBtns.find(b => isEnabledBtn(b));
+        if (isEnabledBtn(submitBtn)) {
           submitBtn.click();
           return;
         }
         const anyBtn = form.querySelector('button, [role="button"], a.btn, a.button');
-        if (anyBtn && checkVerifyBtn(anyBtn) && !anyBtn.disabled) {
+        if (anyBtn && checkVerifyBtn(anyBtn) && isEnabledBtn(anyBtn)) {
           anyBtn.click();
           return;
         }
@@ -2578,7 +2603,7 @@
       const container = targetElement.closest('[role="dialog"], [role="region"], .modal, .card, main') || document.body;
       const buttons = container ? container.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"], a.btn, a.button, a[class*="btn" i], a[class*="button" i]') : [];
       for (const btn of buttons) {
-        if (checkVerifyBtn(btn) && !btn.disabled && btn.offsetParent !== null) {
+        if (checkVerifyBtn(btn) && isEnabledBtn(btn) && btn.offsetParent !== null) {
           btn.click();
           return;
         }
@@ -3387,6 +3412,9 @@
             if (data.is_expired === true) {
               return;
             }
+            if (!detectPageError().hasError && activeCode && String(data.code).trim().toUpperCase() === String(activeCode).trim().toUpperCase()) {
+              return;
+            }
             const receivedMs = data.received_at ? (new Date(data.received_at).getTime() || 0) : 0;
             if (isCodeRejected(data.code, data.message_id, receivedMs, domain)) {
               renderRaceCandidateOutcome(domain, effectiveAccount, {
@@ -3481,6 +3509,9 @@
             if (data.otp.is_expired === true) {
               return;
             }
+            if (!detectPageError().hasError && activeCode && String(data.otp.code).trim().toUpperCase() === String(activeCode).trim().toUpperCase()) {
+              return;
+            }
             const receivedMs = data.otp.received_at ? (new Date(data.otp.received_at).getTime() || 0) : 0;
             if (isCodeRejected(data.otp.code, data.otp.message_id, receivedMs, domain)) {
               renderRaceCandidateOutcome(domain, effectiveAccount, {
@@ -3537,6 +3568,12 @@
             if (btn) {
               btn.textContent = t("notFound");
               setTimeout(() => { btn.textContent = t("refresh"); }, 1500);
+            }
+            return;
+          }
+          if (!detectPageError().hasError && activeCode && String(data.otp.code).trim().toUpperCase() === String(activeCode).trim().toUpperCase()) {
+            if (btn) {
+              btn.textContent = t("refresh");
             }
             return;
           }

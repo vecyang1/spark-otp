@@ -286,6 +286,21 @@ DEFAULT_RULES = [
         filter_query="from:siteground.com",
     ),
     RuleDefinition(
+        name="spaceship_auth",
+        sender_pattern=r"(?i)(?:spaceship|alert@spaceship\.com|@spaceship\.com)",
+        subject_pattern=r"(?i)(?:security\s*alert:.*login\s*attempt|please\s*verify\s*account|spaceship.*(?:code|verify|login|security)|(?:verification|authentication)\s*code)",
+        code_regex=(
+            r"(?im)(?:"
+            r"temporary\s+authentication\s+code[^\n]*?[\r\n]+\s*(?:\*\*\s*|`\s*)?([0-9a-f]{6})(?![0-9a-z])|"
+            r"^\s*(?:\*\*\s*|`\s*)?([0-9a-f]{6})(?:\s*\*\*|\s*`)?\s*[\r\n]+\s*The\s+code\s+will\s+expire|"
+            r"(?:verification|authentication|security)\s*code\s*[:：]\s*(?:\*\*\s*|`\s*)?([0-9a-f]{6})(?![0-9a-z])"
+            r")"
+        ),
+        default_ttl_seconds=1800,
+        associated_domains=["spaceship.com"],
+        filter_query="from:spaceship.com",
+    ),
+    RuleDefinition(
         name="generic_otp",
         sender_pattern=r".*",
         subject_pattern=r"(?i)(?:verification|login|security|access|auth(?:entication)?|otp|one-time|verify|confirm(?:ation)?|passcode|validation|device).*code|(?:device\s+)?verification\b|验证码|动态码|校验码|安全码|授权码|驗證碼|動態碼|校驗碼|安全碼|認証コード|確認コード|ワンタイムパスワード|인증\s*번호|인증\s*코드|확인\s*코드|código\s*de\s*verificación|code\s*de\s*vérification|verifizierungscode|bestätigungscode|código\s*de\s*confirmação|код\s*подтверждения|codice\s*di\s*verifica|mã\s*xác\s*thực|รหัส\s*otp|kode\s*verifikasi|رمز\s*التحقق|सत्यापन\s*कोड",

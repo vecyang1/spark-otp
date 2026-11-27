@@ -320,18 +320,40 @@ PURE_ALPHA_OTP_PATTERNS = [
 ]
 
 PURE_ALPHA_PREV_LINE_CUE_RE = re.compile(
-    r"(?i)(?:verification|login|sign[-\s]?in|security|confirmation|authentication|access|one[-\s]?time|single[-\s]?use|temporary|2fa|mfa)\s*(?:code|passcode|pin)|"
+    r"(?i)(?:verification|login|sign[-\s]?in|security|confirmation|authentication|access|one[-\s]?time|single[-\s]?use|temporary|2fa|mfa)\s*(?:authentication\s+|verification\s+)?(?:code|passcode|pin)|"
+    r"copy\s+and\s+paste\s+(?:the\s+)?(?:temporary\s+)?(?:authentication|verification|security|login)\s*code|"
+    r"verification\s+form\s+on\s+the\b|"
     r"\b(?:code|passcode|otp)\s*(?:is|below|follows)?\s*[:#：]?\s*$|"
     r"use\s+the\s+code\s+below|enter\s+(?:the\s+|this\s+)?(?:following\s+)?code|"
     r"验证码|动态码|校验码|認証コード|確認コード|인증\s*번호|인증\s*코드|código\s*de\s*verificación|code\s*de\s*vérification|verifizierungscode"
 )
 
 PURE_ALPHA_NEXT_LINE_CUE_RE = re.compile(
-    r"(?i)(?:this\s+code\s+(?:will\s+)?expire|code\s+(?:will\s+)?expire|expires?\s+(?:in|after)|valid\s+(?:for|in)|"
+    r"(?i)(?:(?:this|the)\s+code\s+(?:will\s+)?expire|code\s+(?:will\s+)?expire|expires?\s+(?:in|after)|valid\s+(?:for|in)|"
     r"enter\s+this\s+code|use\s+this\s+code|do\s+not\s+share\s+this\s+code|"
     r"if\s+you\s+did\s*n['’]?t\s+request|if\s+you\s+did\s+not\s+request|"
     r"有效|有効|분\s*이내|minuto|minuten|минут|phút|นาที|menit)"
 )
+
+SECURITY_LOGIN_ALERT_SUBJECT_RE = re.compile(
+    r"(?i)(?:"
+    r"security\s*alert|"
+    r"new\s+(?:device|location|login|sign[-\s]?in)|"
+    r"login\s+attempt|sign[-\s]?in\s+attempt|"
+    r"unusual\s+(?:login|sign[-\s]?in|activity)|"
+    r"confirm\s+(?:your\s+)?(?:login|sign[-\s]?in|device|identity)|"
+    r"please\s+verify\s+(?:your\s+)?(?:account|email|device|login|identity)|"
+    r"登录尝试|新设备登录|安全警报|安全验证"
+    r")"
+)
+
+PREHEADER_INVISIBLE_CHARS_RE = re.compile(r"[\u034f\u00ad\u2007\u200b\u200c\u200d\ufeff\u2060]")
+
+def has_preheader_padding(text: Optional[str]) -> bool:
+    """Detect hidden email preheader spacer padding (e.g. SendGrid/ESP U+034F / U+00AD runs) that pushes body content out of shortBody."""
+    if not text:
+        return False
+    return len(PREHEADER_INVISIBLE_CHARS_RE.findall(text)) >= 8
 
 OTP_INTENT_PATTERN = re.compile(
     r"(?i)(?:"
@@ -339,7 +361,7 @@ OTP_INTENT_PATTERN = re.compile(
     r"verification\s*code|verify|security\s*code|login\s*code|access\s*code|"
     r"device\s*verification|device\s*auth|"
     r"one-time\s*password|one-time\s*code|one-time\s*pin|passcode|auth\s*code|authentication\s*code|"
-    r"confirmation\s*code|secret\s*code|pin\s*code|two-factor|2fa|mfa|otp\b|"
+    r"confirmation\s*code|secret\s*code|pin\s*code|two-factor|\b2fa\b|\bmfa\b|\botp\b|"
     r"validation\s*code|validating\s*code|sign-in\s*code|single-use\s*code|"
     r"[a-z0-9\.-]+\s+code\b|"
     r"3d\s*secure|one-time\s*passcode|"
@@ -438,8 +460,22 @@ EXP_PATTERNS = [
     (r"(?i)(\d+)\s*मिनट\s*के\s*लिए\s*मान्य", 60),
 ]
 
+ENGLISH_WORD_NUMBERS = {
+    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "twelve": 12,
+    "fifteen": 15, "twenty": 20, "twenty-four": 24, "twenty four": 24,
+    "thirty": 30, "forty": 40, "forty-five": 45, "forty five": 45,
+    "fifty": 50, "sixty": 60,
+}
+
+ENGLISH_WORD_TTL_RE = re.compile(
+    r"(?i)(?:expires?\s+(?:(?:in|after)\s+)?|valid\s+(?:for|in)\s+|within\s+)"
+    r"(forty[-\s]five|twenty[-\s]four|fifteen|twenty|thirty|forty|fifty|sixty|twelve|eleven|seven|eight|three|four|five|nine|one|two|six|ten|an|a)\s+"
+    r"(hour|minute)s?\b"
+)
+
 def detect_ttl(text: str) -> Optional[int]:
-    """Detect explicit expiration TTL in English, Chinese, Japanese (seconds)."""
+    """Detect explicit expiration TTL in English (numeric & spelled-out words), Chinese, Japanese, etc. (seconds)."""
     norm_text = unicodedata.normalize("NFKC", text)
     for pat, mult in EXP_PATTERNS:
         m = re.search(pat, norm_text)
@@ -447,6 +483,13 @@ def detect_ttl(text: str) -> Optional[int]:
             for g in m.groups():
                 if g:
                     return int(g) * mult
+    m_word = ENGLISH_WORD_TTL_RE.search(norm_text)
+    if m_word:
+        word = re.sub(r"\s+", " ", m_word.group(1).lower().strip())
+        unit = m_word.group(2).lower()
+        val = ENGLISH_WORD_NUMBERS.get(word)
+        if val is not None:
+            return val * (3600 if unit == "hour" else 60)
     return None
 
 def clean_domain(domain: str) -> str:
@@ -580,8 +623,80 @@ def _strip_html_body(body_text: str) -> str:
     )
     cleaned = re.sub(r"<[^>]+>", " ", cleaned)
     cleaned = html.unescape(cleaned)
+    cleaned = PREHEADER_INVISIBLE_CHARS_RE.sub(" ", cleaned)
     lines = [re.sub(r"[ \t]+", " ", ln).strip() for ln in cleaned.splitlines()]
     return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+def _strip_urls_for_code_extraction(text: str) -> str:
+    """
+    Remove markdown link destinations and bare HTTP(S) URLs plus invisible preheader padding
+    so tracking URLs (e.g. SendGrid `-2FA...` / `-2BV-2F4-`) cannot trigger false OTP matches.
+    Preserves visible markdown link labels.
+    """
+    if not text:
+        return ""
+    # Replace markdown links `[label](https://...)` / `[label](mailto:...)` / `[label](#...)` with `label`
+    cleaned = re.sub(r"\[([^\]]*)\]\((?:https?://|mailto:|#)[^)\s]*\)", r"\1", text)
+    # Remove bare http(s) URLs
+    cleaned = re.sub(r"https?://[^\s<>)\"'\]]+", " ", cleaned)
+    # Remove invisible email preheader spacer characters
+    cleaned = PREHEADER_INVISIBLE_CHARS_RE.sub(" ", cleaned)
+    return cleaned
+
+def _extract_standalone_alnum_otp(
+    search_corpus: str,
+    msg_id: str = "0",
+    disqualified_words: Optional[set] = None,
+) -> Optional[str]:
+    """
+    Extract a standalone 6-8 char mixed alphanumeric / lowercase hex OTP line (e.g. '62c2fe', 'c16fae')
+    when sandwiched by explicit OTP prompt or expiry cues on adjacent non-empty lines.
+    Requires both at least one digit and at least one ASCII letter to avoid matching ordinary words or pure numbers.
+    """
+    if not search_corpus or not STRONG_OTP_INTENT_PATTERN.search(search_corpus):
+        return None
+    disq = disqualified_words or set()
+    lines = search_corpus.splitlines()
+    for idx, ln in enumerate(lines):
+        m = re.match(r"^\s*(?:[\*`\"']+\s*)?([0-9A-Za-z]{6,8})(?:\s*[\*`\"']+)?\s*$", ln.rstrip("\r\n"))
+        if not m:
+            continue
+        cand = m.group(1)
+        if cand == msg_id or cand.lower() in disq or cand.lower() in PURE_ALPHA_OTP_DISQUALIFIED_WORDS:
+            continue
+        # Must contain both digit and ASCII letter (pure numeric & pure alpha are handled by dedicated tiers)
+        if not (any(c.isdigit() for c in cand) and any(c.isalpha() for c in cand)):
+            continue
+        # Reject version/timestamp-like tokens (e.g. v123456, 1205pm, 2026am)
+        if re.match(r"^(?:v\d+|\d{3,4}(?:am|pm|ms|px|kb|mb|gb))$", cand, re.IGNORECASE):
+            continue
+
+        prev_non_empty = ""
+        for j in range(idx - 1, -1, -1):
+            s = lines[j].strip()
+            if s:
+                prev_non_empty = s
+                break
+        next_non_empty = ""
+        for j in range(idx + 1, len(lines)):
+            s = lines[j].strip()
+            if s:
+                next_non_empty = s
+                break
+
+        # Never grab values following non-auth labels like Username:, Order:, Reference:, Tracking:
+        if prev_non_empty and re.search(
+            r"(?i)\b(?:username|user\s*id|account\s*id|order|invoice|reference|ref|tracking|ticket|device|location|ip\s*address|when|promo|coupon)\s*[:#：]?\s*$",
+            prev_non_empty,
+        ):
+            continue
+
+        prev_has_cue = bool(prev_non_empty and PURE_ALPHA_PREV_LINE_CUE_RE.search(prev_non_empty))
+        next_has_cue = bool(next_non_empty and PURE_ALPHA_NEXT_LINE_CUE_RE.search(next_non_empty))
+        if prev_has_cue or next_has_cue:
+            return cand
+
+    return None
 
 def _is_valid_pure_alpha_otp(
     candidate: str,
@@ -1063,16 +1178,19 @@ def extract_universal_otp(
     sender = headers.get("from", "")
     msg_id = headers.get("id", "0")
 
-    # 1. Check for OTP intent across subject and body
+    body_text = _strip_urls_for_code_extraction(_strip_html_body(get_thread_body(thread_text)))
+    raw_search_text = subject + "\n" + body_text
+
+    # 1. Check for OTP intent across subject and cleaned body (excluding raw tracking URLs)
     has_otp_intent = bool(
         OTP_INTENT_PATTERN.search(subject) or
-        OTP_INTENT_PATTERN.search(thread_text)
+        OTP_INTENT_PATTERN.search(body_text)
     )
     if not has_otp_intent:
         return None
 
     # Reject known adversarial patterns (e.g. pure error codes without verification context)
-    if re.search(r"(?i)error\s+code\s*:\s*\d+", thread_text) and not re.search(r"(?i)(?:verification|security|login)\s*code", thread_text):
+    if re.search(r"(?i)error\s+code\s*:\s*\d+", raw_search_text) and not re.search(r"(?i)(?:verification|security|login)\s*code", raw_search_text):
         return None
 
     # 2. If domain filter is present, ensure domain or brand matches via SSOT domain_matches
@@ -1088,9 +1206,6 @@ def extract_universal_otp(
         ):
             return None
 
-    body_text = _strip_html_body(get_thread_body(thread_text))
-    raw_search_text = subject + "\n" + body_text
-    
     # Normalize markdown asterisks around numbers/codes (e.g. "** 521006**" -> " 521006 ")
     normalized_text = re.sub(r"\*{1,3}\s*([0-9a-zA-Z\s-]+?)\s*\*{1,3}", r" \1 ", raw_search_text)
 
@@ -1156,24 +1271,24 @@ def extract_universal_otp(
         r"(?i)(?:"
         r"verification\s*code|verify|security\s*code|login\s*code|access\s*code|"
         r"one-time\s*password|one-time\s*code|passcode|auth\s*code|authentication\s*code|"
-        r"confirmation\s*code|secret\s*code|pin\s*code|two-factor|2fa|otp\b|"
+        r"confirmation\s*code|secret\s*code|pin\s*code|two-factor|\b2fa\b|\botp\b|"
         r"验证码|动态码|校验码|安全码|授权码|驗證碼|動態碼|校驗碼|"
         r"認証コード|確認コード|ワンタイムパスワード|"
         r"인증\s*번호|인증\s*코드|확인\s*코드|"
         r"código\s*de\s*verificación|code\s*de\s*vérification|verifizierungscode|bestätigungscode|"
         r"код\s*подтверждения|codice\s*di\s*verifica|mã\s*xác\s*thực|รหัส\s*otp|kode\s*verifikasi"
-        r")\s*(?:code|password|passcode)?(?:\s+(?:to\s+[a-z\s]{1,25}|is|为|为：|是|是：|は|es|est|ist|это|è))?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})(?![0-9a-zA-Z])",
+        r")(?:[\s:#：*]+|(?<=[^\x00-\x7f]))(?:(?:code|password|passcode)(?:[\s:#：*]+|(?<=[^\x00-\x7f])))?(?:(?:to\s+[a-z\s]{1,25}|is|为|为：|是|是：|は|es|est|ist|это|è)(?:[\s:#：*]+|(?<=[^\x00-\x7f])))?(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})(?![0-9a-zA-Z])",
         r"(?i)(?:"
         r"verification\s*code|verify|security\s*code|login\s*code|access\s*code|"
         r"one-time\s*password|one-time\s*code|passcode|auth\s*code|authentication\s*code|"
-        r"confirmation\s*code|secret\s*code|pin\s*code|two-factor|2fa|otp\b|"
+        r"confirmation\s*code|secret\s*code|pin\s*code|two-factor|\b2fa\b|\botp\b|"
         r"验证码|动态码|校验码|安全码|授权码|驗證碼|動態碼|校驗碼|"
         r"認証コード|確認コード|ワンタイムパスワード|"
         r"인증\s*번호|인증\s*코드|확인\s*코드|"
         r"código\s*de\s*verificación|code\s*de\s*vérification|verifizierungscode|bestätigungscode|"
         r"код\s*подтверждения|codice\s*di\s*verifica|mã\s*xác\s*thực|รหัส\s*otp|kode\s*verifikasi"
         r")\s*(?:is|为|为：|是|是：|は|es|est|ist|это|è|:|：)\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})(?![0-9a-zA-Z])",
-        r"(?i)(?<!error\s)(?<!status\s)(?<!reference\s)(?<!id\s)(?<!message\s)\b(?:code|passcode|otp|动态码|验证码|安全码|校验码|認証コード|ワンタイムパスワード|인증번호|인증코드)\s*(?:is|为|为：|是|是：|は|es|est|ist|это|è)?\s*[:#：]?\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})(?![0-9a-zA-Z])",
+        r"(?i)(?<!error\s)(?<!status\s)(?<!reference\s)(?<!id\s)(?<!message\s)\b(?:code|passcode|otp|动态码|验证码|安全码|校验码|認証コード|ワンタイムパスワード|인증번호|인증코드)(?:[\s:#：*]+|(?<=[^\x00-\x7f]))(?:(?:is|为|为：|是|是：|は|es|est|ist|это|è)(?:[\s:#：*]+|(?<=[^\x00-\x7f])))?(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8}|[0-9a-zA-Z]{5,8})(?![0-9a-zA-Z])",
         r"(?i)\b([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8})\b\s*(?:is\s+your|is\s+the|为您的|是您的|为|是|がお客様の|です|となります|입니다|es\s+su|est\s+votre|ist\s+Ihr)\s*(?:one-time|one\s*time|verification|security|login|access|confirmation)?\s*(?:code|passcode|验证码|动态码|認証コード|ワンタイムパスワード|인증번호)?",
         r"(?i)(?:code|passcode|otp)[:\s]+(?:\*\*\s*)?([0-9a-zA-Z]{5,8})(?![0-9a-zA-Z])",
         r"(?m)^\s*(?:\*\*\s*)?([0-9]{3,4}[-\s][0-9]{3,4}|[0-9]{4,8})\s*(?:\*\*)?\s*$",
@@ -1200,6 +1315,17 @@ def extract_universal_otp(
                 start_pos = max(line_start_pos, match.start() - 35)
                 prefix_text = search_corpus[start_pos:match.start()].lower()
                 if re.search(r"(?:reference|ref\s*#?|order\s*#?|tracking|เลขที่อ้างอิง|error\s*code|message\s*id|msg\s*id)", prefix_text):
+                    continue
+
+                # Disqualify candidates embedded inside URLs, query parameters, email addresses, or encoded tokens
+                tok_start = match.start(1)
+                while tok_start > 0 and not search_corpus[tok_start - 1].isspace():
+                    tok_start -= 1
+                tok_end = match.end(1)
+                while tok_end < len(search_corpus) and not search_corpus[tok_end].isspace():
+                    tok_end += 1
+                enclosing_tok = search_corpus[tok_start:tok_end]
+                if any(sym in enclosing_tok for sym in ("://", "?", "=", "&", "%", "/", "_", "@")):
                     continue
 
                 # Disqualify floating decimals / currency
@@ -1248,6 +1374,27 @@ def extract_universal_otp(
                     is_expired=is_expired,
                     time_remaining_seconds=max(0, remaining),
                 )
+
+    # 3b. Standalone mixed alphanumeric / lowercase hex OTP line sandwiched by OTP prompt or expiry cues
+    standalone_alnum = _extract_standalone_alnum_otp(
+        search_corpus=raw_search_text,
+        msg_id=msg_id,
+        disqualified_words=disqualified_words,
+    )
+    if standalone_alnum:
+        return OTPResult(
+            code=standalone_alnum,
+            service="universal_otp",
+            domain=domain_filter,
+            callback_url=None,
+            message_id=msg_id,
+            subject=subject,
+            sender=sender,
+            received_at=email_dt.isoformat(),
+            expires_at=(email_dt + timedelta(seconds=ttl)).isoformat(),
+            is_expired=is_expired,
+            time_remaining_seconds=max(0, remaining),
+        )
 
     # 4. Pure uppercase alphabetic OTP fallback (6-8 uppercase ASCII letters in strong OTP context)
     # Runs strictly AFTER all digit-bearing / hyphenated patterns so numeric codes always take priority.
